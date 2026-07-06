@@ -1,5 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr
+from sqlalchemy.orm import Session
+
+from app.api.deps import get_db
+import bcrypt
 
 router = APIRouter()
 
@@ -12,17 +16,57 @@ class UserLogin(BaseModel):
     email: EmailStr
     password: str
 
+class User(BaseModel): # 목업 DB 클래스
+    email: EmailStr
+    hashed_password: str
+    username: str
+    is_active: bool
+
+def mock_register(user: UserRegister):
+    return True
+
 @router.post("/register", status_code=status.HTTP_201_CREATED)
-def register_user(user: UserRegister):
+def register_user(user: UserRegister, db:Session = Depends(get_db)):
     """
     [Cj(찬진) 파트] 신규 구정 관리자 및 실무자 회원가입
     """
-    # 임시 mock 구현
-    return {
+
+    # email/ID 중복 검사
+    existing_user = db.query(User).filter(
+        (User.email == user.email)
+    ).first()
+
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='이미 존재하는 이메일입니다.'
+        )
+    
+    hashed_pw = bcrypt.hashpw(user.password.encode('utf-8'), bcrypt.gensalt())
+    
+    new_user = User(
+        email=user.email,
+        hashed_password=hashed_pw,
+        username=user.username
+    )
+    
+    try:
+        db.add(new_user)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="DB injection error"
+        )
+
+    resp = {
         "status": "success",
         "message": f"User {user.username} registered successfully.",
         "user_email": user.email
     }
+
+    return resp
 
 @router.post("/login")
 def login_user(credentials: UserLogin):
