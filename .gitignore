@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+
+# Config Secrets (중요!)
+.env
+.env.local
+
+# IDEs
+.idea/
+.vscode/
+
+# OS
+.DS_Store
