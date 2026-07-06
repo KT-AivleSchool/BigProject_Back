@@ -1,9 +1,11 @@
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status
+from app.schemas.audit import AuditVerifyResponse, AuditSaveResponse
 import random
+import datetime
 
 router = APIRouter()
 
-@router.post("/verify")
+@router.post("/verify", response_model=AuditVerifyResponse)
 def verify_precedent_document(
     file: UploadFile = File(...),
     simulation_id: int = Form(...)
@@ -19,20 +21,25 @@ def verify_precedent_document(
         )
         
     # 가상의 OCR 판독 및 시나리오 A/B/C 매핑 결과 반환
-    scenarios = ["NORMAL", "OPTIMAL", "WORST"]
+    scenarios = ["A", "B", "C"]
     selected_scenario = random.choice(scenarios)
     
     return {
-        "status": "success",
-        "message": "공문서 PDF Audit AI 팩트체크 검토 완료.",
-        "simulation_id": simulation_id,
-        "ocr_statistics": {
-            "characters_parsed": 14502,
-            "confidence_score": 0.985
-        },
-        "audit_classification": {
-            "mapped_scenario": selected_scenario,
-            "co_sine_similarity": 0.897,
-            "rag_storage_segment": "verified_precedents"
-        }
+        "ocr_success": True,
+        "extracted_text_snippet": "본 스마트 쉼터 준공 보고서에 의하면 차폐벽 설치 및 주민 소음 방지 펜스 설계가 완료되었음을 확인...",
+        "matched_scenario": selected_scenario,
+        "similarity_score": 0.897,
+        "classification_status": "COMPLIANT"
     }
+
+@router.post("/save", response_model=AuditSaveResponse)
+def save_audit_feedback(simulation_id: int, matched_scenario: str):
+    """
+    RAG 환류 오염 방지(Model Collapse)를 위해 실증 적용 결과를 격리 적재하는 API
+    """
+    return {
+        "audit_id": 105,
+        "is_feedback_loop_isolated": True,
+        "saved_at": datetime.datetime.now().isoformat()
+    }
+
