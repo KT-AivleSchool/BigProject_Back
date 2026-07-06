@@ -3,6 +3,9 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
+from app.config import settings
+from app.db.base import User
+from utils.auth_utils import create_access_token
 import bcrypt
 
 router = APIRouter()
@@ -15,15 +18,6 @@ class UserRegister(BaseModel):
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
-
-class User(BaseModel): # 목업 DB 클래스
-    email: EmailStr
-    hashed_password: str
-    username: str
-    is_active: bool
-
-def mock_register(user: UserRegister):
-    return True
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 def register_user(user: UserRegister, db:Session = Depends(get_db)):
@@ -42,7 +36,7 @@ def register_user(user: UserRegister, db:Session = Depends(get_db)):
             detail='이미 존재하는 이메일입니다.'
         )
     
-    hashed_pw = bcrypt.hashpw(user.password.encode('utf-8'), bcrypt.gensalt())
+    hashed_pw = bcrypt.hashpw(user.password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     
     new_user = User(
         email=user.email,
@@ -69,16 +63,49 @@ def register_user(user: UserRegister, db:Session = Depends(get_db)):
     return resp
 
 @router.post("/login")
-def login_user(credentials: UserLogin):
+def login_user(credentials: UserLogin, db: Session = Depends(get_db)):
     """
     [Cj(찬진) 파트] JWT 발급을 통한 구정 실무자 로그인 인증
     """
+
+    user = db.query(User).filter(User.email == credentials.email).first()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="이메일 혹은 패스워드가 올바르지 않습니다."
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="비활성화된 계정입니다."
+        )
+    
+    is_password_correct = bcrypt.checkpw(
+        credentials.password.encode('utf-8'),
+        user.hashed_password.encode('utf-8')
+    )
+
+    if not is_password_correct:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="이메일 혹은 패스워드가 올바르지 않습니다."
+        )
+    
+    token_payload = {
+        "sub": user.email,        # 토큰 식별자 (주로 이메일 또는 고유 ID)
+        "username": user.username,
+        "user_id": user.id,   
+    }
+    token = create_access_token(token_payload)    
+
     # 임시 mock 토큰 발행
     if credentials.email == "admin@yongsan.go.kr" and credentials.password == "admin123!":
         return {
-            "access_token": "mock_jwt_token_for_omnisite_development",
+            "access_token": token,
             "token_type": "bearer",
-            "expires_in_minutes": 1440
+            "expires_in_minutes": settings.ACCESS_TOKEN_EXPIRE_MINUTES
         }
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
