@@ -5,7 +5,6 @@
 # ├── RESIDENT_ROLE_PROMPT          # 주민대표 역할
 # ├── MERCHANT_ROLE_PROMPT          # 상인대표 역할
 # ├── OFFICER_ROLE_PROMPT           # 공무원 역할
-# ├── SUPERVISOR_PROMPT             # 회의 종료 여부 판단
 # ├── INTERNAL_SUPERVISOR_PROMPT    # 내부 평가용
 # ├── FINAL_SUPERVISOR_PROMPT       # 최종 결과용
 # └── build_prompt()                # 최종 Prompt 생성 함수
@@ -21,14 +20,7 @@ COMMON_SYSTEM_PROMPT = """
 
 ==============================
 [시설 정보]
-시설 종류 : {facility_type}
-
-설치 위치 : {location}
-
-==============================
-[주변 환경]
-
-{location_context}
+{site_information}
 
 ==============================
 [관련 법률 및 조례(RAG)]
@@ -49,6 +41,19 @@ COMMON_SYSTEM_PROMPT = """
 3. 시설 종류에 맞는 논리를 스스로 도출하십시오.
 4. 이전 회의 내용을 반드시 참고하십시오.
 5. 이전 의견을 반복하지 말고 새로운 의견이나 반박 또는 대안을 제시하십시오.
+6. 다른 AI의 가장 최근 발언을 반드시 검토한 후 응답하십시오.
+7. 이전 라운드에서 제안된 중재안이 있다면 이를 고려하여 의견을 수정하거나 유지하십시오.
+
+
+가능하면
+
+이전 라운드보다
+
+더 구체적인 의견을 제시하십시오.
+
+같은 내용을 반복하지 마십시오.
+
+새로운 근거 또는 새로운 대안을 제시하십시오.
 """
 
 # 2.  CSS
@@ -148,7 +153,11 @@ RESIDENT_ROLE_PROMPT = """
 
 → 경관
 
-등 시설 특성에 맞는 문제를 스스로 도출하세요.
+위 예시는 참고용입니다.
+
+예시에 없는 시설이라도
+시설의 목적과 특성을 분석하여
+주민 입장에서 우려되는 요소를 스스로 도출하십시오.
 """
 
 # 4. 상업대표
@@ -173,6 +182,18 @@ MERCHANT_ROLE_PROMPT = """
 무조건 찬성하지 마십시오.
 
 합리적인 주민 요구는 수용할 수 있습니다.
+
+시설 종류에 따라
+
+경제적 효과
+
+접근성 향상
+
+지역 활성화
+
+공공 편익
+
+등을 스스로 도출하십시오.
 """
 
 # 4. 공무원
@@ -195,8 +216,25 @@ OFFICER_ROLE_PROMPT = """
 - 중재안을 제안하십시오.
 - 이전 중재안보다 개선된 조건을 제안하십시오.
 
-가능하다면
-양측이 모두 수용 가능한 절충안을 제시하십시오.
+주민과 상인의 의견을 종합하여
+
+현실적으로 시행 가능한 조건부 중재안을 제안하십시오.
+
+예를 들어
+
+운영시간 제한
+
+차폐시설 설치
+
+방음시설 설치
+
+녹지 조성
+
+시설 위치 변경
+
+등 다양한 행정적 대안을 제안할 수 있습니다.
+
+반드시 법률과 조례를 우선적으로 검토하십시오.
 """
 
 # 5. Internal Supervisor
@@ -215,6 +253,18 @@ INTERNAL_SUPERVISOR_PROMPT = """
 
 평가하십시오.
 
+[평가 기준]
+
+0.0 : 전혀 수용하지 않음
+
+0.3 : 대부분 반대
+
+0.5 : 조건부 검토 가능
+
+0.7 : 대부분 수용
+
+1.0 : 완전 합의
+
 반드시 아래 JSON만 반환하십시오.
 
 {
@@ -226,8 +276,8 @@ INTERNAL_SUPERVISOR_PROMPT = """
 설명은 절대 출력하지 마십시오.
 """
 
-# 6. Supervisor
-SUPERVISOR_PROMPT = """
+# 6. Final_Supervisor
+FINAL_SUPERVISOR_PROMPT = """
 당신은 회의를 최종 정리하는 AI입니다.
 
 전체 토론 내용을 분석하여
@@ -267,25 +317,45 @@ Scenario C
 
 
 def build_prompt(
-    role_prompt: str,
-    facility_type: str,
-    location: str,
-    location_context: str,
-    rag_context: str,
-    discussion_history: str,
-    css_level: str,
+    role_prompt: str, # 각 ai페르소나가 어떤 역할인 지 알려주는 변수 (ex. 주민대표, 공무원 등등)
+    site_information: str, # 입지 정보
+    rag_context: str, # 법률, 조례 rag 데이터
+    discussion_history: str, # 이전 라운드에서 어떤 말을 했는지 기억하는 변수 (라운드별 같은 말 제한하기 위한 변수)
+    css_level: str, # 갈등 강도 변수
 ) -> str:
     """
-    공통 Prompt + CSS + 역할 Prompt를 조합하여
-    최종 Prompt를 생성합니다.
+    공통 시스템 프롬프트 + CSS + 역할 프롬프트를 하나의 최종 Prompt로 생성합니다.
+
+    Parameters
+    ----------
+    role_prompt : str
+        주민대표 / 상인대표 / 공무원 역할 프롬프트
+
+    site_information : str
+        시설 및 입지 분석 정보
+        예)
+        - 시설 종류 : 흡연부스
+        - 위치 : 서울시 용산구 ...
+        - 주변 시설 : 초등학교, 아파트
+        - 생활인구 : 12,300명
+        - 민원 : 17건
+        ...
+
+    rag_context : str
+        Vector DB에서 검색한 관련 법률, 조례, 정책 등
+
+    discussion_history : str
+        이전 회의 내용
+        (이전 라운드의 발언 및 중재안)
+
+    css_level : str
+        갈등 민감도
+        HIGH / MEDIUM / LOW
     """
 
     return f"""
 {COMMON_SYSTEM_PROMPT.format(
-    facility_type=facility_type,
-    location=location,
-    location_context=location_context,
-    facility_description=f"{facility_type} 설치",
+    site_information=site_information,
     rag_context=rag_context,
     discussion_history=discussion_history,
 )}
