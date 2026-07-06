@@ -1,0 +1,12 @@
+# PostgreSQL 15 + PostGIS 3.3 베이스 이미지
+FROM postgis/postgis:15-3.3
+
+# pgvector 소스 컴파일 및 확장팩 공식 디렉토리 설치 (의존성 유실 방지를 위해 개발 도구 보존)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends git build-essential postgresql-server-dev-15 && \
+    cd /tmp && \
+    git clone --branch v0.5.1 https://github.com/pgvector/pgvector.git && \
+    cd pgvector && \
+    make with_llvm=no && \
+    make install with_llvm=no && \
+    rm -rf /tmp/pgvector
