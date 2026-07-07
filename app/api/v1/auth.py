@@ -70,6 +70,17 @@ def login_user(credentials: UserLogin, db: Session = Depends(get_db)):
 
     user = db.query(User).filter(User.email == credentials.email).first()
 
+    print("입력 이메일:", credentials.email)
+    print("입력 비밀번호:", repr(credentials.password))
+    print("DB 해시:", user.hashed_password)
+
+    print(
+        bcrypt.checkpw(
+            credentials.password.encode("utf-8"),
+            user.hashed_password.encode("utf-8")
+        )
+    )
+
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -100,14 +111,8 @@ def login_user(credentials: UserLogin, db: Session = Depends(get_db)):
     }
     token = create_access_token(token_payload)    
 
-    # 임시 mock 토큰 발행
-    if credentials.email == "admin@yongsan.go.kr" and credentials.password == "admin123!":
-        return {
-            "access_token": token,
-            "token_type": "bearer",
-            "expires_in_minutes": settings.ACCESS_TOKEN_EXPIRE_MINUTES
-        }
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="이메일 혹은 패스워드가 올바르지 않습니다."
-    )
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_in_minutes": settings.ACCESS_TOKEN_EXPIRE_MINUTES
+    }
