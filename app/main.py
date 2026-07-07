@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 
 # 라우터 Import (v1 하위 라우터 연동)
-from app.api.v1 import auth, lands, ahp, simulations, audit
+from app.api.v1 import auth, lands, ahp, simulations, audit, upload
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -25,6 +25,7 @@ app.add_middleware(
 # 라우터 연결
 app.include_router(auth.router, prefix=settings.API_V1_STR + "/auth", tags=["Authentication"])
 app.include_router(lands.router, prefix=settings.API_V1_STR + "/lands", tags=["Lands & HITL"])
+app.include_router(upload.router, prefix=settings.API_V1_STR + "/upload", tags=["Upload & Regulations"])
 app.include_router(ahp.router, prefix=settings.API_V1_STR + "/ahp", tags=["AHP Engine"])
 app.include_router(simulations.router, prefix=settings.API_V1_STR + "/simulation", tags=["AI Simulation"])
 app.include_router(audit.router, prefix=settings.API_V1_STR + "/audit", tags=["Audit AI"])
