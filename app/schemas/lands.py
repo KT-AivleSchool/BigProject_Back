@@ -26,3 +26,10 @@ class LandDetailResponse(BaseModel):
     exclusion_reason: Optional[str] = Field(None, description="배제 사유 (예: 어린이보호구역 200m 이내)")
     lat: float = Field(..., description="위도")
     lng: float = Field(..., description="경도")
+
+
+class CsvAuditResponse(BaseModel):
+    status: str = Field("success", description="처리 결과 상태")
+    audit_reason: str = Field(..., description="AI가 감리한 결측 및 규제 제한 사유")
+    user_intent: str = Field(..., description="사용자가 추출하고자 하는 탐색 의도 및 목적")
+    extracted_weights: dict = Field(..., description="의도에 따른 가중치 슬라이더 후보 항목들 (딕셔너리)")

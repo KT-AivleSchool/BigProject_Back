@@ -1,6 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status
 from typing import List
-from app.schemas.lands import UploadResponse, HitlCoordinateCorrection, LandDetailResponse, FileMetadata
+from app.schemas.lands import UploadResponse, HitlCoordinateCorrection, LandDetailResponse, FileMetadata, CsvAuditResponse
 
 router = APIRouter()
 
@@ -66,5 +66,30 @@ def get_land_details(parcel_id: int):
         "exclusion_reason": None,
         "lat": 37.53,
         "lng": 126.97
+    }
+
+
+@router.post("/audit/csv", response_model=CsvAuditResponse)
+def audit_csv_dataset(file: UploadFile = File(...)):
+    """
+    [장천명 풀스택] Step 1. CSV 데이터셋 수신 전용 AI 사전 감리 및 동적 가중치 도출 API
+    """
+    filename = file.filename
+    if not filename.lower().endswith(".csv"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Step 1 감리 파이프라인은 오직 CSV 확장자 파일만 업로드할 수 있습니다."
+        )
+        
+    return {
+        "status": "success",
+        "audit_reason": "전기차 지상 충전시설 설치 의무 법규 및 소방 안전 가이드라인에 따른 충전 부지 적격성 검토가 요구됩니다. 일부 주차 구획의 지상/지하 경계 부주의 기재 가능성이 스캔되었습니다.",
+        "user_intent": "용산구 내 친환경자동차법 및 소방청 가이드라인 설치의무를 충족하는 지상형 전기차 급송 충전소 최적 입지 도출",
+        "extracted_weights": {
+            "소방시설 거리": 5,
+            "배후 주거인구": 5,
+            "전력 공급 용량": 5,
+            "이용 편의성": 5
+        }
     }
 
