@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, Boolean, DateTime
 from sqlalchemy.sql import func
-from app.db.session import Base  # 화면 캡처 2026-07-06 163740.png에 명시된 Base 경로 적용
+from app.db.session import Base
 
 class User(Base):
     __tablename__ = "users"
