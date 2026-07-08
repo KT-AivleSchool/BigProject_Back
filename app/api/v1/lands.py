@@ -4,17 +4,20 @@ import json
 import logging
 from openai import AsyncOpenAI
 from app.config import settings
-from app.schemas.lands import UploadResponse, HitlCoordinateCorrection, LandDetailResponse, CsvAuditResponse
+from app.schemas.lands import (
+    UploadResponse,
+    HitlCoordinateCorrection,
+    LandDetailResponse,
+    CsvAuditResponse,
+)
 
 logger = logging.getLogger("app.api.v1.lands")
 
 router = APIRouter()
 
+
 @router.post("/upload", response_model=UploadResponse)
-def upload_datasets(
-    files: List[UploadFile] = File(...),
-    district_id: int = Form(...)
-):
+def upload_datasets(files: List[UploadFile] = File(...), district_id: int = Form(...)):
     """
     [Cj(찬진) 파트 서브 & 장천명 풀스택] 다목적 데이터셋 및 조례 파일 일괄 적재 라우터
     수신된 파일의 확장자를 체크하여 .csv/.shp는 DB팀 파이프라인으로, .pdf는 RAG 파이프라인으로 라우팅합니다.
@@ -22,13 +25,13 @@ def upload_datasets(
     first_file = files[0] if files else None
     filename = first_file.filename if first_file else "dummy.csv"
     ext = filename.split(".")[-1].lower() if "." in filename else "csv"
-    
+
     if ext not in ["csv", "shp", "pdf", "hwp", "txt", "md"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"지원하지 않는 확장자 파일이 포함되어 있습니다: {filename}"
+            detail=f"지원하지 않는 확장자 파일이 포함되어 있습니다: {filename}",
         )
-        
+
     # Pydantic Schema에 따른 DTO 반환
     return {
         "status": "success",
@@ -37,9 +40,10 @@ def upload_datasets(
             "file_type": ext.upper(),
             "total_records": 100,
             "imported_records": 95,
-            "failed_records": 5
-        }
+            "failed_records": 5,
+        },
     }
+
 
 @router.post("/hitl/commit")
 def commit_hitl_correction(correction: HitlCoordinateCorrection):
@@ -52,9 +56,10 @@ def commit_hitl_correction(correction: HitlCoordinateCorrection):
         "pnu_id": correction.parcel_id,
         "updated_coordinates": {
             "lat": correction.corrected_lat,
-            "lng": correction.corrected_lng
-        }
+            "lng": correction.corrected_lng,
+        },
     }
+
 
 @router.get("/details/{parcel_id}", response_model=LandDetailResponse)
 def get_land_details(parcel_id: int):
@@ -66,12 +71,14 @@ def get_land_details(parcel_id: int):
         "address": "서울특별시 용산구 한강대로 180",
         "geometry_geojson": {
             "type": "Polygon",
-            "coordinates": [[[126.97, 37.53], [126.98, 37.53], [126.98, 37.54], [126.97, 37.53]]]
+            "coordinates": [
+                [[126.97, 37.53], [126.98, 37.53], [126.98, 37.54], [126.97, 37.53]]
+            ],
         },
         "is_excluded": False,
         "exclusion_reason": None,
         "lat": 37.53,
-        "lng": 126.97
+        "lng": 126.97,
     }
 
 
@@ -84,8 +91,7 @@ async def audit_csv_dataset(files: List[UploadFile] = File(...)):
     """
     if not files:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="업로드된 파일이 없습니다."
+            status_code=status.HTTP_400_BAD_REQUEST, detail="업로드된 파일이 없습니다."
         )
 
     # 모든 파일 확장자 유효성 검사
@@ -93,7 +99,7 @@ async def audit_csv_dataset(files: List[UploadFile] = File(...)):
         if not file.filename.lower().endswith(".csv"):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Step 1 감리 파이프라인은 오직 CSV 확장자 파일만 지원합니다. (에러 파일: {file.filename})"
+                detail=f"Step 1 감리 파이프라인은 오직 CSV 확장자 파일만 지원합니다. (에러 파일: {file.filename})",
             )
 
     # 1. 모든 CSV 파일들의 상위 데이터셋 내용을 하나의 텍스트 컨텍스트로 결합
@@ -102,13 +108,17 @@ async def audit_csv_dataset(files: List[UploadFile] = File(...)):
         for idx, file in enumerate(files):
             contents = await file.read()
             lines = contents.decode("utf-8", errors="ignore").splitlines()
-            preview = "\n".join(lines[:15]) # 각 파일당 상위 15개 행만 스캔 (토큰 과소비 예방)
-            combined_preview_text += f"--- [파일 {idx+1}] 명칭: {file.filename} ---\n{preview}\n\n"
+            preview = "\n".join(
+                lines[:15]
+            )  # 각 파일당 상위 15개 행만 스캔 (토큰 과소비 예방)
+            combined_preview_text += (
+                f"--- [파일 {idx + 1}] 명칭: {file.filename} ---\n{preview}\n\n"
+            )
     except Exception as e:
         logger.error(f"[Ingestion Error] Failed to read multi-CSV content: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="업로드된 CSV 파일 중 일부의 인코딩(UTF-8)을 해석할 수 없습니다."
+            detail="업로드된 CSV 파일 중 일부의 인코딩(UTF-8)을 해석할 수 없습니다.",
         )
 
     # 다중 파일 융합 기본 Fallback 데이터 정의
@@ -120,13 +130,15 @@ async def audit_csv_dataset(files: List[UploadFile] = File(...)):
             "소방시설 거리": 5,
             "배후 주거인구": 5,
             "전력 공급 용량": 5,
-            "이용 편의성": 5
-        }
+            "이용 편의성": 5,
+        },
     }
 
     # 2. OpenAI API 키가 없을 경우, Fallback 모드 작동
     if not settings.OPENAI_API_KEY or settings.OPENAI_API_KEY.strip() == "":
-        logger.warning("[AI Ingestion] OPENAI_API_KEY is missing. Running in Graceful Fallback Mode.")
+        logger.warning(
+            "[AI Ingestion] OPENAI_API_KEY is missing. Running in Graceful Fallback Mode."
+        )
         return fallback_data
 
     # 3. OpenAI 비동기 멀티파일 감리 호출
@@ -146,10 +158,13 @@ async def audit_csv_dataset(files: List[UploadFile] = File(...)):
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"다중 CSV 파일 통합 텍스트:\n{combined_preview_text}"}
+                {
+                    "role": "user",
+                    "content": f"다중 CSV 파일 통합 텍스트:\n{combined_preview_text}",
+                },
             ],
             response_format={"type": "json_object"},
-            timeout=12.0
+            timeout=12.0,
         )
 
         llm_response_text = response.choices[0].message.content
@@ -159,10 +174,13 @@ async def audit_csv_dataset(files: List[UploadFile] = File(...)):
             "status": "success",
             "audit_reason": parsed.get("audit_reason", fallback_data["audit_reason"]),
             "user_intent": parsed.get("user_intent", fallback_data["user_intent"]),
-            "extracted_weights": parsed.get("extracted_weights", fallback_data["extracted_weights"])
+            "extracted_weights": parsed.get(
+                "extracted_weights", fallback_data["extracted_weights"]
+            ),
         }
 
     except Exception as e:
-        logger.error(f"[AI Ingestion Failure] OpenAI call failed: {str(e)}. Switching to Graceful Fallback Mode.")
+        logger.error(
+            f"[AI Ingestion Failure] OpenAI call failed: {str(e)}. Switching to Graceful Fallback Mode."
+        )
         return fallback_data
-
