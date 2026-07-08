@@ -1,5 +1,4 @@
 from pydantic import BaseModel, Field
-from typing import Dict, Any, Optional
 
 class AuditVerifyResponse(BaseModel):
     ocr_success: bool = Field(..., description="OCR PDF 텍스트 추출 성공 여부")

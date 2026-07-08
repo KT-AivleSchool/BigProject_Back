@@ -1,5 +1,4 @@
 from typing import List
-from langchain_openai import OpenAIEmbeddings
 
 # [동현님 담당] pgvector Vector DB 연결 및 RAG 문서 적재/조회 모듈
 class RagVectorStorage:

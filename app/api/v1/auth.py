@@ -52,7 +52,7 @@ async def register_user(user: UserRegister, db: AsyncSession = Depends(get_db)):
         db.add(new_user)
         await db.commit()
         await db.refresh(new_user)
-    except Exception as e:
+    except Exception:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
