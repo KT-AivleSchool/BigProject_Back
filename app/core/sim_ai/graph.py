@@ -186,11 +186,15 @@ def route_next(state: AgentState) -> str:
 def check_evaluation(state: AgentState) -> str:
     """평가 점수에 따라 토론 종료 여부 결정"""
     evals = state.get("evaluations", {})
-    officer_acceptance = evals.get("officer_acceptance", 0.0)
+    resident_acc = evals.get("resident_acceptance", 0.0)
+    merchant_acc = evals.get("merchant_acceptance", 0.0)
+    officer_acc = evals.get("officer_acceptance", 0.0)
+    
+    avg_acceptance = (resident_acc + merchant_acc + officer_acc) / 3.0
     round_count = state.get("round_count", 0)
     
-    # 0.8 이상이거나 3라운드 이상이면 토론 종료
-    if officer_acceptance >= 0.8 or round_count >= 3:
+    # 전체 평균 수용도가 0.8 이상이거나 3라운드 이상이면 토론 종료
+    if avg_acceptance >= 0.8 or round_count >= 3:
         return "reporter"
     # 0.8 미만이면 다음 라운드를 위해 라우터로 복귀
     return "supervisor"
