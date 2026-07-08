@@ -1,7 +1,7 @@
 import asyncio
-from fastapi import APIRouter, status
+from fastapi import APIRouter
 from sse_starlette.sse import EventSourceResponse
-from app.schemas.simulations import SimulationRunRequest, SimulationResultResponse, ScenarioDetail
+from app.schemas.simulations import SimulationResultResponse
 
 # API 라우터 인스턴스 초기화
 router = APIRouter()

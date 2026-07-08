@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import Optional
 
 class FileMetadata(BaseModel):
     filename: str = Field(..., description="업로드된 파일 명")

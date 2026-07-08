@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Optional
 
 class SimulationRunRequest(BaseModel):
     parcel_id: int = Field(..., description="시뮬레이션할 적격 후보지 필지 ID")
