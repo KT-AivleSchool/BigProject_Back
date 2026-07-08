@@ -1,6 +1,5 @@
-import asyncio
 import json
-from fastapi import APIRouter, status
+from fastapi import APIRouter
 from sse_starlette.sse import EventSourceResponse
 from app.schemas.simulations import SimulationResultResponse
 
@@ -60,7 +59,7 @@ def stream_ai_discussion(lat: float, lng: float, facility_type: str, additional_
                     if "messages" in node_state and len(node_state["messages"]) > 0:
                         msg = node_state["messages"][-1]
                         
-                        # "주민대표: 저는 반대합니다" 문자열 파싱
+                        # 예시) "주민대표: 저는 반대합니다" 문자열 파싱
                         parts = msg.split(":", 1)
                         if len(parts) == 2:
                             sender = parts[0].strip()
