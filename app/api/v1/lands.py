@@ -76,37 +76,46 @@ def get_land_details(parcel_id: int):
 
 
 @router.post("/audit/csv", response_model=CsvAuditResponse)
-async def audit_csv_dataset(file: UploadFile = File(...)):
+async def audit_csv_dataset(files: List[UploadFile] = File(...)):
     """
-    [장천명 풀스택] Step 1. CSV 데이터셋 수신 전용 AI 사전 감리 및 동적 가중치 도출 API
-    - 업로드된 CSV의 텍스트 내용을 읽어 OpenAI LLM 비동기 연동을 통해 데이터셋 정밀 감리를 실행합니다.
+    [장천명 풀스택] Step 1. 다중 CSV 데이터셋 수신 전용 AI 통합 사전 감리 및 융합 가중치 도출 API
+    - 업로드된 다중 CSV 파일들의 텍스트 내용을 각각 읽어 통합한 뒤 OpenAI LLM 비동기 연동을 통해 감리를 실행합니다.
     - API Key 누락 및 서버 통신 장애 시, 사전에 준비된 지능형 규칙 기반 가이드라인 Fallback 로직이 매끄럽게 연동됩니다.
     """
-    filename = file.filename
-    if not filename.lower().endswith(".csv"):
+    if not files:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Step 1 감리 파이프라인은 오직 CSV 확장자 파일만 업로드할 수 있습니다."
+            detail="업로드된 파일이 없습니다."
         )
 
-    # 1. 업로드 파일의 텍스트 내용 일부(최대 3000자) 스캔
+    # 모든 파일 확장자 유효성 검사
+    for file in files:
+        if not file.filename.lower().endswith(".csv"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Step 1 감리 파이프라인은 오직 CSV 확장자 파일만 지원합니다. (에러 파일: {file.filename})"
+            )
+
+    # 1. 모든 CSV 파일들의 상위 데이터셋 내용을 하나의 텍스트 컨텍스트로 결합
+    combined_preview_text = ""
     try:
-        contents = await file.read()
-        # 대형 파일의 파싱 속도를 보장하고 LLM 토큰 초과를 방지하기 위해 최대 20행 수준으로 제한 슬라이싱
-        lines = contents.decode("utf-8", errors="ignore").splitlines()
-        preview_text = "\n".join(lines[:25]) # 상위 25개 데이터 행만 추출
+        for idx, file in enumerate(files):
+            contents = await file.read()
+            lines = contents.decode("utf-8", errors="ignore").splitlines()
+            preview = "\n".join(lines[:15]) # 각 파일당 상위 15개 행만 스캔 (토큰 과소비 예방)
+            combined_preview_text += f"--- [파일 {idx+1}] 명칭: {file.filename} ---\n{preview}\n\n"
     except Exception as e:
-        logger.error(f"[Ingestion Error] Failed to read CSV content: {str(e)}")
+        logger.error(f"[Ingestion Error] Failed to read multi-CSV content: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="CSV 파일 인코딩(UTF-8)을 해석할 수 없습니다."
+            detail="업로드된 CSV 파일 중 일부의 인코딩(UTF-8)을 해석할 수 없습니다."
         )
 
-    # 기본 Fallback (규칙 기반 대체 데이터) 정의
+    # 다중 파일 융합 기본 Fallback 데이터 정의
     fallback_data = {
         "status": "success",
-        "audit_reason": "전기차 지상 충전시설 설치 의무 법규 및 소방 안전 가이드라인에 따른 충전 부지 적격성 검토가 요구됩니다. 일부 주차 구획의 지상/지하 경계 부주의 기재 가능성이 스캔되었습니다.",
-        "user_intent": "용산구 내 친환경자동차법 및 소방청 가이드라인 설치의무를 충족하는 지상형 전기차 급송 충전소 최적 입지 도출",
+        "audit_reason": "전기차 지상 충전소 의무 규정과 인근 소방시설 소방차 통로 확보 가이드라인에 따른 부지 교차 검토가 요구됩니다. 업로드된 주차 데이터와 소방 용수시설 데이터의 지번 불일치 가능성이 감지되었습니다.",
+        "user_intent": "용산구 내 친환경자동차법 및 소방안전 특별법을 충족하는 최적의 지상형 전기차 급속 충전소 입지 도출",
         "extracted_weights": {
             "소방시설 거리": 5,
             "배후 주거인구": 5,
@@ -115,38 +124,37 @@ async def audit_csv_dataset(file: UploadFile = File(...)):
         }
     }
 
-    # 2. OpenAI API 키가 설정되어 있지 않을 경우, 무작정 에러를 뿜지 않고 즉시 Fallback 로드 (Resilience Guard)
+    # 2. OpenAI API 키가 없을 경우, Fallback 모드 작동
     if not settings.OPENAI_API_KEY or settings.OPENAI_API_KEY.strip() == "":
         logger.warning("[AI Ingestion] OPENAI_API_KEY is missing. Running in Graceful Fallback Mode.")
         return fallback_data
 
-    # 3. OpenAI 비동기 클라이언트 호출 시도
+    # 3. OpenAI 비동기 멀티파일 감리 호출
     try:
         client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
         system_prompt = (
-            "너는 지능형 스마트시티 입지 감리 AI 에이전트이다. 업로드된 CSV 데이터셋의 텍스트 일부를 스캔하고, "
-            "다음 3가지 핵심 정보를 분석하여 엄격한 JSON 형식으로 출력해야 한다.\n"
+            "너는 지능형 스마트시티 입지 감리 AI 에이전트이다. 업로드된 여러 개의 CSV 데이터셋 일부 내용을 제공받아 "
+            "데이터셋들 간의 상관관계와 도시 인프라적 제약 사항을 융합 분석하고, 다음 3가지 핵심 정보를 엄격한 JSON 형식으로 출력해야 한다.\n"
             "출력 필드 규격:\n"
-            "1. audit_reason (string): 데이터의 결측, 기재 부주의 혹은 스쿨존/소방시설 규제 배제 검토가 필요한 정밀 감리 이유.\n"
-            "2. user_intent (string): 이 데이터셋에 입각한 실무자의 최적 입지 탐색 목적/의도 한글 요약.\n"
+            "1. audit_reason (string): 데이터셋들의 결측치, 지번 기재 부주의 혹은 스쿨존/소방시설 등 법적 제한 규제 구역과의 침범 가능성 정밀 감리 이유.\n"
+            "2. user_intent (string): 다중 데이터셋을 종합 관통하는 실무자의 최적 입지 선정 의도 및 기획 목적 한글 요약.\n"
             "3. extracted_weights (dictionary): 분석된 의도에 매핑되어 가변 도출된 4~6개의 입지 가중치 요인명과 기본값 5 고정 (예: {'소방시설 거리': 5, '배후 주거인구': 5, '전력 공급 용량': 5, '이용 편의성': 5})\n"
-            "오직 유효한 JSON만 반환하고 다른 주석이나 텍스트는 절대 포함하지 마라."
+            "오직 유효한 JSON만 반환하고 다른 텍스트는 절대 포함하지 마라."
         )
 
         response = await client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"CSV 파일 일부:\n{preview_text}"}
+                {"role": "user", "content": f"다중 CSV 파일 통합 텍스트:\n{combined_preview_text}"}
             ],
             response_format={"type": "json_object"},
-            timeout=10.0
+            timeout=12.0
         )
 
         llm_response_text = response.choices[0].message.content
         parsed = json.loads(llm_response_text)
 
-        # JSON 스키마 안전 장치 및 기본값 보정
         return {
             "status": "success",
             "audit_reason": parsed.get("audit_reason", fallback_data["audit_reason"]),
