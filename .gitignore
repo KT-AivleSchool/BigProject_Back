@@ -16,3 +16,9 @@ ENV/
 
 # OS
 .DS_Store
+
+# BigProject_Planning/
+BigProject_Planning/
+
+# Local Dev Tests
+tests/test_geocoder.py
