@@ -1,14 +1,17 @@
 import asyncio
-from fastapi import APIRouter
+import json
+from fastapi import APIRouter, status
 from sse_starlette.sse import EventSourceResponse
 from app.schemas.simulations import SimulationResultResponse
+
+from app.core.sim_ai.graph import build_discussion_graph
 
 # API 라우터 인스턴스 초기화
 router = APIRouter()
 
 
 @router.get("/stream")
-def stream_ai_discussion(parcel_id: int):
+def stream_ai_discussion(lat: float, lng: float, facility_type: str, additional_info: str = ""):
     """
     [동현 AI 메인 & 장천명 풀스택] LangGraph 3자 페르소나 모의 심의 토론 실시간 SSE 스트리밍 API
     - 동작 방식: HTTP 연결을 유지한 상태로, AI 에이전트의 대화 토큰을 chunk 단위로 지속 밀어줍니다.
@@ -16,46 +19,72 @@ def stream_ai_discussion(parcel_id: int):
     """
 
     async def event_generator():
-        # [협업 지침] 동현님이 LangGraph를 구현하면, 아래 하드코딩된 대화 배열(test_dialogues)을
-        # 실제 LangGraph의 노드 실행 발화 결과로 동적 바인딩해 주셔야 합니다.
-        test_dialogues = [
-            {
-                "sender": "시스템",
-                "text": f"필지 PNU-{parcel_id} 스마트 쉼터 모의 심의를 시작합니다.",
-                "is_finished": False,
-            },
-            {
-                "sender": "주민대표 (반대)",
-                "text": "도로 조례 제5조에 따르면, 해당 부지는 인근 주거 지역과의 소음 방지 거리가 확보되지 않았습니다!",
-                "is_finished": False,
-            },
-            {
-                "sender": "상인대표 (찬성)",
-                "text": "하지만 스마트 쉼터 설치로 인해 유동인구가 머무는 시간이 늘면 주변 골목 상권 활성화에 큰 도움이 됩니다.",
-                "is_finished": False,
-            },
-            {
-                "sender": "조정 공무원",
-                "text": "양측 의견을 수렴하여, 소음 방지 차폐막 설치 비용을 구청 예산에 반영하는 조건부 타결 시나리오 A를 제시합니다.",
-                "is_finished": False,
-            },
-            {
-                "sender": "시스템",
-                "text": "합의 타결 성공. 심의 보고서 인쇄가 가능합니다.",
-                "is_finished": True,
-            },
-        ]
-
-        for dialogue in test_dialogues:
-            # 실시간 타이핑 효과 및 패킷 간 시간 간격을 시뮬레이션하기 위해 1.5초 지연(Sleep)
-            await asyncio.sleep(1.5)
-
-            # SSE 프로토콜 표준 규격에 맞게 event와 data의 JSON 문자열 스트림 구조로 yield 전송
-            # is_finished 플래그를 실어주어 프론트엔드가 소켓 연결을 닫을 타이밍을 감지하게 합니다.
-            yield {
-                "event": "message",
-                "data": f'{{"sender": "{dialogue["sender"]}", "text": "{dialogue["text"]}", "is_finished": {str(dialogue["is_finished"]).lower()}}}',
-            }
+        # 1. 시스템 시작 메시지 송출
+        yield {
+            "event": "message",
+            "data": json.dumps({
+                "sender": "시스템", 
+                "text": f"선택된 위치(위도: {lat}, 경도: {lng})의 {facility_type} 모의 심의를 시작합니다...",
+                "is_finished": False
+            }, ensure_ascii=False)
+        }
+        
+        # 2. LangGraph 초기화 및 상태 세팅
+        graph = build_discussion_graph().compile()
+        
+        site_info_text = f"설치 예정 시설: {facility_type}, 설치 예정지 좌표 (위도: {lat}, 경도: {lng})."
+        if additional_info:
+            site_info_text += f" 주변 환경 정보: {additional_info}"
+            
+        initial_state = {
+            "messages": [],
+            "site_information": site_info_text,
+            "css_resident": "HIGH",
+            "css_merchant": "HIGH",
+            "css_officer": "HIGH",
+            "round_count": 0,
+            "spoken_this_round": [],
+            "evaluations": {},
+            "final_scenarios": {},
+            "is_finished": False,
+            "next_speaker": "resident",
+            "rag_resident": "",
+            "rag_merchant": "",
+            "rag_officer": ""
+        }
+        
+        # 3. 그래프 비동기 스트리밍 (astream)
+        async for output in graph.astream(initial_state):
+            for node_name, node_state in output.items():
+                if node_name in ["resident", "merchant", "officer"]:
+                    if "messages" in node_state and len(node_state["messages"]) > 0:
+                        msg = node_state["messages"][-1]
+                        
+                        # "주민대표: 저는 반대합니다" 문자열 파싱
+                        parts = msg.split(":", 1)
+                        if len(parts) == 2:
+                            sender = parts[0].strip()
+                            text = parts[1].strip()
+                        else:
+                            sender = "참여자"
+                            text = msg
+                            
+                        yield {
+                            "event": "message",
+                            "data": json.dumps({"sender": sender, "text": text, "is_finished": False}, ensure_ascii=False)
+                        }
+                
+                elif node_name == "reporter":
+                    scenarios = node_state.get("final_scenarios", {})
+                    scenario_desc = scenarios.get("scenario_description", "토론 결과 도출 완료")
+                    yield {
+                        "event": "message",
+                        "data": json.dumps({
+                            "sender": "시스템", 
+                            "text": f"토론 종료. 결과: {scenario_desc}",
+                            "is_finished": True
+                        }, ensure_ascii=False)
+                    }
 
     # sse_starlette 라이브러리의 EventSourceResponse를 반환하여 비동기 HTTP 청크 전송 스트림 활성화
     return EventSourceResponse(event_generator())
