@@ -4,6 +4,7 @@ from langgraph.graph import StateGraph, END
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 import json
+import re
 
 from app.core.sim_ai.prompts import (
     build_prompt,
@@ -25,6 +26,10 @@ class AgentState(TypedDict):
     css_merchant: str          # 상인 갈등 민감도
     css_officer: str           # 공무원 갈등 민감도
     round_count: int           # 토론 반복 횟수 (최대 3라운드)
+    spoken_this_round: list[str] # 이번 라운드에 발언한 페르소나 추적
+    rag_resident: str          # 주민대표 RAG 캐싱
+    rag_merchant: str          # 상인대표 RAG 캐싱
+    rag_officer: str           # 공무원 RAG 캐싱
     evaluations: dict          # 내부 평가 결과 (수용도)
     final_scenarios: dict      # 도출된 최종 시나리오 결과 객체
     is_finished: bool          # 토론 종결 여부
@@ -35,27 +40,42 @@ llm = ChatOpenAI(api_key=settings.OPENAI_API_KEY, model="gpt-4o-mini", temperatu
 vector_db = RagVectorStorage()
 
 def _format_chat_history(messages: Sequence[str]) -> str:
+    """메시지 리스트를 하나의 텍스트로 포맷팅"""
     return "\n".join(messages)
+
+def _extract_json(text: str) -> dict:
+    """LLM의 응답에서 마크다운 태그를 제거하고 안전하게 JSON 파싱"""
+    text = text.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+        text = re.sub(r"```$", "", text).strip()
+    return json.loads(text)
 
 # 1. 라우터 (사회자) 노드
 async def router_node(state: AgentState) -> dict:
     """대화 문맥을 보고 다음에 발언할 페르소나를 결정합니다."""
     history_text = _format_chat_history(state.get("messages", []))
+    spoken = state.get("spoken_this_round", [])
     
-    if not history_text:
-        return {"next_speaker": "resident"}
+    all_speakers = {"resident", "merchant", "officer"}
+    remaining = list(all_speakers - set(spoken))
+    
+    if not remaining:
+        # 3명 모두 발언했다면 무조건 평가자로 이동
+        return {"next_speaker": "evaluator"}
         
-    system_msg = """당신은 토론의 사회자(Supervisor)입니다. 
-지금까지의 대화 내역을 보고 다음에 가장 발언이 필요한 페르소나를 결정하세요.
-선택 가능 항목 (반드시 아래 영문 키워드 중 하나만 출력): 
-- resident
-- merchant
-- officer
-- evaluator
+    if len(remaining) == 1:
+        # 1명만 남았으면 고민 없이 해당 페르소나로 이동
+        return {"next_speaker": remaining[0]}
+        
+    options_str = "\n".join([f"- {s}" for s in remaining])
+    system_msg = f"""당신은 토론의 사회자(Supervisor)입니다. 
+지금까지의 대화 내역을 보고, 이번 라운드에 발언하지 않은 남은 후보 중 다음에 가장 발언이 필요한 페르소나를 결정하세요.
 
-[라우팅 규칙]
-주민대표, 상인대표, 조정공무원이 이번 라운드에 최소 1번씩 발언을 마쳤다면 반드시 'evaluator'를 선택하여 평가를 진행하세요.
-절대 다른 설명 없이 오직 선택 항목 중 하나의 단어(resident, merchant, officer, evaluator)만 출력하세요."""
+선택 가능 항목 (반드시 아래 영문 키워드 중 하나만 출력): 
+{options_str}
+
+절대 다른 설명 없이 오직 선택 항목 중 하나의 단어만 출력하세요."""
     
     response = await llm.ainvoke([
         SystemMessage(content=system_msg),
@@ -63,8 +83,8 @@ async def router_node(state: AgentState) -> dict:
     ])
     
     next_node = response.content.strip().lower()
-    if next_node not in ["resident", "merchant", "officer", "evaluator"]:
-        next_node = "evaluator"
+    if next_node not in remaining:
+        next_node = remaining[0]  # 파싱 실패 시 남은 사람 중 아무나 선택
         
     return {"next_speaker": next_node}
 
@@ -75,19 +95,29 @@ async def resident_node(state: AgentState) -> dict:
     site_info = state.get("site_information", "입지 정보 없음")
     history_text = _format_chat_history(state.get("messages", []))
     
-    query = f"{site_info} 반대" if not history_text else history_text[-200:]
-    retrieved_docs = await vector_db.retrieve_similar_statutes(query)
+    # 1. RAG용 검색어 세팅 및 캐싱 (중복 조회 방지)
+    rag_context = state.get("rag_resident", "")
+    if not rag_context:
+        query = f"{site_info} 시설 입지 반대, 주민 피해, 환경 규제"
+        retrieved_docs = await vector_db.retrieve_similar_statutes(query)
+        rag_context = "\n".join(retrieved_docs)
     
     prompt = build_prompt(
         role_prompt=RESIDENT_ROLE_PROMPT,
         site_information=site_info,
-        rag_context="\n".join(retrieved_docs),
+        rag_context=rag_context,
         discussion_history=history_text,
         css_level=css_level
     )
     
     response = await llm.ainvoke([SystemMessage(content=prompt)])
-    return {"messages": [f"주민대표: {response.content}"]}
+    
+    spoken = state.get("spoken_this_round", [])
+    return {
+        "messages": [f"주민대표: {response.content}"],
+        "spoken_this_round": spoken + ["resident"],
+        "rag_resident": rag_context
+    }
 
 async def merchant_node(state: AgentState) -> dict:
     """상인대표 (찬성 페르소나) 노드"""
@@ -95,19 +125,29 @@ async def merchant_node(state: AgentState) -> dict:
     site_info = state.get("site_information", "입지 정보 없음")
     history_text = _format_chat_history(state.get("messages", []))
     
-    query = f"{site_info} 상권 활성화" if not history_text else history_text[-200:]
-    retrieved_docs = await vector_db.retrieve_similar_statutes(query)
+    # 1. RAG용 검색어 세팅 및 캐싱 (중복 조회 방지)
+    rag_context = state.get("rag_merchant", "")
+    if not rag_context:
+        query = f"{site_info} 상권 활성화, 경제적 이익, 시설 유치, 예외 규정"
+        retrieved_docs = await vector_db.retrieve_similar_statutes(query)
+        rag_context = "\n".join(retrieved_docs)
     
     prompt = build_prompt(
         role_prompt=MERCHANT_ROLE_PROMPT,
         site_information=site_info,
-        rag_context="\n".join(retrieved_docs),
+        rag_context=rag_context,
         discussion_history=history_text,
         css_level=css_level
     )
     
     response = await llm.ainvoke([SystemMessage(content=prompt)])
-    return {"messages": [f"상인대표: {response.content}"]}
+    
+    spoken = state.get("spoken_this_round", [])
+    return {
+        "messages": [f"상인대표: {response.content}"],
+        "spoken_this_round": spoken + ["merchant"],
+        "rag_merchant": rag_context
+    }
 
 async def officer_node(state: AgentState) -> dict:
     """조정공무원 (중재 페르소나) 노드"""
@@ -115,19 +155,29 @@ async def officer_node(state: AgentState) -> dict:
     site_info = state.get("site_information", "입지 정보 없음")
     history_text = _format_chat_history(state.get("messages", []))
     
-    query = f"{site_info} 중재안 조례" if not history_text else history_text[-200:]
-    retrieved_docs = await vector_db.retrieve_similar_statutes(query)
+    # 1. RAG용 검색어 세팅 및 캐싱 (중복 조회 방지)
+    rag_context = state.get("rag_officer", "")
+    if not rag_context:
+        query = f"{site_info} 설치 기준, 갈등 조정, 공공 시설 중재안"
+        retrieved_docs = await vector_db.retrieve_similar_statutes(query)
+        rag_context = "\n".join(retrieved_docs)
     
     prompt = build_prompt(
         role_prompt=OFFICER_ROLE_PROMPT,
         site_information=site_info,
-        rag_context="\n".join(retrieved_docs),
+        rag_context=rag_context,
         discussion_history=history_text,
         css_level=css_level
     )
     
     response = await llm.ainvoke([SystemMessage(content=prompt)])
-    return {"messages": [f"조정공무원: {response.content}"]}
+    
+    spoken = state.get("spoken_this_round", [])
+    return {
+        "messages": [f"조정공무원: {response.content}"],
+        "spoken_this_round": spoken + ["officer"],
+        "rag_officer": rag_context
+    }
 
 # 3. 평가 및 최종 노드
 async def evaluator_node(state: AgentState) -> dict:
@@ -143,8 +193,9 @@ async def evaluator_node(state: AgentState) -> dict:
     ])
     
     try:
-        evals = json.loads(response.content)
-    except:
+        evals = _extract_json(response.content)
+    except Exception as e:
+        print(f"JSON Parsing Error: {e}")
         evals = {"resident_acceptance": 0.0, "merchant_acceptance": 0.0, "officer_acceptance": 0.0}
         
     # CSS 유동적 변경 로직: 각 페르소나의 개별 수용도를 기준으로 민감도 개별 조정
@@ -158,7 +209,8 @@ async def evaluator_node(state: AgentState) -> dict:
         "round_count": round_count, 
         "css_resident": get_css(evals.get("resident_acceptance", 0.0)),
         "css_merchant": get_css(evals.get("merchant_acceptance", 0.0)),
-        "css_officer": get_css(evals.get("officer_acceptance", 0.0))
+        "css_officer": get_css(evals.get("officer_acceptance", 0.0)),
+        "spoken_this_round": []  # 다음 라운드를 위해 발언자 추적 초기화
     }
 
 async def reporter_node(state: AgentState) -> dict:
@@ -172,8 +224,9 @@ async def reporter_node(state: AgentState) -> dict:
     ])
     
     try:
-        final_scenarios = json.loads(response.content)
-    except:
+        final_scenarios = _extract_json(response.content)
+    except Exception as e:
+        print(f"JSON Parsing Error: {e}")
         final_scenarios = {}
         
     return {"final_scenarios": final_scenarios, "is_finished": True}

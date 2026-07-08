@@ -2,7 +2,7 @@ from typing import List
 from langchain_openai import OpenAIEmbeddings
 from sqlalchemy import text
 from app.config import settings
-from app.db.session import AsyncSessionLocal
+from app.db.session import SessionLocal
 
 # [동현님 담당] pgvector Vector DB 연결 및 RAG 문서 적재/조회 모듈
 class RagVectorStorage:
@@ -34,7 +34,7 @@ class RagVectorStorage:
         """)
         
         # 3. 비동기 DB 세션을 열고 쿼리 실행
-        async with AsyncSessionLocal() as session:
+        async with SessionLocal() as session:
             try:
                 # pgvector 쿼리 실행 시 리스트 형태의 벡터를 문자열로 포맷팅하여 전달해야 할 수 있음
                 vector_str = "[" + ",".join(map(str, query_vector)) + "]"
