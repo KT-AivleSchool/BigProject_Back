@@ -102,15 +102,15 @@ async def audit_csv_dataset(files: List[UploadFile] = File(...)):
                 detail=f"Step 1 감리 파이프라인은 오직 CSV 확장자 파일만 지원합니다. (에러 파일: {file.filename if file.filename else '이름없음'})",
             )
 
-    # 1. 모든 CSV 파일들의 상위 데이터셋 내용을 하나의 텍스트 컨텍스트로 결합
+    # 1. 모든 CSV 파일들의 전체 내용을 하나의 텍스트 컨텍스트로 결합
     combined_preview_text = ""
     try:
         for idx, file in enumerate(files):
             contents = await file.read()
-            lines = contents.decode("utf-8", errors="ignore").splitlines()
-            preview = "\n".join(
-                lines[:15]
-            )  # 각 파일당 상위 15개 행만 스캔 (토큰 과소비 예방)
+            # 전체 데이터를 디코딩하여 컨텍스트에 100% 매핑
+            preview = contents.decode("utf-8", errors="ignore")
+            # 후속 DB 적재 및 검리 모듈에서 다시 사용할 수 있도록 파일 포인터를 0으로 초기화
+            await file.seek(0)
             combined_preview_text += (
                 f"--- [파일 {idx + 1}] 명칭: {file.filename} ---\n{preview}\n\n"
             )
