@@ -9,7 +9,7 @@
 # ├── REPORTER_PROMPT               # 최종 결과용
 # └── build_prompt()                # 최종 Prompt 생성 함수
 
-# 시설이 흡연부스든 전기차 충전소든 쓰레기 집하장이든 Prompt를 수정할 필요 X. 
+# 시설이 흡연부스든 전기차 충전소든 쓰레기 집하장이든 Prompt를 수정할 필요 X.
 # 입력 데이터와 RAG 결과만 바뀌면 동일한 프레임워크에서 토론이 가능해져 확장성 높임.
 
 # 1. 공통 Prompt
@@ -58,9 +58,7 @@ COMMON_SYSTEM_PROMPT = """
 
 # 2.  CSS
 CSS_PROMPT_TEMPLATE = {
-
-"HIGH": """
-
+    "HIGH": """
 현재 갈등 민감도는 HIGH입니다.
 
 행동 지침
@@ -73,9 +71,7 @@ CSS_PROMPT_TEMPLATE = {
 - 주민 민원과 사회적 영향을 크게 고려하세요.
 
 """,
-
-"MEDIUM": """
-
+    "MEDIUM": """
 현재 갈등 민감도는 MEDIUM입니다.
 
 행동 지침
@@ -86,9 +82,7 @@ CSS_PROMPT_TEMPLATE = {
 - 법적 기준과 사회적 편익을 균형 있게 고려하세요.
 
 """,
-
-"LOW": """
-
+    "LOW": """
 현재 갈등 민감도는 LOW입니다.
 
 행동 지침
@@ -98,7 +92,7 @@ CSS_PROMPT_TEMPLATE = {
 - 실행 가능한 대안을 제안하세요.
 - 가능한 빠르게 합의점을 찾으세요.
 
-"""
+""",
 }
 
 # 3. 주민대표
@@ -317,11 +311,11 @@ Scenario C
 
 
 def build_prompt(
-    role_prompt: str, # 각 ai페르소나가 어떤 역할인 지 알려주는 변수 (ex. 주민대표, 공무원 등등)
-    site_information: str, # 입지 정보
-    rag_context: str, # 법률, 조례 rag 데이터
-    discussion_history: str, # 이전 라운드에서 어떤 말을 했는지 기억하는 변수 (라운드별 같은 말 제한하기 위한 변수)
-    css_level: str, # 갈등 강도 변수
+    role_prompt: str,  # 각 ai페르소나가 어떤 역할인 지 알려주는 변수 (ex. 주민대표, 공무원 등등)
+    site_information: str,  # 입지 정보
+    rag_context: str,  # 법률, 조례 rag 데이터
+    discussion_history: str,  # 이전 라운드에서 어떤 말을 했는지 기억하는 변수 (라운드별 같은 말 제한하기 위한 변수)
+    css_level: str,  # 갈등 강도 변수
 ) -> str:
     """
     공통 시스템 프롬프트 + CSS + 역할 프롬프트를 하나의 최종 Prompt로 생성합니다.
@@ -354,11 +348,13 @@ def build_prompt(
     """
 
     return f"""
-{COMMON_SYSTEM_PROMPT.format(
-    site_information=site_information,
-    rag_context=rag_context,
-    discussion_history=discussion_history,
-)}
+{
+        COMMON_SYSTEM_PROMPT.format(
+            site_information=site_information,
+            rag_context=rag_context,
+            discussion_history=discussion_history,
+        )
+    }
 
 {CSS_PROMPT_TEMPLATE[css_level]}
 

@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  db:
+    container_name: omnisite-postgres-db
+    build:
+      context: .
+      dockerfile: Dockerfile.db
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: omnisite
+    volumes:
+      - omnisite_postgres_data:/var/lib/postgresql/data
+    restart: always
+
+volumes:
+  omnisite_postgres_data:
+    driver: local
