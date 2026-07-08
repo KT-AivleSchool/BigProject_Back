@@ -12,6 +12,7 @@ class UserLogin(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str = Field(..., description="JWT Access Token")
     token_type: str = Field("bearer", description="토큰 타입")
+    expires_in_minutes: int = Field(..., description="토큰 만료 시간")
 
 class UserResponse(BaseModel):
     id: int = Field(..., description="DB 고유 식별 ID")
