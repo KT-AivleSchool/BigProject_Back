@@ -23,20 +23,23 @@ def stream_ai_discussion(
         # 1. 시스템 시작 메시지 송출
         yield {
             "event": "message",
-            "data": json.dumps({
-                "sender": "시스템",
-                "text": f"선택된 위치(위도: {lat}, 경도: {lng})의 {facility_type} 모의 심의를 시작합니다...",
-                "is_finished": False
-            }, ensure_ascii=False)
+            "data": json.dumps(
+                {
+                    "sender": "시스템",
+                    "text": f"선택된 위치(위도: {lat}, 경도: {lng})의 {facility_type} 모의 심의를 시작합니다...",
+                    "is_finished": False,
+                },
+                ensure_ascii=False,
+            ),
         }
-        
+
         # 2. LangGraph 초기화 및 상태 세팅
         graph = build_discussion_graph().compile()
-        
+
         site_info_text = f"설치 예정 시설: {facility_type}, 설치 예정지 좌표 (위도: {lat}, 경도: {lng})."
         if additional_info:
             site_info_text += f" 주변 환경 정보: {additional_info}"
-            
+
         initial_state = {
             "messages": [],
             "site_information": site_info_text,
@@ -51,16 +54,16 @@ def stream_ai_discussion(
             "next_speaker": "resident",
             "rag_resident": "",
             "rag_merchant": "",
-            "rag_officer": ""
+            "rag_officer": "",
         }
-        
+
         # 3. 그래프 비동기 스트리밍 (astream)
         async for output in graph.astream(initial_state):
             for node_name, node_state in output.items():
                 if node_name in ["resident", "merchant", "officer"]:
                     if "messages" in node_state and len(node_state["messages"]) > 0:
                         msg = node_state["messages"][-1]
-                        
+
                         # 예시) "주민대표: 저는 반대합니다" 문자열 파싱
                         parts = msg.split(":", 1)
                         if len(parts) == 2:
@@ -69,28 +72,30 @@ def stream_ai_discussion(
                         else:
                             sender = "참여자"
                             text = msg
-                            
+
                         yield {
                             "event": "message",
                             "data": json.dumps(
                                 {"sender": sender, "text": text, "is_finished": False},
                                 ensure_ascii=False,
-                            )
+                            ),
                         }
-                
+
                 elif node_name == "reporter":
                     scenarios = node_state.get("final_scenarios", {})
-                    scenario_desc = scenarios.get("scenario_description", "토론 결과 도출 완료")
+                    scenario_desc = scenarios.get(
+                        "scenario_description", "토론 결과 도출 완료"
+                    )
                     yield {
                         "event": "message",
                         "data": json.dumps(
                             {
                                 "sender": "시스템",
                                 "text": f"토론 종료. 결과: {scenario_desc}",
-                                "is_finished": True
+                                "is_finished": True,
                             },
-                            ensure_ascii=False
-                        )
+                            ensure_ascii=False,
+                        ),
                     }
 
     # sse_starlette 라이브러리의 EventSourceResponse를 반환하여 비동기 HTTP 청크 전송 스트림 활성화
