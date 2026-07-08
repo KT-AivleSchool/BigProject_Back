@@ -10,7 +10,9 @@ router = APIRouter()
 
 
 @router.get("/stream")
-def stream_ai_discussion(lat: float, lng: float, facility_type: str, additional_info: str = ""):
+def stream_ai_discussion(
+    lat: float, lng: float, facility_type: str, additional_info: str = ""
+):
     """
     [동현 AI 메인 & 장천명 풀스택] LangGraph 3자 페르소나 모의 심의 토론 실시간 SSE 스트리밍 API
     - 동작 방식: HTTP 연결을 유지한 상태로, AI 에이전트의 대화 토큰을 chunk 단위로 지속 밀어줍니다.
@@ -22,7 +24,7 @@ def stream_ai_discussion(lat: float, lng: float, facility_type: str, additional_
         yield {
             "event": "message",
             "data": json.dumps({
-                "sender": "시스템", 
+                "sender": "시스템",
                 "text": f"선택된 위치(위도: {lat}, 경도: {lng})의 {facility_type} 모의 심의를 시작합니다...",
                 "is_finished": False
             }, ensure_ascii=False)
@@ -70,7 +72,10 @@ def stream_ai_discussion(lat: float, lng: float, facility_type: str, additional_
                             
                         yield {
                             "event": "message",
-                            "data": json.dumps({"sender": sender, "text": text, "is_finished": False}, ensure_ascii=False)
+                            "data": json.dumps(
+                                {"sender": sender, "text": text, "is_finished": False},
+                                ensure_ascii=False,
+                            )
                         }
                 
                 elif node_name == "reporter":
@@ -78,11 +83,14 @@ def stream_ai_discussion(lat: float, lng: float, facility_type: str, additional_
                     scenario_desc = scenarios.get("scenario_description", "토론 결과 도출 완료")
                     yield {
                         "event": "message",
-                        "data": json.dumps({
-                            "sender": "시스템", 
-                            "text": f"토론 종료. 결과: {scenario_desc}",
-                            "is_finished": True
-                        }, ensure_ascii=False)
+                        "data": json.dumps(
+                            {
+                                "sender": "시스템",
+                                "text": f"토론 종료. 결과: {scenario_desc}",
+                                "is_finished": True
+                            },
+                            ensure_ascii=False
+                        )
                     }
 
     # sse_starlette 라이브러리의 EventSourceResponse를 반환하여 비동기 HTTP 청크 전송 스트림 활성화
