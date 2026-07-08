@@ -35,7 +35,6 @@ jobs:
       run: ruff format --check .
 
     - name: Run Pytest
-      # 로컬 단위 테스트 구동 (DB 모킹이 적용된 테스트)
       run: pytest
       env:
         DATABASE_URL: sqlite:///:memory:
