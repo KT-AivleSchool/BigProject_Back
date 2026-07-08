@@ -94,12 +94,12 @@ async def audit_csv_dataset(files: List[UploadFile] = File(...)):
             status_code=status.HTTP_400_BAD_REQUEST, detail="업로드된 파일이 없습니다."
         )
 
-    # 모든 파일 확장자 유효성 검사
+    # 모든 파일 확장자 유효성 및 파일명 빈값 안전 검사
     for file in files:
-        if not file.filename.lower().endswith(".csv"):
+        if not file.filename or not file.filename.lower().endswith(".csv"):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Step 1 감리 파이프라인은 오직 CSV 확장자 파일만 지원합니다. (에러 파일: {file.filename})",
+                detail=f"Step 1 감리 파이프라인은 오직 CSV 확장자 파일만 지원합니다. (에러 파일: {file.filename if file.filename else '이름없음'})",
             )
 
     # 1. 모든 CSV 파일들의 상위 데이터셋 내용을 하나의 텍스트 컨텍스트로 결합
