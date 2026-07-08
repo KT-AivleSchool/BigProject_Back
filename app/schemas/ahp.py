@@ -2,10 +2,10 @@ from pydantic import BaseModel, Field
 from typing import List
 
 class AhpWeightsRequest(BaseModel):
-    matrix_size: int = Field(5, description="쌍대비교 행렬 크기 (5대 평가 요소 기준: 5)")
+    matrix_size: int = Field(..., description="쌍대비교 행렬 크기 (동적으로 도출된 가중치 요인 개수 기준)")
     pairwise_matrix: List[List[float]] = Field(
         ...,
-        description="5x5 쌍대비교 역수행렬 (각 대각 성분은 1.0이며 대칭 요소는 역수 관계)"
+        description="N x N 쌍대비교 역수행렬 (각 대각 성분은 1.0이며 대칭 요소는 역수 관계)"
     )
 
 class AhpCalculateResponse(BaseModel):
@@ -14,7 +14,7 @@ class AhpCalculateResponse(BaseModel):
     is_locked_allowed: bool = Field(..., description="C.R. < 0.1 만족에 따른 가중치 동결 저장 가능 여부")
     weights: List[float] = Field(
         ...,
-        description="5대 입지 요인별 정규화 가중치 벡터 (접근성, 편의성, 환경성, 안전성, 개발용이성)"
+        description="동적으로 도출된 입지 요인별 정규화 가중치 벡터"
     )
 
 class AhpSaveRequest(BaseModel):

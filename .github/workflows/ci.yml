@@ -8,7 +8,6 @@ on:
 
 jobs:
   lint-and-test:
-    name: Lint and Test Pipeline
     runs-on: ubuntu-latest
 
     steps:
@@ -39,5 +38,5 @@ jobs:
       # 로컬 단위 테스트 구동 (DB 모킹이 적용된 테스트)
       run: pytest
       env:
-        DATABASE_URL: sqlite:///:memory: # CI 환경용 임시 메모리 DB 설정
+        DATABASE_URL: sqlite:///:memory:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
