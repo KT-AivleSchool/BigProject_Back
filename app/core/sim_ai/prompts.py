@@ -1,78 +1,62 @@
-# [동현님 & 민영님 담당] AI 페르소나별 시스템 프롬프트 정의서 (템플릿 파일 연동 및 다중 주제 지원 버전)
-# 프롬프트의 뼈대 구조만 남기고 상세 텍스트는 app/templates/ 경로 아래의 개별 텍스트 파일로 위임합니다.
-# 주제(topic)별 폴더를 활용하여 페르소나와 프롬프트를 동적으로 변경할 수 있으며, 없을 시 default 폴더로 Fallback 처리합니다.
+# [동현님 담당] AI 페르소나별 시스템 프롬프트 정의서 (템플릿 기반 및 완전 일반화 버전)
+# 다목적 플랫폼(OmniSite) 철학에 따라, topic 기반의 하드코딩된 분기를 제거하고 
+# RAG 컨텍스트와 AI 감리 판단에 의해 동적으로 프롬프트가 적용되도록 일반화(Pro/Con/Gov) 하였습니다.
 
-from app.core.jinja2_env import render_template, render_template_string
-from jinja2.exceptions import TemplateNotFound
+from app.core.jinja2_env import render_template
 
-# 기본 Fallback 제공용 글로벌 프롬프트 (기존 코드와의 호환성을 유지하기 위한 로드)
-COMMON_SYSTEM_PROMPT = render_template("default/common_system_prompt.txt")
-RESIDENT_ROLE_PROMPT = render_template("default/resident_role.txt")
-MERCHANT_ROLE_PROMPT = render_template("default/merchant_role.txt")
-OFFICER_ROLE_PROMPT = render_template("default/officer_role.txt")
-EVALUATOR_PROMPT = render_template("default/evaluator.txt")
-REPORTER_PROMPT = render_template("default/reporter.txt")
+# 글로벌 프롬프트 로드 (변수가 없는 정적 텍스트들은 미리 로드)
+PRO_ROLE_PROMPT = render_template("pro_role.txt")
+CON_ROLE_PROMPT = render_template("con_role.txt")
+GOV_ROLE_PROMPT = render_template("gov_role.txt")
+EVALUATOR_PROMPT = render_template("evaluator.txt")
+REPORTER_PROMPT = render_template("reporter.txt")
 
 CSS_PROMPT_TEMPLATE = {
-    "HIGH": render_template("default/css_high.txt"),
-    "MEDIUM": render_template("default/css_medium.txt"),
-    "LOW": render_template("default/css_low.txt"),
+    "HIGH": render_template("css_high.txt"),
+    "MEDIUM": render_template("css_medium.txt"),
+    "LOW": render_template("css_low.txt"),
 }
 
 
-def get_template_with_fallback(topic: str, filename: str) -> str:
-    """
-    지정된 주제(topic) 하위의 템플릿 파일을 로드합니다.
-    해당 템플릿이 없거나 에러가 날 경우 default/ 폴더의 파일로 Fallback 처리합니다.
-    """
-    if topic and topic != "default":
-        try:
-            return render_template(f"{topic}/{filename}")
-        except TemplateNotFound:
-            pass
-    # 기본 경로에서 로드
-    return render_template(f"default/{filename}")
-
-
 def build_prompt(
-    role_prompt: str,  # "resident", "merchant", "officer" 키워드 또는 실제 프롬프트 문자열
-    site_information: str,  # 입지 정보
-    rag_context: str,  # 법률, 조례 RAG 데이터
-    discussion_history: str,  # 이전 라운드 대화 내용
-    css_level: str,  # 갈등 강도 변수 (HIGH / MEDIUM / LOW)
-    topic: str = "default",  # 토론 주제 (예: smoking_booth, ev_charging 등)
+    role_prompt: str,
+    candidate_jibun: str,
+    candidate_lat: float,
+    candidate_lng: float,
+    facility_type: str,
+    intensity_level: str,
+    ahp_weights: dict,
+    rag_context: str,
+    discussion_history: str,
+    css_level: str,
 ) -> str:
     """
     공통 시스템 프롬프트 + CSS + 역할 프롬프트를 하나의 최종 Prompt로 생성합니다.
-    주제(topic)에 따른 오버라이드를 지원하며, Jinja2 [[ ]] 문법을 이용해 동적으로 조립합니다.
     """
-    # 1. 역할(Role) 프롬프트 결정
-    role_key = str(role_prompt).lower().strip()
-    
-    # 키워드 매칭 또는 전역 변수 문자열 매칭 시 동적 로드
-    if "resident" in role_key:
-        role_prompt_content = get_template_with_fallback(topic, "resident_role.txt")
-    elif "merchant" in role_key:
-        role_prompt_content = get_template_with_fallback(topic, "merchant_role.txt")
-    elif "officer" in role_key:
-        role_prompt_content = get_template_with_fallback(topic, "officer_role.txt")
-    else:
-        # 매칭되지 않는 완전한 프롬프트 문자열일 경우 그대로 전달받아 사용
-        role_prompt_content = role_prompt
-
-    # 2. 공통 시스템 프롬프트 템플릿 로드 (주제별 오버라이드 지원)
-    common_template = get_template_with_fallback(topic, "common_system_prompt.txt")
-
-    rendered_common = render_template_string(
-        common_template,
-        site_information=site_information,
-        rag_context=rag_context,
-        discussion_history=discussion_history,
+    # AHP 가중치를 문자열로 예쁘게 포맷팅
+    ahp_str = (
+        "\n".join([f"  * {k}: {v}" for k, v in ahp_weights.items()])
+        if ahp_weights
+        else "  * 데이터 없음"
     )
 
-    # 3. 갈등 민감도별 행동 지침 템플릿 로드 (주제별 오버라이드 지원)
-    css_filename = f"css_{css_level.lower()}.txt"
-    css_instruction = get_template_with_fallback(topic, css_filename)
+    # 1. 공통 시스템 프롬프트 템플릿 로드 (호출될 때마다 동적으로 변수 주입)
+    rendered_common = render_template(
+        "common_system_prompt.txt",
+        context={
+            "candidate_jibun": candidate_jibun,
+            "candidate_lat": candidate_lat,
+            "candidate_lng": candidate_lng,
+            "facility_type": facility_type,
+            "intensity_level": intensity_level,
+            "ahp_weights": ahp_str,
+            "rag_context": rag_context,
+            "discussion_history": discussion_history,
+        }
+    )
+
+    # 2. 갈등 민감도별 행동 지침 템플릿 로드
+    css_instruction = CSS_PROMPT_TEMPLATE.get(css_level.upper(), CSS_PROMPT_TEMPLATE["HIGH"])
 
     # 최종 프롬프트 빌드
     return f"""
@@ -80,5 +64,5 @@ def build_prompt(
 
 {css_instruction}
 
-{role_prompt_content}
+{role_prompt}
 """

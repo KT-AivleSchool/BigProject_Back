@@ -1,14 +1,25 @@
-import asyncio
-from fastapi import APIRouter
+import json
+import datetime
+from fastapi import APIRouter, Depends, HTTPException
 from sse_starlette.sse import EventSourceResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+
 from app.schemas.simulations import SimulationResultResponse
+from app.core.sim_ai.graph import build_discussion_graph
+from app.db.session import get_db
+from app.db.models.simulation import Parcel, ConflictSimulation
 
 # API 라우터 인스턴스 초기화
 router = APIRouter()
 
 
 @router.get("/stream")
-def stream_ai_discussion(parcel_id: int):
+def stream_ai_discussion(
+    parcel_id: int, 
+    facility_type: str,
+    db: AsyncSession = Depends(get_db)
+):
     """
     [동현 AI 메인 & 장천명 풀스택] LangGraph 3자 페르소나 모의 심의 토론 실시간 SSE 스트리밍 API
     - 동작 방식: HTTP 연결을 유지한 상태로, AI 에이전트의 대화 토큰을 chunk 단위로 지속 밀어줍니다.
@@ -16,46 +27,159 @@ def stream_ai_discussion(parcel_id: int):
     """
 
     async def event_generator():
-        # [협업 지침] 동현님이 LangGraph를 구현하면, 아래 하드코딩된 대화 배열(test_dialogues)을
-        # 실제 LangGraph의 노드 실행 발화 결과로 동적 바인딩해 주셔야 합니다.
-        test_dialogues = [
-            {
-                "sender": "시스템",
-                "text": f"필지 PNU-{parcel_id} 스마트 쉼터 모의 심의를 시작합니다.",
-                "is_finished": False,
-            },
-            {
-                "sender": "주민대표 (반대)",
-                "text": "도로 조례 제5조에 따르면, 해당 부지는 인근 주거 지역과의 소음 방지 거리가 확보되지 않았습니다!",
-                "is_finished": False,
-            },
-            {
-                "sender": "상인대표 (찬성)",
-                "text": "하지만 스마트 쉼터 설치로 인해 유동인구가 머무는 시간이 늘면 주변 골목 상권 활성화에 큰 도움이 됩니다.",
-                "is_finished": False,
-            },
-            {
-                "sender": "조정 공무원",
-                "text": "양측 의견을 수렴하여, 소음 방지 차폐막 설치 비용을 구청 예산에 반영하는 조건부 타결 시나리오 A를 제시합니다.",
-                "is_finished": False,
-            },
-            {
-                "sender": "시스템",
-                "text": "합의 타결 성공. 심의 보고서 인쇄가 가능합니다.",
-                "is_finished": True,
-            },
-        ]
-
-        for dialogue in test_dialogues:
-            # 실시간 타이핑 효과 및 패킷 간 시간 간격을 시뮬레이션하기 위해 1.5초 지연(Sleep)
-            await asyncio.sleep(1.5)
-
-            # SSE 프로토콜 표준 규격에 맞게 event와 data의 JSON 문자열 스트림 구조로 yield 전송
-            # is_finished 플래그를 실어주어 프론트엔드가 소켓 연결을 닫을 타이밍을 감지하게 합니다.
+        # DB에서 parcel_id로 GIS 데이터를 조회합니다.
+        result = await db.execute(select(Parcel).where(Parcel.id == parcel_id))
+        parcel = result.scalar_first()
+        
+        if not parcel:
+            # 존재하지 않는 parcel_id일 경우 에러 메시지 전송 후 스트림 종료
             yield {
-                "event": "message",
-                "data": f'{{"sender": "{dialogue["sender"]}", "text": "{dialogue["text"]}", "is_finished": {str(dialogue["is_finished"]).lower()}}}',
+                "event": "error",
+                "data": json.dumps({"error": "해당 필지(Parcel)를 찾을 수 없습니다."}, ensure_ascii=False)
             }
+            return
+
+        gis_data = {
+            "lat": parcel.lat,
+            "lng": parcel.lng,
+            "jibun": parcel.jibun,
+            "intensity_level": parcel.intensity_level,
+            "ahp_weights": parcel.ahp_weights or {},
+        }
+
+        # 1. 시스템 시작 메시지 송출
+        yield {
+            "event": "message",
+            "data": json.dumps(
+                {
+                    "sender": "시스템",
+                    "text": f"선택된 위치(지번: {gis_data['jibun']})의 {facility_type} 모의 심의를 시작합니다...",
+                    "is_finished": False,
+                },
+                ensure_ascii=False,
+            ),
+        }
+
+        # 2. LangGraph 초기화 및 상태 세팅
+        graph = build_discussion_graph()
+
+        timestamp = datetime.datetime.now().isoformat()
+
+        initial_state = {
+            "messages": [],
+            "css_pro": "HIGH",
+            "css_con": "HIGH",
+            "round_count": 0,
+            "current_phase": "debate",
+            "eval_score": 0.0,
+            "spoken_this_round": [],
+            "candidate_jibun": gis_data["jibun"],
+            "candidate_lat": gis_data["lat"],
+            "candidate_lng": gis_data["lng"],
+            "facility_type": facility_type,
+            "intensity_level": gis_data["intensity_level"],
+            "ahp_weights": gis_data["ahp_weights"],
+            "timestamp": timestamp,
+            "rag_pro": "",
+            "rag_con": "",
+            "rag_gov": "",
+            "evaluations": {},
+            "final_scenarios": {},
+            "is_finished": False,
+            "next_speaker": "pro",
+        }
+
+        # 내부 상태 누적용 변수
+        current_state = dict(initial_state)
+
+        # 3. 그래프 비동기 스트리밍 (astream)
+        async for output in graph.astream(initial_state):
+            for node_name, node_state in output.items():
+                # 상태 업데이트 누적
+                if "messages" in node_state:
+                    current_state["messages"].extend(node_state["messages"])
+                if "final_scenarios" in node_state:
+                    current_state["final_scenarios"] = node_state["final_scenarios"]
+
+                if node_name in ["pro", "con", "gov", "gov_wrapup"]:
+                    if "messages" in node_state and len(node_state["messages"]) > 0:
+                        msg = node_state["messages"][-1]
+
+                        parts = msg.split(":", 1)
+                        if len(parts) == 2:
+                            sender = parts[0].strip()
+                            text = parts[1].strip()
+                        else:
+                            sender = "참여자"
+                            text = msg
+
+                        yield {
+                            "event": "message",
+                            "data": json.dumps(
+                                {"sender": sender, "text": text, "is_finished": False},
+                                ensure_ascii=False,
+                            ),
+                        }
+
+                elif node_name == "reporter":
+                    scenarios = current_state.get("final_scenarios", {})
+
+                    # --- [NEW] DB 저장용 최종 JSON 포맷 구성 ---
+                    debate_logs = []
+                    sys_msg = "[시스템 면책 고지] 본 모의 심의 토론 내용은 AI 페르소나 엔진에 의해 생성된 가상의 시나리오이며, 실제 인물이나 단체, 사실관계와는 전혀 무관합니다."
+                    debate_logs.append({"sender": "시스템", "text": sys_msg})
+                    raw_text_lines = [sys_msg]
+
+                    for msg in current_state.get("messages", []):
+                        parts = msg.split(":", 1)
+                        if len(parts) == 2:
+                            s, t = parts[0].strip(), parts[1].strip()
+                        else:
+                            s, t = "참여자", msg
+                        debate_logs.append({"sender": s, "text": t})
+                        raw_text_lines.append(msg)
+
+                    result_json = {
+                        "candidate_jibun": current_state.get("candidate_jibun"),
+                        "candidate_lat": current_state.get("candidate_lat"),
+                        "candidate_lng": current_state.get("candidate_lng"),
+                        "facility_type": current_state.get("facility_type"),
+                        "intensity_level": current_state.get("intensity_level"),
+                        "ahp_weights": current_state.get("ahp_weights"),
+                        "timestamp": current_state.get("timestamp"),
+                        "debate_logs": debate_logs,
+                        "raw_text": "\n\n".join(raw_text_lines),
+                        "scenarios": scenarios.get("scenarios", []),
+                    }
+
+                    # 최종 JSON을 DB에 저장 (ConflictSimulation)
+                    try:
+                        new_sim = ConflictSimulation(
+                            parcel_id=parcel_id,
+                            facility_type=facility_type,
+                            result_json=result_json
+                        )
+                        db.add(new_sim)
+                        await db.commit()
+                        print("=== 최종 도출된 JSON 결과 (DB 저장 성공) ===")
+                    except Exception as e:
+                        await db.rollback()
+                        print(f"=== DB 저장 실패: {e} ===")
+                        
+                    print(json.dumps(result_json, ensure_ascii=False, indent=2))
+                    # -------------------------------------------
+
+                    yield {
+                        "event": "message",
+                        "data": json.dumps(
+                            {
+                                "sender": "시스템",
+                                "text": "토론 종료. 3대 시나리오 도출이 완료되었습니다.",
+                                "is_finished": True,
+                            },
+                            ensure_ascii=False,
+                        ),
+                    }
 
     # sse_starlette 라이브러리의 EventSourceResponse를 반환하여 비동기 HTTP 청크 전송 스트림 활성화
     return EventSourceResponse(event_generator())

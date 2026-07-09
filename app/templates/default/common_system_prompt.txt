@@ -3,18 +3,23 @@
 아래의 입력 정보를 기반으로 토론을 수행하세요.
 
 ==============================
-[시설 정보]
-[[ site_information ]]
+[시설 및 입지 상세 정보]
+- 후보지 주소(지번): {{ candidate_jibun }}
+- 좌표(위도, 경도): {{ candidate_lat }}, {{ candidate_lng }}
+- 시설 종류: {{ facility_type }}
+- 지역 혼잡도(Intensity): {{ intensity_level }}
+- 입지 분석 지표(AHP Weights): 
+{{ ahp_weights }}
 
 ==============================
 [관련 법률 및 조례(RAG)]
 
-[[ rag_context ]]
+{{ rag_context }}
 
 ==============================
 [이전 회의 내용]
 
-[[ discussion_history ]]
+{{ discussion_history }}
 
 ==============================
 
