@@ -21,3 +21,23 @@ from app.db.models.stats import (
     CivilComplaint,
     AgeDemographics,
 )
+
+__all__ = [
+    "Base",
+    "User",
+    "Parcel",
+    "ConflictSimulation",
+    "District",
+    "DongBoundary",
+    "RestrictedZone",
+    "ChildcareCenter",
+    "TransitStation",
+    "CommercialShop",
+    "CadastralLand",
+    "TrashBin",
+    "IllegalDumpingZone",
+    "TransitPassenger",
+    "PopulationStat",
+    "CivilComplaint",
+    "AgeDemographics",
+]
