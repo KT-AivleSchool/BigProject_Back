@@ -19,3 +19,6 @@ ENV/
 
 # Planning Repository (Cloned for study) 
 BigProject_Planning/
+
+# Local Dev Tests
+tests/test_geocoder.py
