@@ -3,11 +3,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.db.session import get_db
 from app.db.models.precedent import VerifiedPrecedent
-from app.db.models.simulation import Parcel, ConflictSimulation
+from app.db.models.simulation import ConflictSimulation
 from app.core.audit_ai.parser import pdf_parser
 from app.core.audit_ai.classifier import audit_classifier
 from app.schemas.audit import AuditVerifyResponse, AuditSaveResponse
-import datetime
 
 router = APIRouter()
 
