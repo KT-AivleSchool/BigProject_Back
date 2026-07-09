@@ -114,7 +114,9 @@ async def audit_csv_dataset(files: List[UploadFile] = File(...)):
             # 5MB 초과 대용량 파일 유입 시 OOM 예방을 위해 첫 10KB만 슬라이싱하여 읽기
             if file_size > 5 * 1024 * 1024:
                 contents = await file.read(10000)
-                await file.seek(0)  # 후속 DB 적재 파이프라인을 위해 파일 포인터 즉시 초기화
+                await file.seek(
+                    0
+                )  # 후속 DB 적재 파이프라인을 위해 파일 포인터 즉시 초기화
                 lines = contents.decode("utf-8", errors="ignore").splitlines()
                 # 잘렸을 수 있는 마지막 줄 제외하고 상위 10행으로 프리뷰 생성
                 preview = "\n".join(lines[:-1][:10])
@@ -126,7 +128,9 @@ async def audit_csv_dataset(files: List[UploadFile] = File(...)):
             else:
                 contents = await file.read()
                 preview = contents.decode("utf-8", errors="ignore")
-                await file.seek(0)  # 후속 DB 적재 파이프라인을 위해 파일 포인터 즉시 초기화
+                await file.seek(
+                    0
+                )  # 후속 DB 적재 파이프라인을 위해 파일 포인터 즉시 초기화
                 combined_preview_text += (
                     f"--- [파일 {idx + 1}] 명칭: {file.filename} ---\n{preview}\n\n"
                 )
