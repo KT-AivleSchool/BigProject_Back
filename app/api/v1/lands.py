@@ -102,18 +102,34 @@ async def audit_csv_dataset(files: List[UploadFile] = File(...)):
                 detail=f"Step 1 감리 파이프라인은 오직 CSV 확장자 파일만 지원합니다. (에러 파일: {file.filename if file.filename else '이름없음'})",
             )
 
-    # 1. 모든 CSV 파일들의 전체 내용을 하나의 텍스트 컨텍스트로 결합
+    # 1. 모든 CSV 파일들의 데이터를 컨텍스트로 결합 (이중 파이프라인 OOM 가드 탑재)
     combined_preview_text = ""
     try:
         for idx, file in enumerate(files):
-            contents = await file.read()
-            # 전체 데이터를 디코딩하여 컨텍스트에 100% 매핑
-            preview = contents.decode("utf-8", errors="ignore")
-            # 후속 DB 적재 및 검리 모듈에서 다시 사용할 수 있도록 파일 포인터를 0으로 초기화
-            await file.seek(0)
-            combined_preview_text += (
-                f"--- [파일 {idx + 1}] 명칭: {file.filename} ---\n{preview}\n\n"
-            )
+            # 안전하게 파일 바이트 크기 획득 (Starlette file.size 호환성 및 AttributeError 우회)
+            file.file.seek(0, 2)
+            file_size = file.file.tell()
+            file.file.seek(0)
+
+            # 5MB 초과 대용량 파일 유입 시 OOM 예방을 위해 첫 10KB만 슬라이싱하여 읽기
+            if file_size > 5 * 1024 * 1024:
+                contents = await file.read(10000)
+                await file.seek(0)  # 후속 DB 적재 파이프라인을 위해 파일 포인터 즉시 초기화
+                lines = contents.decode("utf-8", errors="ignore").splitlines()
+                # 잘렸을 수 있는 마지막 줄 제외하고 상위 10행으로 프리뷰 생성
+                preview = "\n".join(lines[:-1][:10])
+                combined_preview_text += (
+                    f"--- [대용량 파일 {idx + 1} (총 크기: {file_size / (1024 * 1024):.2f}MB)] 명칭: {file.filename} ---\n"
+                    f"{preview}\n"
+                    f"[system: 대용량 데이터에 따른 프리뷰 슬라이싱 스캔 완료]\n\n"
+                )
+            else:
+                contents = await file.read()
+                preview = contents.decode("utf-8", errors="ignore")
+                await file.seek(0)  # 후속 DB 적재 파이프라인을 위해 파일 포인터 즉시 초기화
+                combined_preview_text += (
+                    f"--- [파일 {idx + 1}] 명칭: {file.filename} ---\n{preview}\n\n"
+                )
     except Exception as e:
         logger.error(f"[Ingestion Error] Failed to read multi-CSV content: {str(e)}")
         raise HTTPException(
