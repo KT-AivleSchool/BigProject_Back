@@ -11,9 +11,7 @@ router = APIRouter()
 
 
 @router.get("/stream")
-def stream_ai_discussion(
-    parcel_id: int, facility_type: str
-):
+def stream_ai_discussion(parcel_id: int, facility_type: str):
     """
     [동현 AI 메인 & 장천명 풀스택] LangGraph 3자 페르소나 모의 심의 토론 실시간 SSE 스트리밍 API
     - 동작 방식: HTTP 연결을 유지한 상태로, AI 에이전트의 대화 토큰을 chunk 단위로 지속 밀어줍니다.
@@ -31,8 +29,8 @@ def stream_ai_discussion(
             "ahp_weights": {
                 "parking_availability": 5.0,
                 "charging_station_density": 2.5,
-                "public_accessibility": 5.6
-            }
+                "public_accessibility": 5.6,
+            },
         }
 
         # 1. 시스템 시작 메시지 송출
@@ -61,7 +59,6 @@ def stream_ai_discussion(
             "current_phase": "debate",
             "eval_score": 0.0,
             "spoken_this_round": [],
-            
             "candidate_jibun": gis_data["jibun"],
             "candidate_lat": gis_data["lat"],
             "candidate_lng": gis_data["lng"],
@@ -69,7 +66,6 @@ def stream_ai_discussion(
             "intensity_level": gis_data["intensity_level"],
             "ahp_weights": gis_data["ahp_weights"],
             "timestamp": timestamp,
-
             "rag_pro": "",
             "rag_con": "",
             "rag_gov": "",
@@ -78,7 +74,7 @@ def stream_ai_discussion(
             "is_finished": False,
             "next_speaker": "pro",
         }
-        
+
         # 내부 상태 누적용 변수
         current_state = dict(initial_state)
 
@@ -113,13 +109,13 @@ def stream_ai_discussion(
 
                 elif node_name == "reporter":
                     scenarios = current_state.get("final_scenarios", {})
-                    
+
                     # --- [NEW] DB 저장용 최종 JSON 포맷 구성 ---
                     debate_logs = []
                     sys_msg = "[시스템 면책 고지] 본 모의 심의 토론 내용은 AI 페르소나 엔진에 의해 생성된 가상의 시나리오이며, 실제 인물이나 단체, 사실관계와는 전혀 무관합니다."
                     debate_logs.append({"sender": "시스템", "text": sys_msg})
                     raw_text_lines = [sys_msg]
-                    
+
                     for msg in current_state.get("messages", []):
                         parts = msg.split(":", 1)
                         if len(parts) == 2:
@@ -128,7 +124,7 @@ def stream_ai_discussion(
                             s, t = "참여자", msg
                         debate_logs.append({"sender": s, "text": t})
                         raw_text_lines.append(msg)
-                        
+
                     result_json = {
                         "candidate_jibun": current_state.get("candidate_jibun"),
                         "candidate_lat": current_state.get("candidate_lat"),
@@ -139,9 +135,9 @@ def stream_ai_discussion(
                         "timestamp": current_state.get("timestamp"),
                         "debate_logs": debate_logs,
                         "raw_text": "\n\n".join(raw_text_lines),
-                        "scenarios": scenarios.get("scenarios", [])
+                        "scenarios": scenarios.get("scenarios", []),
                     }
-                    
+
                     # TODO: result_json을 DB (conflict_simulations 테이블 등)에 INSERT 하는 로직 추가
                     print("=== 최종 도출된 JSON 결과 (DB 저장용) ===")
                     print(json.dumps(result_json, ensure_ascii=False, indent=2))

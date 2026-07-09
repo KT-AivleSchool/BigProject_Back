@@ -29,7 +29,7 @@ class AgentState(TypedDict):
     current_phase: str  # "토론", "중재"
     eval_score: float
     spoken_this_round: list[str]  # 이번 라운드에 발언한 페르소나 추적
-    
+
     # JSON 결과값 도출용 GIS 메타데이터
     candidate_jibun: str
     candidate_lat: float
@@ -39,9 +39,9 @@ class AgentState(TypedDict):
     ahp_weights: dict
     timestamp: str
 
-    rag_pro: str    # 찬성
-    rag_con: str    # 반대  
-    rag_gov: str    # 정부
+    rag_pro: str  # 찬성
+    rag_con: str  # 반대
+    rag_gov: str  # 정부
     evaluations: dict  # 내부 평가 결과 (수용도)
     final_scenarios: dict  # 도출된 최종 시나리오 결과 객체
     is_finished: bool  # 토론 종결 여부
@@ -72,7 +72,7 @@ async def supervisor_node(state: AgentState) -> dict:
     """다음 발화자를 결정하는 결정적(deterministic) 라우터"""
     phase = state.get("current_phase", "debate")
     spoken = state.get("spoken_this_round", [])
-    
+
     if phase == "debate":
         if not spoken:
             return {"next_speaker": "pro"}
@@ -91,7 +91,7 @@ async def supervisor_node(state: AgentState) -> dict:
             return {"next_speaker": "gov_wrapup"}
         else:
             return {"next_speaker": "reporter"}
-    
+
     return {"next_speaker": "pro"}
 
 
@@ -169,7 +169,7 @@ async def gov_node(state: AgentState) -> dict:
     facility_type = state.get("facility_type", "알 수 없음")
     history_text = _format_chat_history(state.get("messages", []))
     spoken = state.get("spoken_this_round", [])
-    
+
     rag_context = state.get("rag_gov", "")
     if not rag_context:
         query = f"{facility_type} 설치 기준 갈등 조정 공공 시설 중재안 법률"
@@ -188,11 +188,17 @@ async def gov_node(state: AgentState) -> dict:
         discussion_history=history_text,
         css_level="LOW",  # 정부는 객관적 중재를 위해 LOW 유지
     )
-    
+
     if spoken == ["gov", "pro", "con"]:
-        system_msg = prompt + "\n\n현재 상황: 정부의 중재안에 대한 양측의 입장을 들었습니다. 토론을 최종 마무리하는 발언을 짧게 하십시오."
+        system_msg = (
+            prompt
+            + "\n\n현재 상황: 정부의 중재안에 대한 양측의 입장을 들었습니다. 토론을 최종 마무리하는 발언을 짧게 하십시오."
+        )
     else:
-        system_msg = prompt + "\n\n현재 상황: 3라운드의 찬반 토론이 종료되거나 합의점이 도달하여 정부가 개입할 차례입니다. 양측 의견을 수렴하여 공정한 중재안을 제시하십시오."
+        system_msg = (
+            prompt
+            + "\n\n현재 상황: 3라운드의 찬반 토론이 종료되거나 합의점이 도달하여 정부가 개입할 차례입니다. 양측 의견을 수렴하여 공정한 중재안을 제시하십시오."
+        )
 
     response = await llm.ainvoke([SystemMessage(content=system_msg)])
     return {
@@ -249,7 +255,7 @@ async def evaluator_node(state: AgentState) -> dict:
         "css_pro": new_css_pro,
         "css_con": new_css_con,
         "spoken_this_round": [],  # 다음 라운드/페이즈를 위해 초기화
-        "current_phase": next_phase
+        "current_phase": next_phase,
     }
 
 
@@ -320,8 +326,7 @@ def build_discussion_graph():
     workflow.add_edge("gov", "supervisor")
     workflow.add_edge("gov_wrapup", "supervisor")
     workflow.add_edge("evaluator", "supervisor")
-    
+
     workflow.add_edge("reporter", END)
 
     return workflow.compile()
-

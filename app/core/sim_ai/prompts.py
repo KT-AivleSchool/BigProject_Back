@@ -292,9 +292,13 @@ def build_prompt(
     css_level : str
         갈등 민감도
     """
-    
+
     # AHP 가중치를 문자열로 예쁘게 포맷팅
-    ahp_str = "\n".join([f"  * {k}: {v}" for k, v in ahp_weights.items()]) if ahp_weights else "  * 데이터 없음"
+    ahp_str = (
+        "\n".join([f"  * {k}: {v}" for k, v in ahp_weights.items()])
+        if ahp_weights
+        else "  * 데이터 없음"
+    )
 
     return f"""
 {
