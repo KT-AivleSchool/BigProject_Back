@@ -1,9 +1,12 @@
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status, Depends
 from typing import List
 import json
 import logging
 from openai import AsyncOpenAI
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
+from app.db.session import get_db
+from app.services.gis_service import gis_service
 from app.schemas.lands import (
     UploadResponse,
     HitlCoordinateCorrection,
@@ -204,3 +207,30 @@ async def audit_csv_dataset(files: List[UploadFile] = File(...)):
             f"[AI Ingestion Failure] OpenAI call failed: {str(e)}. Switching to Graceful Fallback Mode."
         )
         return fallback_data
+
+
+@router.get("/screen-candidate")
+async def screen_candidate_lands(
+    district_id: int, exclusion_meters: float = 10.0, db: AsyncSession = Depends(get_db)
+):
+    """
+    [장천명 풀스택] Step 4 PostGIS 규제 배제 차집합 기반 가용 부지 스크리닝 API
+    - 자치구 내 제한구역 10m 버퍼 영역을 배제한 적격 입지 필지 리스트를 도출합니다.
+    """
+    try:
+        results = await gis_service.screen_available_lands(
+            db, district_id=district_id, exclusion_meters=exclusion_meters
+        )
+        return {
+            "status": "success",
+            "district_id": district_id,
+            "exclusion_meters": exclusion_meters,
+            "candidate_count": len(results),
+            "candidates": results,
+        }
+    except Exception as e:
+        logger.error(f"[Screening API Error] Failed to screen lands: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"가용 부지 차집합 공간 분석 중 서버 오류가 발생했습니다: {str(e)}",
+        )
