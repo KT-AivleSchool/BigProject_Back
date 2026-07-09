@@ -53,7 +53,9 @@ class RagVectorStorage:
         except Exception as e:
             logger.error(f"[RAG Error] Feedback Data Insert Error: {e}")
 
-    async def retrieve_similar_statutes(self, query: str, top_k: int = 3, facility_type: str = None) -> List[str]:
+    async def retrieve_similar_statutes(
+        self, query: str, top_k: int = 3, facility_type: str = None
+    ) -> List[str]:
         """
         [동현 AI 메인] 토론 시나리오 발화 문맥(query)과 가장 유사한 조례 규정 텍스트를
         '기본 조례 콜렉션(statutes_collection)'에서 비동기로 검색합니다.
@@ -65,7 +67,7 @@ class RagVectorStorage:
             search_kwargs = {"k": top_k}
             if facility_type:
                 search_kwargs["filter"] = {"facility_type": facility_type}
-                
+
             docs = await self.statutes_store.asimilarity_search(query, **search_kwargs)
 
             # 검색 결과가 없을 경우 안전한 빈 배열 또는 폴백 반환

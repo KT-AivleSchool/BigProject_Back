@@ -14,7 +14,7 @@ os.makedirs(TEMPLATES_DIR, exist_ok=True)
 loaders = [
     FileSystemLoader(TEMPLATES_DIR),
     FileSystemLoader(WORKSPACE_TEMPLATES_DIR),
-    DictLoader({})  # Fallback empty loader
+    DictLoader({}),  # Fallback empty loader
 ]
 
 # Initialize global Jinja2 Environment
@@ -25,13 +25,17 @@ jinja2_env = Environment(
     lstrip_blocks=True,
 )
 
+
 # Define and register custom utility filters if needed
 def json_filter(value: Any) -> str:
     """Helper filter to format JSON within templates."""
     import json
+
     return json.dumps(value, ensure_ascii=False, indent=2)
 
+
 jinja2_env.filters["json"] = json_filter
+
 
 def render_template(template_name: str, context: Dict[str, Any] = None) -> str:
     """
@@ -41,6 +45,7 @@ def render_template(template_name: str, context: Dict[str, Any] = None) -> str:
         context = {}
     template = jinja2_env.get_template(template_name)
     return template.render(**context)
+
 
 def render_template_string(template_str: str, **context: Any) -> str:
     """

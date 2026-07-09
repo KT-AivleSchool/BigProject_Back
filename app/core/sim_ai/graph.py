@@ -104,11 +104,13 @@ async def pro_node(state: AgentState) -> dict:
 
     rag_context = state.get("rag_pro", "")
     if not rag_context:
-        # [캐시 라이프사이클 안내] 
+        # [캐시 라이프사이클 안내]
         # 이 RAG 캐싱은 단일 API 요청(1회 시뮬레이션) 동안만 유지되는 In-Memory 상태입니다.
         # 새로운 시뮬레이션 요청 시마다 상태가 초기화되므로 Stale Cache(오염된 캐시)가 발생하지 않습니다.
         query = f"{facility_type} 시설 설치 찬성 긍정적 효과 경제적 이익 편익"
-        retrieved_docs = await vector_db.retrieve_similar_statutes(query, facility_type=facility_type)
+        retrieved_docs = await vector_db.retrieve_similar_statutes(
+            query, facility_type=facility_type
+        )
         rag_context = "\n".join(retrieved_docs)
 
     prompt = build_prompt(
@@ -143,7 +145,9 @@ async def con_node(state: AgentState) -> dict:
     if not rag_context:
         # [캐시 라이프사이클 안내] 단일 세션 전용 캐시로 PDF 신규 업로드 시에도 문제 없이 최신 DB를 반영합니다.
         query = f"{facility_type} 시설 설치 반대 피해 환경 규제 주민 우려"
-        retrieved_docs = await vector_db.retrieve_similar_statutes(query, facility_type=facility_type)
+        retrieved_docs = await vector_db.retrieve_similar_statutes(
+            query, facility_type=facility_type
+        )
         rag_context = "\n".join(retrieved_docs)
 
     prompt = build_prompt(
@@ -178,7 +182,9 @@ async def gov_node(state: AgentState) -> dict:
     if not rag_context:
         # [캐시 라이프사이클 안내] 단일 세션 전용 캐시로 PDF 신규 업로드 시에도 문제 없이 최신 DB를 반영합니다.
         query = f"{facility_type} 설치 기준 갈등 조정 공공 시설 중재안 법률"
-        retrieved_docs = await vector_db.retrieve_similar_statutes(query, facility_type=facility_type)
+        retrieved_docs = await vector_db.retrieve_similar_statutes(
+            query, facility_type=facility_type
+        )
         rag_context = "\n".join(retrieved_docs)
 
     prompt = build_prompt(

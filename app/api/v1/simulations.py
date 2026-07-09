@@ -16,9 +16,7 @@ router = APIRouter()
 
 @router.get("/stream")
 def stream_ai_discussion(
-    parcel_id: int, 
-    facility_type: str,
-    db: AsyncSession = Depends(get_db)
+    parcel_id: int, facility_type: str, db: AsyncSession = Depends(get_db)
 ):
     """
     [동현 AI 메인 & 장천명 풀스택] LangGraph 3자 페르소나 모의 심의 토론 실시간 SSE 스트리밍 API
@@ -30,12 +28,15 @@ def stream_ai_discussion(
         # DB에서 parcel_id로 GIS 데이터를 조회합니다.
         result = await db.execute(select(Parcel).where(Parcel.id == parcel_id))
         parcel = result.scalar_first()
-        
+
         if not parcel:
             # 존재하지 않는 parcel_id일 경우 에러 메시지 전송 후 스트림 종료
             yield {
                 "event": "error",
-                "data": json.dumps({"error": "해당 필지(Parcel)를 찾을 수 없습니다."}, ensure_ascii=False)
+                "data": json.dumps(
+                    {"error": "해당 필지(Parcel)를 찾을 수 없습니다."},
+                    ensure_ascii=False,
+                ),
             }
             return
 
@@ -157,7 +158,7 @@ def stream_ai_discussion(
                         new_sim = ConflictSimulation(
                             parcel_id=parcel_id,
                             facility_type=facility_type,
-                            result_json=result_json
+                            result_json=result_json,
                         )
                         db.add(new_sim)
                         await db.commit()
@@ -165,7 +166,7 @@ def stream_ai_discussion(
                     except Exception as e:
                         await db.rollback()
                         print(f"=== DB 저장 실패: {e} ===")
-                        
+
                     print(json.dumps(result_json, ensure_ascii=False, indent=2))
                     # -------------------------------------------
 

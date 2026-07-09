@@ -13,8 +13,10 @@ class Parcel(Base):
     lng = Column(Float, nullable=False)
     intensity_level = Column(String(50), nullable=False, default="normal")
     ahp_weights = Column(JSON, nullable=True)
-    
-    simulations = relationship("ConflictSimulation", back_populates="parcel", cascade="all, delete-orphan")
+
+    simulations = relationship(
+        "ConflictSimulation", back_populates="parcel", cascade="all, delete-orphan"
+    )
 
 
 class ConflictSimulation(Base):
@@ -24,9 +26,9 @@ class ConflictSimulation(Base):
     parcel_id = Column(Integer, ForeignKey("parcels.id"), nullable=False, index=True)
     facility_type = Column(String(100), nullable=False)
     result_json = Column(JSON, nullable=False)
-    
+
     created_at = Column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-    
+
     parcel = relationship("Parcel", back_populates="simulations")
