@@ -53,20 +53,29 @@ class RagVectorStorage:
         except Exception as e:
             logger.error(f"[RAG Error] Feedback Data Insert Error: {e}")
 
+    async def add_statute_chunks(self, chunks: List[str]):
+        """
+        조례 및 범례 다중 포맷 문서에서 추출된 텍스트 청크를 기본 조례 콜렉션(statutes_collection)에 적재합니다.
+        (시설 종류는 사전에 지정하지 않고, 토론 시 AI가 의미(Semantic) 검색을 통해 관련 조례를 스스로 찾아냅니다.)
+        """
+        try:
+            metadatas = [{"source": "uploaded_statute"} for _ in chunks]
+            await self.statutes_store.aadd_texts(texts=chunks, metadatas=metadatas)
+            logger.info(f"[RAG] 성공적으로 {len(chunks)}개의 조례 청크를 statutes_collection에 적재했습니다.")
+        except Exception as e:
+            logger.error(f"[RAG Error] Statute Data Insert Error: {e}")
+
     async def retrieve_similar_statutes(
         self, query: str, top_k: int = 3, facility_type: str = None
     ) -> List[str]:
         """
         [동현 AI 메인] 토론 시나리오 발화 문맥(query)과 가장 유사한 조례 규정 텍스트를
         '기본 조례 콜렉션(statutes_collection)'에서 비동기로 검색합니다.
-        facility_type을 전달받아 메타데이터 필터링(Semantic Pre-filtering)을 수행합니다.
         """
         try:
             # LangChain의 비동기 유사도 검색 (asimilarity_search) 사용
-            # facility_type 기반 필터링 적용 (환각 방지)
+            # facility_type 강제 필터를 해제하여 의미론적 유사도만으로 검색되도록 개선 (유연한 RAG)
             search_kwargs = {"k": top_k}
-            if facility_type:
-                search_kwargs["filter"] = {"facility_type": facility_type}
 
             docs = await self.statutes_store.asimilarity_search(query, **search_kwargs)
 

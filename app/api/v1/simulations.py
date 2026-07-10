@@ -1,12 +1,13 @@
 import json
 import datetime
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.schemas.simulations import SimulationResultResponse
-from app.core.sim_ai.graph import build_discussion_graph
+from app.core.sim_ai.graph import build_discussion_graph, vector_db
+from app.core.sim_ai.document_loader import statute_document_loader
 from app.db.session import get_db
 from app.db.models.simulation import Parcel, ConflictSimulation
 
@@ -64,6 +65,14 @@ def stream_ai_discussion(
         # 2. LangGraph 초기화 및 상태 세팅
         graph = build_discussion_graph()
 
+        # [NEW] 토론 시작 전 공통 RAG(Common RAG) 1회 선검색
+        query = f"{facility_type} 설치 기준 허가 규제 갈등 중재 혜택"
+        try:
+            retrieved_docs = await vector_db.retrieve_similar_statutes(query, top_k=5)
+            common_rag = "\n".join(retrieved_docs)
+        except Exception:
+            common_rag = "조례 정보 없음"
+
         timestamp = datetime.datetime.now().isoformat()
 
         initial_state = {
@@ -81,9 +90,7 @@ def stream_ai_discussion(
             "intensity_level": gis_data["intensity_level"],
             "ahp_weights": gis_data["ahp_weights"],
             "timestamp": timestamp,
-            "rag_pro": "",
-            "rag_con": "",
-            "rag_gov": "",
+            "common_rag": common_rag,
             "evaluations": {},
             "final_scenarios": {},
             "is_finished": False,
@@ -222,3 +229,49 @@ def get_simulation_results(parcel_id: int):
             },
         ],
     }
+
+
+@router.post("/statutes/upload")
+async def upload_statute_document(
+    file: UploadFile = File(...)
+):
+    """
+    [장천명 풀스택] 조례 및 범례 PDF/DOCX/HWP RAG 적재 라우터
+    - 업로드된 다중 포맷 문서에서 텍스트를 추출하고 Chunking하여 Vector DB에 적재합니다.
+    - AI 감리단이 파악한 시설 종류에 맞춰 추후 AI 페르소나가 자유롭게 의미 검색(Semantic Search)을 수행합니다.
+    """
+    import os
+    ext = os.path.splitext(file.filename)[1].lower()
+    allowed_extensions = [".pdf", ".docx", ".doc", ".hwp"]
+
+    if ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"지원하지 않는 파일 형식입니다. {allowed_extensions} 포맷만 업로드 가능합니다.",
+        )
+    
+    try:
+        file_bytes = await file.read()
+        chunks = statute_document_loader.process_document(file_bytes, ext)
+        
+        if not chunks:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"{file.filename} 파일에서 텍스트를 추출할 수 없거나 비어 있습니다.",
+            )
+            
+        # Vector DB 적재 (facility_type 불필요)
+        await vector_db.add_statute_chunks(chunks)
+        
+        return {
+            "status": "success",
+            "message": f"{file.filename} 조례/범례 문서가 성공적으로 적재되었습니다.",
+            "chunk_count": len(chunks)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"조례 RAG 문서 추출 및 적재 중 서버 오류가 발생했습니다: {str(e)}",
+        )
