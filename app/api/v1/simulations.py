@@ -1,6 +1,6 @@
 import json
 import datetime
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, status
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -232,15 +232,14 @@ def get_simulation_results(parcel_id: int):
 
 
 @router.post("/statutes/upload")
-async def upload_statute_document(
-    file: UploadFile = File(...)
-):
+async def upload_statute_document(file: UploadFile = File(...)):
     """
     [장천명 풀스택] 조례 및 범례 PDF/DOCX/HWP RAG 적재 라우터
     - 업로드된 다중 포맷 문서에서 텍스트를 추출하고 Chunking하여 Vector DB에 적재합니다.
     - AI 감리단이 파악한 시설 종류에 맞춰 추후 AI 페르소나가 자유롭게 의미 검색(Semantic Search)을 수행합니다.
     """
     import os
+
     ext = os.path.splitext(file.filename)[1].lower()
     allowed_extensions = [".pdf", ".docx", ".doc", ".hwp"]
 
@@ -249,24 +248,24 @@ async def upload_statute_document(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"지원하지 않는 파일 형식입니다. {allowed_extensions} 포맷만 업로드 가능합니다.",
         )
-    
+
     try:
         file_bytes = await file.read()
         chunks = statute_document_loader.process_document(file_bytes, ext)
-        
+
         if not chunks:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"{file.filename} 파일에서 텍스트를 추출할 수 없거나 비어 있습니다.",
             )
-            
+
         # Vector DB 적재 (facility_type 불필요)
         await vector_db.add_statute_chunks(chunks)
-        
+
         return {
             "status": "success",
             "message": f"{file.filename} 조례/범례 문서가 성공적으로 적재되었습니다.",
-            "chunk_count": len(chunks)
+            "chunk_count": len(chunks),
         }
     except HTTPException:
         raise

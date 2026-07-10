@@ -13,7 +13,7 @@ class StatuteDocumentLoader:
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             length_function=len,
-            separators=["\n\n", "\n", " ", ""]
+            separators=["\n\n", "\n", " ", ""],
         )
 
     def extract_text_from_pdf(self, file_bytes: bytes) -> str:
@@ -41,7 +41,9 @@ class StatuteDocumentLoader:
                     # PrvText는 utf-16-le로 인코딩되어 있음
                     return data.decode("utf-16le", errors="ignore")
                 else:
-                    raise ValueError("해당 HWP 파일에는 텍스트 정보(PrvText)가 포함되어 있지 않아 단순 추출이 불가능합니다.")
+                    raise ValueError(
+                        "해당 HWP 파일에는 텍스트 정보(PrvText)가 포함되어 있지 않아 단순 추출이 불가능합니다."
+                    )
         except olefile.OleError as e:
             raise ValueError(f"올바른 HWP 파일 형식이 아닙니다: {str(e)}")
 

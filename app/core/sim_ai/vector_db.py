@@ -61,7 +61,9 @@ class RagVectorStorage:
         try:
             metadatas = [{"source": "uploaded_statute"} for _ in chunks]
             await self.statutes_store.aadd_texts(texts=chunks, metadatas=metadatas)
-            logger.info(f"[RAG] 성공적으로 {len(chunks)}개의 조례 청크를 statutes_collection에 적재했습니다.")
+            logger.info(
+                f"[RAG] 성공적으로 {len(chunks)}개의 조례 청크를 statutes_collection에 적재했습니다."
+            )
         except Exception as e:
             logger.error(f"[RAG Error] Statute Data Insert Error: {e}")
 
