@@ -95,94 +95,118 @@ def stream_ai_discussion(
         # 내부 상태 누적용 변수
         current_state = dict(initial_state)
 
-        # 3. 그래프 비동기 스트리밍 (astream)
-        async for output in graph.astream(initial_state):
-            for node_name, node_state in output.items():
-                # 상태 업데이트 누적
-                if "messages" in node_state:
-                    current_state["messages"].extend(node_state["messages"])
-                if "final_scenarios" in node_state:
-                    current_state["final_scenarios"] = node_state["final_scenarios"]
+        # 3. 그래프 비동기 스트리밍 (astream) — OpenAI Quota 초과 시 에러 이벤트 즉시 송출
+        try:
+            async for output in graph.astream(initial_state):
+                for node_name, node_state in output.items():
+                    # 상태 업데이트 누적
+                    if "messages" in node_state:
+                        current_state["messages"].extend(node_state["messages"])
+                    if "final_scenarios" in node_state:
+                        current_state["final_scenarios"] = node_state["final_scenarios"]
 
-                if node_name in ["pro", "con", "gov", "gov_wrapup"]:
-                    if "messages" in node_state and len(node_state["messages"]) > 0:
-                        msg = node_state["messages"][-1]
+                    if node_name in ["pro", "con", "gov", "gov_wrapup"]:
+                        if "messages" in node_state and len(node_state["messages"]) > 0:
+                            msg = node_state["messages"][-1]
 
-                        parts = msg.split(":", 1)
-                        if len(parts) == 2:
-                            sender = parts[0].strip()
-                            text = parts[1].strip()
-                        else:
-                            sender = "참여자"
-                            text = msg
+                            parts = msg.split(":", 1)
+                            if len(parts) == 2:
+                                sender = parts[0].strip()
+                                text = parts[1].strip()
+                            else:
+                                sender = "참여자"
+                                text = msg
+
+                            yield {
+                                "event": "message",
+                                "data": json.dumps(
+                                    {"sender": sender, "text": text, "is_finished": False},
+                                    ensure_ascii=False,
+                                ),
+                            }
+
+                    elif node_name == "reporter":
+                        scenarios = current_state.get("final_scenarios", {})
+
+                        # --- DB 저장용 최종 JSON 포맷 구성 ---
+                        debate_logs = []
+                        sys_msg = "[시스템 면책 고지] 본 모의 심의 토론 내용은 AI 페르소나 엔진에 의해 생성된 가상의 시나리오이며, 실제 인물이나 단체, 사실관계와는 전혀 무관합니다."
+                        debate_logs.append({"sender": "시스템", "text": sys_msg})
+                        raw_text_lines = [sys_msg]
+
+                        for msg in current_state.get("messages", []):
+                            parts = msg.split(":", 1)
+                            if len(parts) == 2:
+                                s, t = parts[0].strip(), parts[1].strip()
+                            else:
+                                s, t = "참여자", msg
+                            debate_logs.append({"sender": s, "text": t})
+                            raw_text_lines.append(msg)
+
+                        result_json = {
+                            "candidate_jibun": current_state.get("candidate_jibun"),
+                            "candidate_lat": current_state.get("candidate_lat"),
+                            "candidate_lng": current_state.get("candidate_lng"),
+                            "facility_type": current_state.get("facility_type"),
+                            "intensity_level": current_state.get("intensity_level"),
+                            "ahp_weights": current_state.get("ahp_weights"),
+                            "timestamp": current_state.get("timestamp"),
+                            "debate_logs": debate_logs,
+                            "raw_text": "\n\n".join(raw_text_lines),
+                            "scenarios": scenarios.get("scenarios", []),
+                        }
+
+                        # 최종 JSON을 DB에 저장 (ConflictSimulation)
+                        try:
+                            new_sim = ConflictSimulation(
+                                parcel_id=parcel_id,
+                                facility_type=facility_type,
+                                result_json=result_json,
+                            )
+                            db.add(new_sim)
+                            await db.commit()
+                            print("=== 최종 도출된 JSON 결과 (DB 저장 성공) ===")
+                        except Exception as e:
+                            await db.rollback()
+                            print(f"=== DB 저장 실패: {e} ===")
+
+                        print(json.dumps(result_json, ensure_ascii=False, indent=2))
 
                         yield {
                             "event": "message",
                             "data": json.dumps(
-                                {"sender": sender, "text": text, "is_finished": False},
+                                {
+                                    "sender": "시스템",
+                                    "text": "토론 종료. 3대 시나리오 도출이 완료되었습니다.",
+                                    "is_finished": True,
+                                },
                                 ensure_ascii=False,
                             ),
                         }
 
-                elif node_name == "reporter":
-                    scenarios = current_state.get("final_scenarios", {})
+        except Exception as quota_err:
+            # OpenAI API Quota 초과(429) 또는 기타 AI 엔진 오류 발생 시 즉시 에러 SSE 이벤트 송출
+            # Fallback 데이터 없이 정직하게 오류 코드를 클라이언트에게 전달합니다.
+            err_msg = str(quota_err)
+            is_quota = "insufficient_quota" in err_msg or "429" in err_msg
+            error_code = "OPENAI_QUOTA_EXCEEDED" if is_quota else "AI_ENGINE_ERROR"
+            print(f"[Stream Error] {error_code}: {err_msg}")
 
-                    # --- [NEW] DB 저장용 최종 JSON 포맷 구성 ---
-                    debate_logs = []
-                    sys_msg = "[시스템 면책 고지] 본 모의 심의 토론 내용은 AI 페르소나 엔진에 의해 생성된 가상의 시나리오이며, 실제 인물이나 단체, 사실관계와는 전혀 무관합니다."
-                    debate_logs.append({"sender": "시스템", "text": sys_msg})
-                    raw_text_lines = [sys_msg]
-
-                    for msg in current_state.get("messages", []):
-                        parts = msg.split(":", 1)
-                        if len(parts) == 2:
-                            s, t = parts[0].strip(), parts[1].strip()
-                        else:
-                            s, t = "참여자", msg
-                        debate_logs.append({"sender": s, "text": t})
-                        raw_text_lines.append(msg)
-
-                    result_json = {
-                        "candidate_jibun": current_state.get("candidate_jibun"),
-                        "candidate_lat": current_state.get("candidate_lat"),
-                        "candidate_lng": current_state.get("candidate_lng"),
-                        "facility_type": current_state.get("facility_type"),
-                        "intensity_level": current_state.get("intensity_level"),
-                        "ahp_weights": current_state.get("ahp_weights"),
-                        "timestamp": current_state.get("timestamp"),
-                        "debate_logs": debate_logs,
-                        "raw_text": "\n\n".join(raw_text_lines),
-                        "scenarios": scenarios.get("scenarios", []),
-                    }
-
-                    # 최종 JSON을 DB에 저장 (ConflictSimulation)
-                    try:
-                        new_sim = ConflictSimulation(
-                            parcel_id=parcel_id,
-                            facility_type=facility_type,
-                            result_json=result_json,
-                        )
-                        db.add(new_sim)
-                        await db.commit()
-                        print("=== 최종 도출된 JSON 결과 (DB 저장 성공) ===")
-                    except Exception as e:
-                        await db.rollback()
-                        print(f"=== DB 저장 실패: {e} ===")
-
-                    print(json.dumps(result_json, ensure_ascii=False, indent=2))
-                    # -------------------------------------------
-
-                    yield {
-                        "event": "message",
-                        "data": json.dumps(
-                            {
-                                "sender": "시스템",
-                                "text": "토론 종료. 3대 시나리오 도출이 완료되었습니다.",
-                                "is_finished": True,
-                            },
-                            ensure_ascii=False,
+            yield {
+                "event": "error",
+                "data": json.dumps(
+                    {
+                        "error_code": error_code,
+                        "message": (
+                            "OpenAI API Quota가 초과되었습니다. API 키 잔액을 충전하고 다시 시도해 주세요."
+                            if is_quota
+                            else f"AI 토론 엔진 오류가 발생했습니다: {err_msg}"
                         ),
-                    }
+                        "is_finished": True,
+                    },
+                    ensure_ascii=False,
+                ),
+            }
 
     # sse_starlette 라이브러리의 EventSourceResponse를 반환하여 비동기 HTTP 청크 전송 스트림 활성화
     return EventSourceResponse(event_generator())
@@ -251,38 +275,31 @@ async def get_simulation_results(parcel_id: int, db: AsyncSession = Depends(get_
                 }
             )
     else:
-        # DB에 단일 시나리오만 있거나 빈 상태일 경우 지능형 3대 시나리오 자동 구축 폴백 기동
-        scenarios_list = [
-            {
-                "scenario_type": "A",
-                "title": "주민 합의 차폐막 설치 조건부 타결 시나리오",
-                "probability": 0.65,
-                "summary": "방음 펜스 및 차폐 조경 설치 예산을 구청이 부담하여 주민 소음 우려를 완화하고 설치를 완료함.",
-                "conflict_risk_index": 35.0,
-            },
-            {
-                "scenario_type": "B",
-                "title": "상인 연계 야외 데크 추가 확장 시나리오",
-                "probability": 0.20,
-                "summary": "스마트 쉼터 외부 휴게 공간을 주변 상가 입구와 수평 연계하여 골목 소상공인 매출 극대화를 꾀함.",
-                "conflict_risk_index": 65.0,
-            },
-            {
-                "scenario_type": "C",
-                "title": "공공 중재 전면 취소 및 대안 부지 이전 시나리오",
-                "probability": 0.15,
-                "summary": "민원 반발의 장기화 및 행정 비용의 과다로 인해 인근 공공 공지로 설치 대상을 전격 이전함.",
-                "conflict_risk_index": 85.0,
-            },
-        ]
+        # 시나리오 배열이 비어있는 경우: AI 토론이 완료되지 않았거나 OpenAI API Quota 초과로 인해
+        # 결과가 DB에 정상 적재되지 않은 상태입니다.
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "[OPENAI_QUOTA_EXCEEDED] AI 모의 심의 토론 결과 시나리오가 존재하지 않습니다. "
+                "OpenAI API Quota가 초과되었거나 토론이 정상 완료되지 않았습니다. "
+                "API 키 잔액을 확인하고 토론을 다시 시작해 주세요."
+            ),
+        )
 
-    # 갈등 민감도 점수 (CSS) 및 인자 도출
-    css_score = float(res_json.get("conflict_sensitivity_score") or 7.8)
-    conflict_factors = res_json.get("conflict_factors") or {
-        "소음피해": 8.5,
-        "보행혼잡": 6.2,
-        "임대료상승": 9.0,
-    }
+    # 갈등 민감도 점수 (CSS) 및 인자 도출 — DB에 저장된 실제 값만 사용
+    css_score = res_json.get("conflict_sensitivity_score")
+    conflict_factors = res_json.get("conflict_factors")
+
+    if css_score is None or conflict_factors is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "[OPENAI_QUOTA_EXCEEDED] 갈등 민감도 지수(CSS) 데이터가 존재하지 않습니다. "
+                "OpenAI API Quota가 초과되어 AI 분석이 완료되지 않았습니다."
+            ),
+        )
+
+    css_score = float(css_score)
 
     return {
         "parcel_id": parcel_id,
