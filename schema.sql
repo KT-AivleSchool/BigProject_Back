@@ -35,8 +35,8 @@ CREATE TABLE IF NOT EXISTS dong_boundaries (
 );
 CREATE INDEX IF NOT EXISTS idx_dong_geom ON dong_boundaries USING GIST(geom);
 
--- 4. 서울 금연구역 정보 테이블
-CREATE TABLE IF NOT EXISTS nosmoking_zones (
+-- 4. 서울 제한/규제구역 정보 테이블 (4단계 피벗 완료)
+CREATE TABLE IF NOT EXISTS restricted_zones (
     id SERIAL PRIMARY KEY,
     district_id INT REFERENCES districts(id) ON DELETE CASCADE,
     dong_id INT REFERENCES dong_boundaries(id) ON DELETE SET NULL, -- 행정동 ID 관계 추가
@@ -44,9 +44,11 @@ CREATE TABLE IF NOT EXISTS nosmoking_zones (
     address VARCHAR(250),
     geom GEOMETRY(Point, 4326) NOT NULL, -- Point 좌표 객체
     area NUMERIC,
-    registered_at DATE
+    registered_at DATE,
+    zone_type VARCHAR(50) NOT NULL DEFAULT '금연구역'
 );
-CREATE INDEX IF NOT EXISTS idx_nosmoking_geom ON nosmoking_zones USING GIST(geom);
+CREATE INDEX IF NOT EXISTS idx_restricted_geom ON restricted_zones USING GIST(geom);
+
 
 -- 5. 서울 어린이집/학교 정보 테이블
 CREATE TABLE IF NOT EXISTS childcare_centers (
@@ -145,8 +147,8 @@ CREATE TABLE IF NOT EXISTS age_demographics (
     youth_ratio NUMERIC NOT NULL       -- youth_population / total_population
 );
 
--- 14. 담배꽁초상습무단투기지역현황 테이블 (최상위 가중치)
-CREATE TABLE IF NOT EXISTS cigarette_dumping_zones (
+-- 14. 상습무단투기구역 테이블 (4단계 피벗 완료)
+CREATE TABLE IF NOT EXISTS illegal_dumping_zones (
     id SERIAL PRIMARY KEY,
     district_id INT REFERENCES districts(id) ON DELETE CASCADE,
     dong_id INT REFERENCES dong_boundaries(id) ON DELETE SET NULL, -- 행정동 ID 관계 추가
@@ -154,7 +156,8 @@ CREATE TABLE IF NOT EXISTS cigarette_dumping_zones (
     detail_location TEXT,
     geom GEOMETRY(Point, 4326) NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_dumping_geom ON cigarette_dumping_zones USING GIST(geom);
+CREATE INDEX IF NOT EXISTS idx_illegal_dumping_geom ON illegal_dumping_zones USING GIST(geom);
+
 
 -- 15. AHP 가중치 프로파일 마스터 테이블
 CREATE TABLE IF NOT EXISTS ahp_models (
