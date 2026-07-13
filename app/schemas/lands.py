@@ -47,3 +47,15 @@ class CsvAuditResponse(BaseModel):
     extracted_weights: dict = Field(
         ..., description="의도에 따른 가중치 슬라이더 후보 항목들 (딕셔너리)"
     )
+
+
+class BoundaryCheckRequest(BaseModel):
+    district_id: int = Field(..., description="검증 대상 자치구 ID")
+    lat: float = Field(..., description="위도 좌표")
+    lng: float = Field(..., description="경도 좌표")
+
+
+class BoundaryCheckResponse(BaseModel):
+    district_id: int = Field(..., description="자치구 ID")
+    is_contained: bool = Field(..., description="자치구 내 포함 여부")
+
