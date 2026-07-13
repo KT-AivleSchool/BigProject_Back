@@ -13,6 +13,7 @@ os.makedirs(TEMPLATES_DIR, exist_ok=True)
 # Build loaders list in order of priority
 loaders = [
     FileSystemLoader(TEMPLATES_DIR),
+    FileSystemLoader(os.path.join(TEMPLATES_DIR, "default")),
     FileSystemLoader(WORKSPACE_TEMPLATES_DIR),
     DictLoader({}),  # Fallback empty loader
 ]
