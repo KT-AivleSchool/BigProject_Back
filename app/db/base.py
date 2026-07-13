@@ -4,10 +4,41 @@
 from app.db.session import Base
 from app.db.models.user import User
 from app.db.models.simulation import Parcel, ConflictSimulation
+from app.db.models.spatial import (
+    District,
+    DongBoundary,
+    RestrictedZone,
+    ChildcareCenter,
+    TransitStation,
+    CommercialShop,
+    CadastralLand,
+    TrashBin,
+    IllegalDumpingZone,
+)
+from app.db.models.stats import (
+    TransitPassenger,
+    PopulationStat,
+    CivilComplaint,
+    AgeDemographics,
+)
 
 __all__ = [
     "Base",
     "User",
     "Parcel",
     "ConflictSimulation",
+    "District",
+    "DongBoundary",
+    "RestrictedZone",
+    "ChildcareCenter",
+    "TransitStation",
+    "CommercialShop",
+    "CadastralLand",
+    "TrashBin",
+    "IllegalDumpingZone",
+    "TransitPassenger",
+    "PopulationStat",
+    "CivilComplaint",
+    "AgeDemographics",
 ]
+
