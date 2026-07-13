@@ -10,6 +10,7 @@ from app.schemas.simulations import SimulationResultResponse
 from app.core.sim_ai.graph import build_discussion_graph
 from app.db.session import get_db
 from app.db.models.simulation import Parcel, ConflictSimulation
+from app.services.pdf_service import pdf_builder
 
 # API 라우터 인스턴스 초기화
 router = APIRouter()
@@ -327,9 +328,13 @@ async def download_feasibility_report_pdf(
     }
 
     # 3. PDF 빌더 기동 및 스트리밍 파일 전송
-    from app.services.pdf_service import pdf_builder
-
-    pdf_file = pdf_builder.generate_feasibility_pdf(report_data)
+    try:
+        pdf_file = pdf_builder.generate_feasibility_pdf(report_data)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"PDF 생성 중 오류가 발생했습니다. 서버 환경(WeasyPrint/폰트 설치)을 확인해 주세요. 오류: {str(e)}",
+        )
 
     filename = f"OmniSite_Feasibility_Report_{parcel_id}.pdf"
     return StreamingResponse(
