@@ -169,20 +169,26 @@ CREATE TABLE IF NOT EXISTS ahp_models (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 16. 시뮬레이션 결과 리포트 캐시 테이블
-CREATE TABLE IF NOT EXISTS conflict_simulations (
+-- 16. 시뮬레이션 대상 필지 정보 테이블 (SQLAlchemy 모델 매핑 완료)
+CREATE TABLE IF NOT EXISTS parcels (
     id SERIAL PRIMARY KEY,
-    cadastral_land_id INT REFERENCES cadastral_lands(id) ON DELETE CASCADE, -- 지적 필지 FK
-    css_score NUMERIC NOT NULL, -- 종합 갈등 민감도 점수 (CSS)
-    css_vector JSONB NOT NULL, -- 3대 민감도 인자 벡터 백업
-    normal_scenario TEXT, -- 일반 시나리오 토론 로그
-    optimal_scenario TEXT, -- 우호적 타결 시나리오 토론 로그
-    worst_scenario TEXT, -- 극단적 불합의 시나리오 토론 로그
-    confidence_score NUMERIC, -- 시뮬레이션 통계적 신뢰도 점수
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    jibun VARCHAR(255) NOT NULL,
+    lat FLOAT NOT NULL,
+    lng FLOAT NOT NULL,
+    intensity_level VARCHAR(50) NOT NULL DEFAULT 'normal',
+    ahp_weights JSONB
 );
 
--- 17. Audit AI 공문서 검증을 필터링 통과한 실제 이행 사례 기록 테이블
+-- 17. 시뮬레이션 결과 리포트 캐시 테이블 (SQLAlchemy 모델 매핑 완료)
+CREATE TABLE IF NOT EXISTS conflict_simulations (
+    id SERIAL PRIMARY KEY,
+    parcel_id INT REFERENCES parcels(id) ON DELETE CASCADE, -- 지적 필지 FK
+    facility_type VARCHAR(100) NOT NULL,
+    result_json JSONB NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+-- 18. Audit AI 공문서 검증을 필터링 통과한 실제 이행 사례 기록 테이블
 CREATE TABLE IF NOT EXISTS verified_precedents (
     id SERIAL PRIMARY KEY,
     conflict_simulation_id INT REFERENCES conflict_simulations(id) ON DELETE SET NULL, -- 이전 가상 시뮬레이션 매핑 FK
@@ -191,3 +197,14 @@ CREATE TABLE IF NOT EXISTS verified_precedents (
     actual_scenario VARCHAR(50) NOT NULL, -- 실제 매핑된 시나리오 유형 ('NORMAL', 'OPTIMAL', 'WORST')
     verified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 19. 기본 시뮬레이션 필지 데이터 시드 삽입
+INSERT INTO parcels (id, jibun, lat, lng, intensity_level, ahp_weights) VALUES
+(1, '한강로동 42-12 (국유지)', 37.5302, 126.9724, 'normal', '{"소방시설 거리": 5, "배후 주거인구": 5, "전력 공급 용량": 5, "이용 편의성": 5}'),
+(2, '한강로동 45-2 (시유지)', 37.5328, 126.9751, 'normal', '{"소방시설 거리": 5, "배후 주거인구": 5, "전력 공급 용량": 5, "이용 편의성": 5}'),
+(3, '이촌동 12-1 (구유지)', 37.5255, 126.9702, 'normal', '{"소방시설 거리": 5, "배후 주거인구": 5, "전력 공급 용량": 5, "이용 편의성": 5}')
+ON CONFLICT (id) DO NOTHING;
+
+-- SERIAL SEQUENCE 조절
+SELECT setval(pg_get_serial_sequence('parcels', 'id'), coalesce(max(id), 1)) FROM parcels;
+
