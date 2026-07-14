@@ -18,7 +18,6 @@ from app.schemas.lands import (
     BoundaryCheckResponse,
 )
 
-from app.services.gis_service import gis_service
 
 logger = logging.getLogger("app.api.v1.lands")
 
@@ -215,6 +214,32 @@ async def audit_csv_dataset(files: List[UploadFile] = File(...)):
         return fallback_data
 
 
+@router.get("/screen-candidate")
+async def screen_candidate_lands(
+    district_id: int, exclusion_meters: float = 10.0, db: AsyncSession = Depends(get_db)
+):
+    """
+    [장천명 풀스택] Step 4 PostGIS 규제 배제 차집합 기반 가용 부지 스크리닝 API
+    - 자치구 내 제한구역 10m 버퍼 영역을 배제한 적격 입지 필지 리스트를 도출합니다.
+    """
+    try:
+        results = await gis_service.screen_available_lands(
+            db, district_id=district_id, exclusion_meters=exclusion_meters
+        )
+        return {
+            "status": "success",
+            "district_id": district_id,
+            "exclusion_meters": exclusion_meters,
+            "candidate_count": len(results),
+            "candidates": results,
+        }
+    except Exception as e:
+        logger.error(f"[Screening API Error] Failed to screen lands: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"가용 부지 차집합 공간 분석 중 서버 오류가 발생했습니다: {str(e)}",
+        )
+
 @router.get("/district-boundary/{district_id}")
 async def get_district_boundary(
     district_id: int, tolerance: float = 0.0005, db: AsyncSession = Depends(get_db)
@@ -284,29 +309,5 @@ async def check_coordinate_in_boundary(
         )
 
 
-@router.get("/screen-candidate")
-async def screen_candidate_lands(
-    district_id: int, exclusion_meters: float = 10.0, db: AsyncSession = Depends(get_db)
-):
-    """
-    [장천명 풀스택] Step 4 PostGIS 규제 배제 차집합 기반 가용 부지 스크리닝 API
-    - 자치구 내 제한구역 10m 버퍼 영역을 배제한 적격 입지 필지 리스트를 도출합니다.
-    """
-    try:
-        results = await gis_service.screen_available_lands(
-            db, district_id=district_id, exclusion_meters=exclusion_meters
-        )
-        return {
-            "status": "success",
-            "district_id": district_id,
-            "exclusion_meters": exclusion_meters,
-            "candidate_count": len(results),
-            "candidates": results,
-        }
-    except Exception as e:
-        logger.error(f"[Screening API Error] Failed to screen lands: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"가용 부지 차집합 공간 분석 중 서버 오류가 발생했습니다: {str(e)}",
-        )
+
 
