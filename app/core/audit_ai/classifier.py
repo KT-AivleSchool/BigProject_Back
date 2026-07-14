@@ -27,7 +27,7 @@ class AuditClassifier:
         """
         예측되었던 시나리오 리스트와 실제 OCR 텍스트를 비교하여 가장 높은 유사도를 가진 시나리오를 선정합니다.
         """
-        best_scenario = "A"
+        best_scenario = None
         max_similarity = 0.0
 
         for sc in predicted_scenarios:
@@ -39,11 +39,16 @@ class AuditClassifier:
                 max_similarity = similarity
                 best_scenario = sc_type
 
-        # 기본 시나리오 정보가 없을 경우 최소 폴백 유사도 셋업
+        # 모든 시나리오와 공통 단어가 전혀 없는 경우 → 분류 불가 상태 명시
+        # (기존 0.82 매직 넘버 하드코딩 Fallback 제거 — 리뷰 반영)
         if max_similarity == 0.0:
-            max_similarity = 0.82
+            return {
+                "matched_scenario": None,
+                "similarity_score": 0.0,
+                "classification_status": "UNCLASSIFIED",
+            }
 
-        # 유사도 기반 적합성 상태 결정
+        # 유사도 기반 적합성 상태 결정 (0.8 이상: COMPLIANT, 0.5~0.8: WARNING, 미만: DEVIATED)
         if max_similarity >= 0.80:
             status = "COMPLIANT"
         elif max_similarity >= 0.50:
