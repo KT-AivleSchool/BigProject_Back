@@ -48,6 +48,9 @@ async def verify_precedent_document(
         if sim_data and sim_data.result_json:
             predicted_scenarios = sim_data.result_json.get("scenarios", [])
 
+        # 정규식 메타데이터 도출
+        parsed_metadata = pdf_parser.parse_document_metadata(extracted_text)
+
         # 실증 유사도 분류 판정 가동
         analysis = audit_classifier.classify_actual_scenario(
             extracted_text, predicted_scenarios
@@ -60,6 +63,7 @@ async def verify_precedent_document(
             "matched_scenario": analysis["matched_scenario"],
             "similarity_score": analysis["similarity_score"],
             "classification_status": analysis["classification_status"],
+            "parsed_metadata": parsed_metadata,
         }
 
     except HTTPException:
