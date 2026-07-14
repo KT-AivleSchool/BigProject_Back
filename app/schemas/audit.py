@@ -25,3 +25,12 @@ class AuditSaveResponse(BaseModel):
         description="RAG 모델 붕괴 방지를 위해 실증 이행 사례 테이블에 격리 적재 완료 여부",
     )
     saved_at: str = Field(..., description="저장 완료 시각")
+
+
+class AuditSaveRequest(BaseModel):
+    parcel_id: int = Field(..., description="필지 ID")
+    document_no: str | None = Field(None, description="공문서 번호")
+    matched_scenario: str = Field(..., description="매핑 판정된 시나리오 유형")
+    similarity_score: float = Field(..., description="시나리오 유사도 스코어")
+    classification_status: str = Field(..., description="행정 이행 적합성 판정")
+    extracted_text: str = Field(..., description="공문서 추출 텍스트 원본")

@@ -1,5 +1,8 @@
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status
-from app.schemas.audit import AuditVerifyResponse, AuditSaveResponse
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.db.session import get_db
+from app.schemas.audit import AuditVerifyResponse, AuditSaveResponse, AuditSaveRequest
+from app.db.models.precedent import VerifiedPrecedent
 from app.core.audit_ai.parser import pdf_parser
 from app.core.audit_ai.classifier import audit_classifier
 import datetime
@@ -80,12 +83,33 @@ async def verify_precedent_document(
 
 
 @router.post("/save", response_model=AuditSaveResponse)
-def save_audit_feedback(simulation_id: int, matched_scenario: str):
+async def save_audit_feedback(
+    payload: AuditSaveRequest, db: AsyncSession = Depends(get_db)
+):
     """
-    RAG 환류 오염 방지(Model Collapse)를 위해 실증 적용 결과를 격리 적재하는 API
+    RAG 환류 오염 방지(Model Collapse)를 위해 실증 적용 결과를 verified_precedents 테이블에 격리 적재하는 API
     """
-    return {
-        "audit_id": 105,
-        "is_feedback_loop_isolated": True,
-        "saved_at": datetime.datetime.now().isoformat(),
-    }
+    try:
+        db_precedent = VerifiedPrecedent(
+            parcel_id=payload.parcel_id,
+            document_no=payload.document_no,
+            matched_scenario=payload.matched_scenario,
+            similarity_score=payload.similarity_score,
+            classification_status=payload.classification_status,
+            extracted_text=payload.extracted_text,
+        )
+        db.add(db_precedent)
+        await db.commit()
+        await db.refresh(db_precedent)
+
+        return {
+            "audit_id": db_precedent.id,
+            "is_feedback_loop_isolated": True,
+            "saved_at": datetime.datetime.now().isoformat(),
+        }
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"격리 사례 적재 DB 트랜잭션 처리 중 오류가 발생했습니다: {str(e)}",
+        )
