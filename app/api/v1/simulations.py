@@ -120,7 +120,11 @@ def stream_ai_discussion(
                             yield {
                                 "event": "message",
                                 "data": json.dumps(
-                                    {"sender": sender, "text": text, "is_finished": False},
+                                    {
+                                        "sender": sender,
+                                        "text": text,
+                                        "is_finished": False,
+                                    },
                                     ensure_ascii=False,
                                 ),
                             }

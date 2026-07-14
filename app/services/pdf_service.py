@@ -18,7 +18,7 @@ class PdfReportBuilder:
         # OS 독립적 한글 폰트 절대 경로 주입 (Docker/서버 환경에서도 한글 깨짐 방지)
         font_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
-            "../static/fonts/NanumGothic-Regular.ttf"
+            "../static/fonts/NanumGothic-Regular.ttf",
         )
         render_data = {**data, "font_path": font_path}
         rendered_html = template.render(**render_data)
