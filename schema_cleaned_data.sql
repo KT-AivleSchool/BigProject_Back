@@ -1,7 +1,7 @@
 -- =============================================================================
--- 용산구 흡연부스 입지 분석용 16종 데이터 스키마
+-- 용산구 흡연부스 입지 분석용 17종 데이터 스키마
 -- PostgreSQL + PostGIS
--- 주의: 아래 16개 기존 테이블을 삭제한 후 다시 생성합니다.
+-- 주의: 아래 17개 기존 테이블을 삭제한 후 다시 생성합니다.
 -- =============================================================================
 
 CREATE EXTENSION IF NOT EXISTS postgis;
@@ -26,12 +26,13 @@ DROP TABLE IF EXISTS public_toilets CASCADE;
 DROP TABLE IF EXISTS fire_water_facilities CASCADE;
 DROP TABLE IF EXISTS cultural_event_locations CASCADE;
 DROP TABLE IF EXISTS public_parking_lots CASCADE;
+DROP TABLE IF EXISTS national_owned_properties CASCADE;  -- 신규 추가
 
 
 -- =============================================================================
 -- 01. 버스정류소 유동인구
--- 파일: 01.버스정류소_유동인구.csv
--- 실제 컬럼: 정류소명, 경도, 위도, 월평균승객수
+-- 파일: 01_버스정류소_유동인구_v2.csv
+-- 실제 컬럼: bus_stop(정류소명), a(경도), b(위도), avg(평균 유동인구수 — 집계주기 미상)
 -- =============================================================================
 
 CREATE TABLE bus_stop_passenger_stats (
@@ -39,7 +40,7 @@ CREATE TABLE bus_stop_passenger_stats (
     stop_name VARCHAR(150) NOT NULL,
     longitude DOUBLE PRECISION NOT NULL,
     latitude DOUBLE PRECISION NOT NULL,
-    monthly_avg_passengers NUMERIC,
+    avg_floating_population NUMERIC,
     geom GEOMETRY(Point, 4326),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -53,7 +54,7 @@ ON bus_stop_passenger_stats (stop_name);
 
 -- =============================================================================
 -- 02. 가로휴지통
--- 파일: 02. 용산구_가로휴지통.csv
+-- 파일: 02__용산구_가로휴지통.csv
 -- 실제 컬럼: 설치주소, 경도, 위도
 -- =============================================================================
 
@@ -72,7 +73,7 @@ ON street_trash_bins USING GIST (geom);
 
 -- =============================================================================
 -- 03. 지하철역 유동인구
--- 파일: 03. 지하철역_유동인구.csv
+-- 파일: 03__지하철역_유동인구.csv
 -- 실제 컬럼: 역명, 총승객수
 -- =============================================================================
 
@@ -89,8 +90,8 @@ ON subway_station_passenger_stats (station_name);
 
 -- =============================================================================
 -- 04. 생활인구
--- 파일: 04. 생활인구.csv
--- 실제 컬럼: 행 레이블, 평균 성인인구수, 평균 미성년자인구수,
+-- 파일: 04__생활인구.csv
+-- 실제 컬럼: 행 레이블(행정동명), 평균 성인인구수, 평균 미성년자인구수,
 --             평균 총생활인구수
 -- =============================================================================
 
@@ -109,7 +110,7 @@ ON living_population_stats (row_label);
 
 -- =============================================================================
 -- 05. 흡연부스 후보 부지
--- 파일: 05.용산구_부지면적_좌표(흡연부스 후보).csv
+-- 파일: 05_용산구_부지면적_좌표_흡연부스_후보_.csv
 -- 실제 컬럼: 부지_WKT
 -- =============================================================================
 
@@ -126,7 +127,7 @@ ON candidate_lands USING GIST (geom);
 
 -- =============================================================================
 -- 06. 용산구 공원
--- 파일: 06. 용산구_공원데이터.xlsx
+-- 파일: 06__용산구_공원데이터.xlsx
 -- 실제 컬럼: 시설이름, 경도, 위도
 -- =============================================================================
 
@@ -148,7 +149,7 @@ ON parks (facility_name);
 
 -- =============================================================================
 -- 07. 담배꽁초 상습 무단투기
--- 파일: 07. 담배꽁초_상습_무단투기.csv
+-- 파일: 07_담배꽁초_상습_무단투기_v3.csv
 -- 실제 컬럼: 지번주소, 경도, 위도
 -- =============================================================================
 
@@ -167,7 +168,7 @@ ON cigarette_litter_hotspots USING GIST (geom);
 
 -- =============================================================================
 -- 08. 용산구 전체 흡연 제한구역 폴리곤
--- 파일: 08.용산구_전체_흡연구역_폴리곤.csv
+-- 파일: 08_용산구_전체_흡연구역_폴리곤.csv
 -- 실제 컬럼: 시설종류, 기준, 게이트_WKT
 -- =============================================================================
 
@@ -189,7 +190,7 @@ ON smoking_area_polygons (facility_type);
 
 -- =============================================================================
 -- 09. 용산구 기존 흡연구역
--- 파일: 09. 서울특별시_용산구_흡연구역.csv
+-- 파일: 09__서울특별시_용산구_흡연구역.csv
 -- 실제 컬럼: 서울특별시 용산구 설치 위치, 경도, 위도
 -- =============================================================================
 
@@ -208,7 +209,7 @@ ON smoking_areas USING GIST (geom);
 
 -- =============================================================================
 -- 10. 소상공인시장진흥공단 상가
--- 파일: 10. 소상공인시장진흥공단_상가.csv
+-- 파일: 10__소상공인시장진흥공단_상가.csv
 -- 실제 컬럼: 도로명주소, 상권업종대분류명, 경도, 위도
 -- =============================================================================
 
@@ -288,15 +289,15 @@ ON public_toilets USING GIST (geom);
 
 -- =============================================================================
 -- 14. 용산구 소방용수시설
--- 파일: 용산구_소방용수시설.csv
--- 실제 컬럼: 소재지도로명주소, 위도, 경도
+-- 파일: 용산구_소방용수시설_v2.csv
+-- 실제 컬럼: 소재지도로명주소, 경도, 위도   ★ 기존 스키마는 위도/경도 순서가 반대였음 (수정됨)
 -- =============================================================================
 
 CREATE TABLE fire_water_facilities (
     id SERIAL PRIMARY KEY,
     road_address VARCHAR(300) NOT NULL,
-    latitude DOUBLE PRECISION NOT NULL,
     longitude DOUBLE PRECISION NOT NULL,
+    latitude DOUBLE PRECISION NOT NULL,
     geom GEOMETRY(Point, 4326),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -352,80 +353,84 @@ ON public_parking_lots (parking_lot_name);
 
 
 -- =============================================================================
+-- 17. 국유부동산  (신규 추가)
+-- 파일: 국유부동산_위경도_v2.csv
+-- 실제 컬럼: 주소, 지목(공부), 대장면적(단위:㎡), 경도, 위도
+-- =============================================================================
+
+CREATE TABLE national_owned_properties (
+    id SERIAL PRIMARY KEY,
+    address VARCHAR(300) NOT NULL,
+    land_category VARCHAR(50),
+    registered_area_sqm NUMERIC,
+    longitude DOUBLE PRECISION NOT NULL,
+    latitude DOUBLE PRECISION NOT NULL,
+    geom GEOMETRY(Point, 4326),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_national_owned_properties_geom
+ON national_owned_properties USING GIST (geom);
+
+CREATE INDEX idx_national_owned_properties_category
+ON national_owned_properties (land_category);
+
+
+-- =============================================================================
 -- CSV 적재 후 Point geom 생성
 -- =============================================================================
 
 UPDATE bus_stop_passenger_stats
 SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
-WHERE geom IS NULL
-  AND longitude IS NOT NULL
-  AND latitude IS NOT NULL;
+WHERE geom IS NULL AND longitude IS NOT NULL AND latitude IS NOT NULL;
 
 UPDATE street_trash_bins
 SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
-WHERE geom IS NULL
-  AND longitude IS NOT NULL
-  AND latitude IS NOT NULL;
+WHERE geom IS NULL AND longitude IS NOT NULL AND latitude IS NOT NULL;
 
 UPDATE parks
 SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
-WHERE geom IS NULL
-  AND longitude IS NOT NULL
-  AND latitude IS NOT NULL;
+WHERE geom IS NULL AND longitude IS NOT NULL AND latitude IS NOT NULL;
 
 UPDATE cigarette_litter_hotspots
 SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
-WHERE geom IS NULL
-  AND longitude IS NOT NULL
-  AND latitude IS NOT NULL;
+WHERE geom IS NULL AND longitude IS NOT NULL AND latitude IS NOT NULL;
 
 UPDATE smoking_areas
 SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
-WHERE geom IS NULL
-  AND longitude IS NOT NULL
-  AND latitude IS NOT NULL;
+WHERE geom IS NULL AND longitude IS NOT NULL AND latitude IS NOT NULL;
 
 UPDATE commercial_shops
 SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
-WHERE geom IS NULL
-  AND longitude IS NOT NULL
-  AND latitude IS NOT NULL;
+WHERE geom IS NULL AND longitude IS NOT NULL AND latitude IS NOT NULL;
 
 UPDATE cctv_locations
 SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
-WHERE geom IS NULL
-  AND longitude IS NOT NULL
-  AND latitude IS NOT NULL;
+WHERE geom IS NULL AND longitude IS NOT NULL AND latitude IS NOT NULL;
 
 UPDATE public_wifi_locations
 SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
-WHERE geom IS NULL
-  AND longitude IS NOT NULL
-  AND latitude IS NOT NULL;
+WHERE geom IS NULL AND longitude IS NOT NULL AND latitude IS NOT NULL;
 
 UPDATE public_toilets
 SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
-WHERE geom IS NULL
-  AND longitude IS NOT NULL
-  AND latitude IS NOT NULL;
+WHERE geom IS NULL AND longitude IS NOT NULL AND latitude IS NOT NULL;
 
 UPDATE fire_water_facilities
 SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
-WHERE geom IS NULL
-  AND longitude IS NOT NULL
-  AND latitude IS NOT NULL;
+WHERE geom IS NULL AND longitude IS NOT NULL AND latitude IS NOT NULL;
 
 UPDATE cultural_event_locations
 SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
-WHERE geom IS NULL
-  AND longitude IS NOT NULL
-  AND latitude IS NOT NULL;
+WHERE geom IS NULL AND longitude IS NOT NULL AND latitude IS NOT NULL;
 
 UPDATE public_parking_lots
 SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
-WHERE geom IS NULL
-  AND longitude IS NOT NULL
-  AND latitude IS NOT NULL;
+WHERE geom IS NULL AND longitude IS NOT NULL AND latitude IS NOT NULL;
+
+UPDATE national_owned_properties
+SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
+WHERE geom IS NULL AND longitude IS NOT NULL AND latitude IS NOT NULL;
 
 
 -- =============================================================================
@@ -434,10 +439,8 @@ WHERE geom IS NULL
 
 UPDATE candidate_lands
 SET geom = ST_SetSRID(ST_GeomFromText(land_wkt), 4326)
-WHERE geom IS NULL
-  AND land_wkt IS NOT NULL;
+WHERE geom IS NULL AND land_wkt IS NOT NULL;
 
 UPDATE smoking_area_polygons
 SET geom = ST_SetSRID(ST_GeomFromText(gate_wkt), 4326)
-WHERE geom IS NULL
-  AND gate_wkt IS NOT NULL;
+WHERE geom IS NULL AND gate_wkt IS NOT NULL;
