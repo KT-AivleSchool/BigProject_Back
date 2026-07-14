@@ -7,12 +7,11 @@ class PdfOcrParser:
     def extract_text_from_pdf(pdf_bytes: bytes) -> str:
         """
         PDF 바이너리 스트림으로부터 텍스트 레이어를 전부 추출합니다.
+        - with 컨텍스트 매니저로 예외 발생 여부와 무관하게 파일 스트림 핸들을 자동 해제합니다.
+          (기존 doc.close() 방식은 루프 도중 예외 발생 시 자원 누수 리스크 존재 — 리뷰 반영)
         """
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        text_content = []
-        for page in doc:
-            text_content.append(page.get_text())
-        doc.close()
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+            text_content = [page.get_text() for page in doc]
         return "\n".join(text_content)
 
     @staticmethod
