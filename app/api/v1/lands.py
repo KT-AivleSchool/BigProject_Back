@@ -1,15 +1,22 @@
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status, Depends
 from typing import List
 import json
 import logging
 from openai import AsyncOpenAI
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
+from app.api.deps import get_db
 from app.schemas.lands import (
     UploadResponse,
     HitlCoordinateCorrection,
     LandDetailResponse,
     CsvAuditResponse,
+    BoundaryCheckRequest,
+    BoundaryCheckResponse,
 )
+
+from app.services.gis_service import gis_service
 
 logger = logging.getLogger("app.api.v1.lands")
 
@@ -204,3 +211,72 @@ async def audit_csv_dataset(files: List[UploadFile] = File(...)):
             f"[AI Ingestion Failure] OpenAI call failed: {str(e)}. Switching to Graceful Fallback Mode."
         )
         return fallback_data
+
+
+@router.get("/district-boundary/{district_id}")
+async def get_district_boundary(
+    district_id: int, tolerance: float = 0.0005, db: AsyncSession = Depends(get_db)
+):
+    """
+    [장천명 풀스택] Step 2 자치구 경계 가시화 API (ST_SimplifyPreserveTopology 경량화 적용)
+    - districts 테이블에 대응하는 dong_boundaries MultiPolygon 기하들의 공간 합집합(ST_Union)에 위상 보존 단순화를 적용하여 GeoJSON 형태로 리턴합니다.
+    """
+    try:
+        boundary_geojson = await gis_service.get_simplified_district_boundary(
+            db, district_id=district_id, tolerance=tolerance
+        )
+
+        if not boundary_geojson:
+            raise HTTPException(
+                status_code=404,
+                detail=f"해당 자치구 ID {district_id}에 매핑되는 행정동 경계 정보가 없습니다.",
+            )
+
+        return {
+            "status": "success",
+            "district_id": district_id,
+            "tolerance": tolerance,
+            "boundary": boundary_geojson,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[Boundary API Error] Failed to fetch district boundary: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"자치구 경계 GeoJSON 로드 중 내부 서버 공간 연산 에러가 발생했습니다: {str(e)}",
+        )
+
+
+@router.post("/check-boundary", response_model=BoundaryCheckResponse)
+async def check_coordinate_in_boundary(
+    req: BoundaryCheckRequest, db: AsyncSession = Depends(get_db)
+):
+    """
+    [장천명 풀스택] Step 2 실무자 보정 좌표 자치구 이탈 방지 가드 API
+    - 특정 위경도 좌표가 해당 자치구(district_id) 경계 영역(ST_Contains) 내에 정상 포함되는지 물리적으로 검증합니다.
+    """
+    try:
+        sql = text("""
+            SELECT EXISTS (
+                SELECT 1
+                FROM dong_boundaries
+                WHERE district_id = :district_id
+                  AND ST_Contains(geom, ST_SetSRID(ST_Point(:lng, :lat), 4326))
+            ) as is_contained
+        """)
+        result = await db.execute(
+            sql, {"district_id": req.district_id, "lat": req.lat, "lng": req.lng}
+        )
+        row = result.fetchone()
+        is_contained = row.is_contained if row else False
+
+        return {"district_id": req.district_id, "is_contained": is_contained}
+    except Exception as e:
+        logger.error(
+            f"[Boundary Guard Error] Failed to compute spatial containment: {e}"
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"PostGIS 공간 좌표 분석 중 런타임 오류가 발생했습니다: {str(e)}",
+        )
