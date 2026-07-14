@@ -7,7 +7,7 @@ from sqlalchemy.future import select
 
 from app.schemas.simulations import SimulationResultResponse
 from app.core.sim_ai.graph import build_discussion_graph
-from app.db.session import get_db
+from app.api.deps import get_db
 from app.db.models.simulation import Parcel, ConflictSimulation
 
 # API 라우터 인스턴스 초기화
