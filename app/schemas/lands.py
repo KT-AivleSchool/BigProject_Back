@@ -50,12 +50,25 @@ class CsvAuditResponse(BaseModel):
 
 
 class BoundaryCheckRequest(BaseModel):
-    district_id: int = Field(..., description="검증 대상 자치구 ID")
-    lat: float = Field(..., description="위도 좌표")
-    lng: float = Field(..., description="경도 좌표")
+    """HITL 보정 좌표의 자치구 경계 이탈 여부를 검증하기 위한 요청 스키마"""
+    district_id: int = Field(..., description="검증할 자치구 고유 ID")
+    lat: float = Field(..., ge=-90.0, le=90.0, description="위도 좌표")
+    lng: float = Field(..., ge=-180.0, le=180.0, description="경도 좌표")
 
 
 class BoundaryCheckResponse(BaseModel):
-    district_id: int = Field(..., description="자치구 ID")
-    is_contained: bool = Field(..., description="자치구 내 포함 여부")
+    """자치구 경계 이탈 여부 검증 결과 응답 스키마"""
+    district_id: int = Field(..., description="검증을 수행한 자치구 ID")
+    is_contained: bool = Field(
+        ..., description="경계 포함 여부 (True: 자치구 내 안전 위치, False: 자치구 이탈)"
+    )
+
+
+class SimplifiedLandsRequest(BaseModel):
+    """프론트엔드 뷰포트 Bounding Box 기반 지적도 조회 요청 스키마"""
+    min_lat: float = Field(..., description="뷰포트 최소 위도 (남쪽 경계)")
+    max_lat: float = Field(..., description="뷰포트 최대 위도 (북쪽 경계)")
+    min_lng: float = Field(..., description="뷰포트 최소 경도 (서쪽 경계)")
+    max_lng: float = Field(..., description="뷰포트 최대 경도 (동쪽 경계)")
+    tolerance: float = Field(0.0001, description="ST_SimplifyPreserveTopology 오차 허용 범위")
 
