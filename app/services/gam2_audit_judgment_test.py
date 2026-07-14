@@ -381,6 +381,60 @@ def run_harness(llm: LLMClient, fixtures: dict, domain: dict, progress=None):
     return out, raw_preds
 
 
+def apply_radius_answer(result: dict, flag: dict, radius_m: int | None,
+                        source: str = "human_confirmed") -> None:
+    """HITL 답변을 roles·flag 에 반영(메모리). radius_m=None 이면 '반경 없음(면 배제 등)'.
+    사람이 확정한 값만 confirmed=true → 캐시 저장(다음 실행에서 재사용).
+    """
+    idx = flag.get("role_index", 0)
+    roles = result.get("roles", [])
+    if idx >= len(roles):
+        return
+    role = roles[idx]
+    ftype = role.get("facility_type")
+
+    role["배제반경_m"] = radius_m
+    role["confirmed"] = True                 # 사람이 확인함 → 확정
+    role["need_review"] = False
+    role["source"] = source
+    flag["제안값"] = radius_m
+    flag["confirmed"] = True
+    flag["confirmed_by_human"] = True
+
+    # 사람 확정값만 캐시 (반경이 실제로 있는 경우만 — None 은 캐시 의미 없음)
+    if ftype and radius_m is not None:
+        save_to_exclusion_cache(ftype, radius_m, source, confirmed_by="human")
+
+
+def _read_radius(default: int | None = None) -> int | None | str:
+    """배제반경(m) 입력.
+      숫자   → 그 값으로 확정
+      Enter  → 제안값 있으면 승인, 없으면 건너뜀(미확정 유지)
+      n      → 반경 없음(면 배제 등)으로 확정
+      s      → 건너뜀(미확정 유지 — 나중에 다시)
+    반환: int | None(반경없음 확정) | "skip"(미확정 유지)
+    """
+    hint = f"[Enter={default}m 승인]" if default is not None else "[Enter=건너뜀]"
+    while True:
+        s = input(f"  배제반경(m) {hint} · n=반경없음 · s=건너뜀: ").strip().lower()
+        if s == "":
+            return default if default is not None else "skip"
+        if s == "n":
+            return None
+        if s == "s":
+            return "skip"
+        try:
+            # '100m', '30 m', '30미터' 같은 단위 표기도 허용(프론트 입력칸도 관대하게)
+            num = s.replace("미터", "").replace("m", "").replace("ｍ", "").strip()
+            v = int(float(num))
+            if v < 0:
+                print("    0 이상으로 입력하세요.")
+                continue
+            return v
+        except ValueError:
+            print("    숫자 · n · s 중 하나를 입력하세요.")
+
+
 def confirm_exclusion_radius(enriched_path: str, dataset_id: str, radius_m: int,
                              out_path: str | None = None) -> str:
     """HITL 담당자가 서핑 제안값을 확인·확정할 때 호출. confirmed=true 로 바꾸고 캐시에 저장.
@@ -704,16 +758,76 @@ def apply_intent_answer(result: dict, choice: int, weight: float | None = None) 
 
 
 def review_hitl(in_path: str | None = None, out_path: str | None = None) -> str:
-    """audit_result.json 의 data_intent_unclear 를 CLI로 사람에게 물어 roles 확정.
-    원본 보존 → audit_result_reviewed.json 저장. (재실행 전제 아님: resolved 표시 없음)"""
+    """HITL — 사람이 확인·확정하는 단계. 두 종류의 flag 를 처리한다.
+      1) exclusion_radius_missing : 배제반경 확인/입력 (need_review=true 인 배제)
+           · 제안값 있음(search 가 상위법에서 찾음) → 보여주고 승인/수정
+           · 제안값 없음(조례 없어 검색 생략)      → 근거만 보여주고 직접 입력
+      2) data_intent_unclear      : 애매한 데이터의 용도 확인(1~5)
+    입력: audit_result_enriched.json 이 있으면 우선(제안값 포함), 없으면 audit_result.json.
+    출력: audit_result_reviewed.json (원본 보존)
+    """
     import os
-    in_path = in_path or _out_path("audit_result.json")
+    if in_path is None:
+        enriched = _out_path("audit_result_enriched.json")
+        in_path = enriched if os.path.exists(enriched) else _out_path("audit_result.json")
     out_path = out_path or _out_path("audit_result_reviewed.json")
+    print(f"[입력] {os.path.basename(in_path)}")
     doc = json.load(open(in_path, encoding="utf-8"))
-    pending = [r for r in doc.get("results", [])
+    results = doc.get("results", [])
+
+    # ── 1) 배제반경 확인 ────────────────────────────────────────────
+    radius_jobs = [(r, f) for r in results for f in r.get("hitl_flags", [])
+                   if f.get("type") == "exclusion_radius_missing" and not f.get("confirmed")]
+    if not radius_jobs:
+        print("[HITL] 배제반경 확인 대상 없음.")
+    else:
+        print(f"\n{'#' * 60}\n# 배제반경 확인 — {len(radius_jobs)}건")
+        print("#  AI 제안값은 확정이 아닙니다. 출처를 보고 승인하거나 수정하세요.")
+        print("#" * 60)
+    for r, f in radius_jobs:
+        idx = f.get("role_index", 0)
+        roles = r.get("roles", [])
+        role = roles[idx] if idx < len(roles) else {}
+        ftype = role.get("facility_type", "?")
+        etype = role.get("exclusion_type", "radius")
+
+        print("\n" + "=" * 60)
+        print(f"[{r.get('dataset_id','')}] {ftype}  (배제 방식: {etype})")
+        print(f"  데이터: {r.get('summary','')}")
+        print(f"  AI 판단근거: {role.get('rationale','')}")
+
+        제안 = f.get("제안값")
+        if 제안 is not None:
+            src = f.get("출처") or "?"
+            근거 = f.get("근거문장") or ""
+            print(f"\n  ▶ AI 제안: {제안}m   (출처: {src})")
+            if 근거:
+                print(f"    근거문장: {근거[:110]}")
+            if f.get("근거_시설_일치") is False:
+                print(f"    ⚠ 근거-시설 불일치 — 근거문장에 '{ftype}'가 없습니다."
+                      f" 다른 시설 규정일 수 있으니 반드시 확인하세요.")
+        else:
+            why = ("조례가 없어 검색을 생략했습니다"
+                   if not f.get("source_type") else "검색에서 근거를 찾지 못했습니다")
+            print(f"\n  ▶ AI 제안 없음 — {why}. 직접 입력이 필요합니다.")
+
+        radius = _read_radius(default=제안)
+        if radius == "skip":
+            print("  → 건너뜀 (미확정 유지 — 위치선정 전에 다시 확인 필요)")
+            continue
+        apply_radius_answer(r, f, radius)
+        if radius is None:
+            print("  → 반경 없음(면 배제 등)으로 확정")
+        else:
+            print(f"  → {radius}m 확정 (캐시 저장 — 다음 실행부터 재사용)")
+
+    # ── 2) 데이터 용도 확인 ─────────────────────────────────────────
+    pending = [r for r in results
                if any(f.get("type") == "data_intent_unclear" for f in r.get("hitl_flags", []))]
     if not pending:
-        print("[HITL] 의도 확인 대상 없음(data_intent_unclear 0).")
+        print("\n[HITL] 의도 확인 대상 없음(data_intent_unclear 0).")
+    else:
+        print(f"\n{'#' * 60}\n# 데이터 용도 확인 — {len(pending)}건\n{'#' * 60}")
     for r in pending:
         print("\n" + "=" * 60)
         print(f"[{r.get('dataset_id', '')}] {r.get('summary', '')}")
@@ -728,7 +842,19 @@ def review_hitl(in_path: str | None = None, out_path: str | None = None) -> str:
         print(f"  → {role} 확정{tail}")
         if choice in (3, 4):
             print("    ※ 표시만 — 위치선정(GIS) 단계에서 참고/처리")
+
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
     json.dump(doc, open(out_path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+
+    # 미확정 잔여 요약(건너뛴 것) — 위치선정 전에 반드시 처리해야 함
+    left = [(r.get("dataset_id"), (r.get("roles", []) + [{}])[f.get("role_index", 0)]
+             .get("facility_type", "?"))
+            for r in results for f in r.get("hitl_flags", [])
+            if f.get("type") == "exclusion_radius_missing" and not f.get("confirmed")]
+    if left:
+        print(f"\n⚠ 미확정 배제반경 {len(left)}건 남음 (건너뜀): "
+              f"{', '.join(f'{d}:{t}' for d, t in left)}")
+        print("  위치선정(GIS) 단계 전에 다시 hitl 을 실행해 확정하세요.")
     print(f"\n[저장] {out_path}")
     return out_path
 
