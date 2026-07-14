@@ -16,7 +16,7 @@ router = APIRouter()
 
 @router.get("/stream")
 def stream_ai_discussion(
-    parcel_id: int, facility_type: str, db: AsyncSession = Depends(get_db)
+    parcel_id: int, facility_type: str = "전기차 충전소", db: AsyncSession = Depends(get_db)
 ):
     """
     [동현 AI 메인 & 장천명 풀스택] LangGraph 3자 페르소나 모의 심의 토론 실시간 SSE 스트리밍 API
