@@ -18,3 +18,4 @@ langchain-openai>=0.1.0
 langchain-community>=0.0.20
 pgvector>=0.2.0
 asyncpg>=0.28.0
+pymupdf>=1.23.0
