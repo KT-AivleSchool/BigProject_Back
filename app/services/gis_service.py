@@ -1,5 +1,5 @@
 import json
-from sqlalchemy import func, select
+from sqlalchemy import func, select, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # spatial.py는 PR #59(feature/#9-postgis-orm-models) 머지 후 활성화되는 의존성 모델입니다.
@@ -115,7 +115,7 @@ class GisService:
             func.ST_GeomFromText("GEOMETRYCOLLECTION EMPTY", 3857),
         )
 
-        diff_geom = func.case(
+        diff_geom = case(
             (
                 func.ST_Intersects(geom_3857, buffer_empty),
                 func.ST_Difference(geom_3857, buffer_empty),
