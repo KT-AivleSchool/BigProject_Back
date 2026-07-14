@@ -39,22 +39,32 @@ class GisService:
 
     @staticmethod
     async def get_simplified_lands(
-        db: AsyncSession, district_id: int, tolerance: float = 0.0001
+        db: AsyncSession,
+        min_lat: float,
+        max_lat: float,
+        min_lng: float,
+        max_lng: float,
+        tolerance: float = 0.0001,
     ) -> list:
         """
         대용량 연속지적도(CadastralLand)의 각 필지 경계를 단순화하여 GeoJSON 목록으로 조회합니다.
+        - [개선] 프론트엔드 뷰포트 Bounding Box(min/max lat/lng) 파라미터를 수신하여
+          ST_Intersects 공간 교차 필터로 화면 내 필지만 조회합니다.
+          기존 .limit(1000) Hard Limit을 제거하여 지역별 필지 누락 현상을 방지합니다.
         """
-        stmt = (
-            select(
-                CadastralLand.id,
-                CadastralLand.pnu,
-                CadastralLand.jibun,
-                func.ST_AsGeoJSON(
-                    func.ST_SimplifyPreserveTopology(CadastralLand.geom, tolerance)
-                ),
-            )
-            .where(CadastralLand.district_id == district_id)
-            .limit(1000)
+        # 뷰포트 Bounding Box를 PostGIS 공간 경계 사각형(ST_MakeEnvelope)으로 변환
+        bbox_envelope = func.ST_MakeEnvelope(min_lng, min_lat, max_lng, max_lat, 4326)
+
+        stmt = select(
+            CadastralLand.id,
+            CadastralLand.pnu,
+            CadastralLand.jibun,
+            func.ST_AsGeoJSON(
+                func.ST_SimplifyPreserveTopology(CadastralLand.geom, tolerance)
+            ),
+        ).where(
+            # 화면 내 필지만 조회 (ST_Intersects 공간 인덱스 활용)
+            func.ST_Intersects(CadastralLand.geom, bbox_envelope)
         )
 
         result = await db.execute(stmt)
