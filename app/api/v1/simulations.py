@@ -25,162 +25,174 @@ def stream_ai_discussion(
     """
 
     async def event_generator():
-        # DB에서 parcel_id로 GIS 데이터를 조회합니다.
-        result = await db.execute(select(Parcel).where(Parcel.id == parcel_id))
-        parcel = result.scalar_first()
+        try:
+            # DB에서 parcel_id로 GIS 데이터를 조회합니다.
+            result = await db.execute(select(Parcel).where(Parcel.id == parcel_id))
+            parcel = result.scalar_first()
 
-        if not parcel:
-            # 존재하지 않는 parcel_id일 경우 에러 메시지 전송 후 스트림 종료
+            if not parcel:
+                # 존재하지 않는 parcel_id일 경우 에러 메시지 전송 후 스트림 종료
+                yield {
+                    "event": "error",
+                    "data": json.dumps(
+                        {"error": "해당 필지(Parcel)를 찾을 수 없습니다."},
+                        ensure_ascii=False,
+                    ),
+                }
+                return
+
+            gis_data = {
+                "lat": parcel.lat,
+                "lng": parcel.lng,
+                "jibun": parcel.jibun,
+                "intensity_level": parcel.intensity_level,
+                "ahp_weights": parcel.ahp_weights or {},
+            }
+
+            # 1. 시스템 시작 메시지 송출
             yield {
-                "event": "error",
+                "event": "message",
                 "data": json.dumps(
-                    {"error": "해당 필지(Parcel)를 찾을 수 없습니다."},
+                    {
+                        "sender": "시스템",
+                        "text": f"선택된 위치(지번: {gis_data['jibun']})의 {facility_type} 모의 심의를 시작합니다...",
+                        "is_finished": False,
+                    },
                     ensure_ascii=False,
                 ),
             }
-            return
 
-        gis_data = {
-            "lat": parcel.lat,
-            "lng": parcel.lng,
-            "jibun": parcel.jibun,
-            "intensity_level": parcel.intensity_level,
-            "ahp_weights": parcel.ahp_weights or {},
-        }
+            # 2. LangGraph 초기화 및 상태 세팅
+            graph = build_discussion_graph()
 
-        # 1. 시스템 시작 메시지 송출
-        yield {
-            "event": "message",
-            "data": json.dumps(
-                {
-                    "sender": "시스템",
-                    "text": f"선택된 위치(지번: {gis_data['jibun']})의 {facility_type} 모의 심의를 시작합니다...",
-                    "is_finished": False,
-                },
-                ensure_ascii=False,
-            ),
-        }
+            timestamp = datetime.datetime.now().isoformat()
 
-        # 2. LangGraph 초기화 및 상태 세팅
-        graph = build_discussion_graph()
+            initial_state = {
+                "messages": [],
+                "css_pro": "HIGH",
+                "css_con": "HIGH",
+                "round_count": 0,
+                "current_phase": "debate",
+                "eval_score": 0.0,
+                "spoken_this_round": [],
+                "candidate_jibun": gis_data["jibun"],
+                "candidate_lat": gis_data["lat"],
+                "candidate_lng": gis_data["lng"],
+                "facility_type": facility_type,
+                "intensity_level": gis_data["intensity_level"],
+                "ahp_weights": gis_data["ahp_weights"],
+                "timestamp": timestamp,
+                "rag_pro": "",
+                "rag_con": "",
+                "rag_gov": "",
+                "evaluations": {},
+                "final_scenarios": {},
+                "is_finished": False,
+                "next_speaker": "pro",
+            }
 
-        timestamp = datetime.datetime.now().isoformat()
+            # 내부 상태 누적용 변수
+            current_state = dict(initial_state)
 
-        initial_state = {
-            "messages": [],
-            "css_pro": "HIGH",
-            "css_con": "HIGH",
-            "round_count": 0,
-            "current_phase": "debate",
-            "eval_score": 0.0,
-            "spoken_this_round": [],
-            "candidate_jibun": gis_data["jibun"],
-            "candidate_lat": gis_data["lat"],
-            "candidate_lng": gis_data["lng"],
-            "facility_type": facility_type,
-            "intensity_level": gis_data["intensity_level"],
-            "ahp_weights": gis_data["ahp_weights"],
-            "timestamp": timestamp,
-            "rag_pro": "",
-            "rag_con": "",
-            "rag_gov": "",
-            "evaluations": {},
-            "final_scenarios": {},
-            "is_finished": False,
-            "next_speaker": "pro",
-        }
+            # 3. 그래프 비동기 스트리밍 (astream)
+            async for output in graph.astream(initial_state):
+                for node_name, node_state in output.items():
+                    # 상태 업데이트 누적
+                    if "messages" in node_state:
+                        current_state["messages"].extend(node_state["messages"])
+                    if "final_scenarios" in node_state:
+                        current_state["final_scenarios"] = node_state["final_scenarios"]
 
-        # 내부 상태 누적용 변수
-        current_state = dict(initial_state)
+                    if node_name in ["pro", "con", "gov", "gov_wrapup"]:
+                        if "messages" in node_state and len(node_state["messages"]) > 0:
+                            msg = node_state["messages"][-1]
 
-        # 3. 그래프 비동기 스트리밍 (astream)
-        async for output in graph.astream(initial_state):
-            for node_name, node_state in output.items():
-                # 상태 업데이트 누적
-                if "messages" in node_state:
-                    current_state["messages"].extend(node_state["messages"])
-                if "final_scenarios" in node_state:
-                    current_state["final_scenarios"] = node_state["final_scenarios"]
+                            parts = msg.split(":", 1)
+                            if len(parts) == 2:
+                                sender = parts[0].strip()
+                                text = parts[1].strip()
+                            else:
+                                sender = "참여자"
+                                text = msg
 
-                if node_name in ["pro", "con", "gov", "gov_wrapup"]:
-                    if "messages" in node_state and len(node_state["messages"]) > 0:
-                        msg = node_state["messages"][-1]
+                            yield {
+                                "event": "message",
+                                "data": json.dumps(
+                                    {"sender": sender, "text": text, "is_finished": False},
+                                    ensure_ascii=False,
+                                ),
+                            }
 
-                        parts = msg.split(":", 1)
-                        if len(parts) == 2:
-                            sender = parts[0].strip()
-                            text = parts[1].strip()
-                        else:
-                            sender = "참여자"
-                            text = msg
+                    elif node_name == "reporter":
+                        scenarios = current_state.get("final_scenarios", {})
+
+                        # --- [NEW] DB 저장용 최종 JSON 포맷 구성 ---
+                        debate_logs = []
+                        sys_msg = "[시스템 면책 고지] 본 모의 심의 토론 내용은 AI 페르소나 엔진에 의해 생성된 가상의 시나리오이며, 실제 인물이나 단체, 사실관계와는 전혀 무관합니다."
+                        debate_logs.append({"sender": "시스템", "text": sys_msg})
+                        raw_text_lines = [sys_msg]
+
+                        for msg in current_state.get("messages", []):
+                            parts = msg.split(":", 1)
+                            if len(parts) == 2:
+                                s, t = parts[0].strip(), parts[1].strip()
+                            else:
+                                s, t = "참여자", msg
+                            debate_logs.append({"sender": s, "text": t})
+                            raw_text_lines.append(msg)
+
+                        result_json = {
+                            "candidate_jibun": current_state.get("candidate_jibun"),
+                            "candidate_lat": current_state.get("candidate_lat"),
+                            "candidate_lng": current_state.get("candidate_lng"),
+                            "facility_type": current_state.get("facility_type"),
+                            "intensity_level": current_state.get("intensity_level"),
+                            "ahp_weights": current_state.get("ahp_weights"),
+                            "timestamp": current_state.get("timestamp"),
+                            "debate_logs": debate_logs,
+                            "raw_text": "\n\n".join(raw_text_lines),
+                            "scenarios": scenarios.get("scenarios", []),
+                        }
+
+                        # 최종 JSON을 DB에 저장 (ConflictSimulation)
+                        try:
+                            new_sim = ConflictSimulation(
+                                parcel_id=parcel_id,
+                                facility_type=facility_type,
+                                result_json=result_json,
+                            )
+                            db.add(new_sim)
+                            await db.commit()
+                            print("=== 최종 도출된 JSON 결과 (DB 저장 성공) ===")
+                        except Exception as e:
+                            await db.rollback()
+                            print(f"=== DB 저장 실패: {e} ===")
+
+                        print(json.dumps(result_json, ensure_ascii=False, indent=2))
+                        # -------------------------------------------
 
                         yield {
                             "event": "message",
                             "data": json.dumps(
-                                {"sender": sender, "text": text, "is_finished": False},
+                                {
+                                    "sender": "시스템",
+                                    "text": "토론 종료. 3대 시나리오 도출이 완료되었습니다.",
+                                    "is_finished": True,
+                                },
                                 ensure_ascii=False,
                             ),
                         }
-
-                elif node_name == "reporter":
-                    scenarios = current_state.get("final_scenarios", {})
-
-                    # --- [NEW] DB 저장용 최종 JSON 포맷 구성 ---
-                    debate_logs = []
-                    sys_msg = "[시스템 면책 고지] 본 모의 심의 토론 내용은 AI 페르소나 엔진에 의해 생성된 가상의 시나리오이며, 실제 인물이나 단체, 사실관계와는 전혀 무관합니다."
-                    debate_logs.append({"sender": "시스템", "text": sys_msg})
-                    raw_text_lines = [sys_msg]
-
-                    for msg in current_state.get("messages", []):
-                        parts = msg.split(":", 1)
-                        if len(parts) == 2:
-                            s, t = parts[0].strip(), parts[1].strip()
-                        else:
-                            s, t = "참여자", msg
-                        debate_logs.append({"sender": s, "text": t})
-                        raw_text_lines.append(msg)
-
-                    result_json = {
-                        "candidate_jibun": current_state.get("candidate_jibun"),
-                        "candidate_lat": current_state.get("candidate_lat"),
-                        "candidate_lng": current_state.get("candidate_lng"),
-                        "facility_type": current_state.get("facility_type"),
-                        "intensity_level": current_state.get("intensity_level"),
-                        "ahp_weights": current_state.get("ahp_weights"),
-                        "timestamp": current_state.get("timestamp"),
-                        "debate_logs": debate_logs,
-                        "raw_text": "\n\n".join(raw_text_lines),
-                        "scenarios": scenarios.get("scenarios", []),
-                    }
-
-                    # 최종 JSON을 DB에 저장 (ConflictSimulation)
-                    try:
-                        new_sim = ConflictSimulation(
-                            parcel_id=parcel_id,
-                            facility_type=facility_type,
-                            result_json=result_json,
-                        )
-                        db.add(new_sim)
-                        await db.commit()
-                        print("=== 최종 도출된 JSON 결과 (DB 저장 성공) ===")
-                    except Exception as e:
-                        await db.rollback()
-                        print(f"=== DB 저장 실패: {e} ===")
-
-                    print(json.dumps(result_json, ensure_ascii=False, indent=2))
-                    # -------------------------------------------
-
-                    yield {
-                        "event": "message",
-                        "data": json.dumps(
-                            {
-                                "sender": "시스템",
-                                "text": "토론 종료. 3대 시나리오 도출이 완료되었습니다.",
-                                "is_finished": True,
-                            },
-                            ensure_ascii=False,
-                        ),
-                    }
+        except Exception as e:
+            import traceback
+            error_trace = traceback.format_exc()
+            print(f"\n=== [SSE Error] Exception in event_generator: ===\n{error_trace}\n")
+            yield {
+                "event": "error",
+                "data": json.dumps(
+                    {"error": f"서버 내부 오류: {str(e)}"},
+                    ensure_ascii=False,
+                ),
+            }
 
     # sse_starlette 라이브러리의 EventSourceResponse를 반환하여 비동기 HTTP 청크 전송 스트림 활성화
     return EventSourceResponse(event_generator())
