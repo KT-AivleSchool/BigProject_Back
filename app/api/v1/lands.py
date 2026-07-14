@@ -6,7 +6,7 @@ from openai import AsyncOpenAI
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
-from app.db.session import get_db
+from app.api.deps import get_db
 from app.services.gis_service import gis_service
 from app.schemas.lands import (
     UploadResponse,
