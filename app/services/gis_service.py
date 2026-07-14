@@ -1,7 +1,15 @@
 import json
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.db.models.spatial import DongBoundary, CadastralLand, RestrictedZone
+
+# spatial.py는 PR #59(feature/#9-postgis-orm-models) 머지 후 활성화되는 의존성 모델입니다.
+# PR #59 머지 전 환경에서도 서버가 기동될 수 있도록 조건부 임포트 처리합니다.
+try:
+    from app.db.models.spatial import DongBoundary, CadastralLand, RestrictedZone
+except ImportError:
+    DongBoundary = None  # type: ignore
+    CadastralLand = None  # type: ignore
+    RestrictedZone = None  # type: ignore
 
 
 class GisService:
@@ -86,28 +94,35 @@ class GisService:
         )
 
         # 2. 지적도 필지(CadastralLand)와 배제 다각형 간의 공간 차집합 계산 쿼리
-        # - ST_Difference: 전체 필지 도형에서 배제 도형을 잘라냄
-        # - ST_Area: 잘려나간 잔여 가용지 면적이 원래 필지 면적의 30% 이상인 곳만 선별
+        # - [성능 최적화] case 절을 사용하여 규제 버퍼 구역과 공간적으로 교차(ST_Intersects)하는 필지만
+        #   비싼 ST_Difference 차집합 연산을 수행하고, 겹치지 않는 대다수의 필지는 원본 도형 그대로 리턴합니다.
+        # - [비즈니스 가드 추가] 잘려나간 잔여 가용지 면적이 원래 필지 면적의 30% 이상인 곳만 선별합니다.
+        geom_3857 = func.ST_Transform(CadastralLand.geom, 3857)
+        buffer_empty = func.coalesce(
+            buffer_subquery,
+            func.ST_GeomFromText("GEOMETRYCOLLECTION EMPTY", 3857),
+        )
+
+        diff_geom = func.case(
+            (
+                func.ST_Intersects(geom_3857, buffer_empty),
+                func.ST_Difference(geom_3857, buffer_empty),
+            ),
+            else_=geom_3857,
+        )
+
         stmt = (
             select(
                 CadastralLand.id,
                 CadastralLand.pnu,
                 CadastralLand.jibun,
                 func.ST_Area(CadastralLand.geom).label("orig_area"),
-                func.ST_AsGeoJSON(
-                    func.ST_Transform(
-                        func.ST_Difference(
-                            func.ST_Transform(CadastralLand.geom, 3857),
-                            func.coalesce(
-                                buffer_subquery,
-                                func.ST_GeomFromText("GEOMETRYCOLLECTION EMPTY", 3857),
-                            ),
-                        ),
-                        4326,
-                    )
-                ).label("usable_geojson"),
+                func.ST_AsGeoJSON(func.ST_Transform(diff_geom, 4326)).label(
+                    "usable_geojson"
+                ),
             )
             .where(CadastralLand.district_id == district_id)
+            .where((func.ST_Area(diff_geom) / func.ST_Area(geom_3857)) >= 0.3)
             .limit(100)
         )
 
