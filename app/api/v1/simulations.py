@@ -29,7 +29,7 @@ def stream_ai_discussion(
     async def event_generator():
         # DB에서 parcel_id로 GIS 데이터를 조회합니다.
         result = await db.execute(select(Parcel).where(Parcel.id == parcel_id))
-        parcel = result.scalar_first()
+        parcel = result.scalar()
 
         if not parcel:
             # 존재하지 않는 parcel_id일 경우 에러 메시지 전송 후 스트림 종료
