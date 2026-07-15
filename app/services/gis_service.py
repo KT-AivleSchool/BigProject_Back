@@ -30,7 +30,7 @@ class GisService:
         ).where(DongBoundary.district_id == district_id)
 
         result = await db.execute(stmt)
-        geojson_str = result.scalar_first()
+        geojson_str = result.scalar()
 
         if not geojson_str:
             return {}
