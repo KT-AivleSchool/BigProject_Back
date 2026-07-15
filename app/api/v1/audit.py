@@ -43,7 +43,8 @@ async def verify_precedent_document(
         sim_result = await db.execute(
             select(ConflictSimulation).where(ConflictSimulation.id == simulation_id)
         )
-        sim_data = sim_result.scalar_first()
+        sim_data = sim_result.scalar()
+
         predicted_scenarios = []
         if sim_data and sim_data.result_json:
             predicted_scenarios = sim_data.result_json.get("scenarios", [])
