@@ -8,7 +8,7 @@ from sqlalchemy.future import select
 
 from app.schemas.simulations import SimulationResultResponse
 from app.core.sim_ai.graph import build_discussion_graph
-from app.db.session import get_db
+from app.api.deps import get_db
 from app.db.models.simulation import Parcel, ConflictSimulation
 from app.services.pdf_service import pdf_builder
 
