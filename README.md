@@ -77,3 +77,30 @@ RAG에 필요한 법규 PDF와 파싱 텍스트 캐시의 라이프사이클을 
     git checkout -b feature/26-postgis-difference
     ```
 *   기능 개발 완료 후 main 브랜치로 Pull Request를 날리면, 로컬 import 및 컴파일 검증 통과 여부를 확인한 후 승인 병합합니다.
+---
+
+## 🗺️ 4. PostGIS / GeoAlchemy2 개발 주의사항
+
+### ⚠️ Alembic 오토마이그레이션 도입 시 필수 설정
+
+`geoalchemy2` 기반의 공간 컬럼(`Geometry`, `MULTIPOLYGON` 등)을 포함한 ORM 모델이 존재합니다.
+향후 Alembic 오토마이그레이션(`alembic revision --autogenerate`)을 도입할 경우, `alembic/env.py` 파일 **최상단**에 아래 두 줄을 반드시 추가해야 합니다:
+
+```python
+import geoalchemy2          # PostGIS Geometry 컬럼 Alembic 인식을 위한 선행 임포트 (필수)
+import geoalchemy2.types    # 커스텀 공간 타입 서브클래스 완전 등록
+```
+
+> 이 두 줄이 없으면 `alembic revision --autogenerate` 실행 시 Geometry 컬럼을 인식하지 못하여 마이그레이션 스크립트가 비정상 생성됩니다.
+
+### 📅 통계 테이블 날짜 필드 포맷 컨벤션
+
+`stats.py` 내 통계 테이블의 날짜 필드는 **의도적으로 `String` 타입**으로 관리합니다:
+
+| 필드명 | 타입 | 포맷 예시 | 사유 |
+|:---|:---|:---|:---|
+| `analysis_ym` | `String(6)` | `"202412"` | 행정안전부·통계청 공공 API 원본 포맷 일치 |
+| `analysis_year` | `String(4)` | `"2024"` | 공공 데이터 CSV 원본 포맷 일치 |
+
+범위 조회가 필요할 경우 `BETWEEN '202404' AND '202406'` 형태로 처리합니다.
+향후 시계열 분석 기능 추가 시 `Date` 타입으로 마이그레이션을 검토합니다.
