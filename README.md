@@ -79,7 +79,32 @@ RAG에 필요한 법규 PDF와 파싱 텍스트 캐시의 라이프사이클을 
 *   기능 개발 완료 후 main 브랜치로 Pull Request를 날리면, 로컬 import 및 컴파일 검증 통과 여부를 확인한 후 승인 병합합니다.
 ---
 
-## 🗺️ 4. PostGIS / GeoAlchemy2 개발 주의사항
+## 🖨️ 4. WeasyPrint 로컬 환경 설치 안내
+
+PDF 보고서 발급 기능(`GET /api/v1/simulations/results/{parcel_id}/pdf`)은 **WeasyPrint** 라이브러리를 사용합니다.
+WeasyPrint는 Python 패키지 외에도 **OS 수준의 C 라이브러리(Pango, Cairo)**가 필요합니다.
+
+### macOS
+```bash
+brew install pango cairo
+```
+
+### Ubuntu / Debian (Docker 포함)
+```bash
+apt-get install -y \
+    libpango-1.0-0 \
+    libpangoft2-1.0-0 \
+    libcairo2 \
+    libffi-dev \
+    libjpeg-dev \
+    libopenjp2-7
+```
+
+> **💡 폰트 번들링 안내**: 한글 깨짐 방지를 위해 NanumGothic TTF 폰트가 `app/static/fonts/NanumGothic-Regular.ttf`에 번들링되어 있습니다.
+> OS에 별도 한글 폰트를 설치하지 않아도 PDF가 정상 렌더링됩니다.
+
+
+## 🗺️ 5. PostGIS / GeoAlchemy2 개발 주의사항
 
 ### ⚠️ Alembic 오토마이그레이션 도입 시 필수 설정
 
@@ -104,3 +129,4 @@ import geoalchemy2.types    # 커스텀 공간 타입 서브클래스 완전 등
 
 범위 조회가 필요할 경우 `BETWEEN '202404' AND '202406'` 형태로 처리합니다.
 향후 시계열 분석 기능 추가 시 `Date` 타입으로 마이그레이션을 검토합니다.
+
