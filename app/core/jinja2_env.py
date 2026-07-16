@@ -1,3 +1,4 @@
+import json
 import os
 from typing import Any, Dict
 from jinja2 import Environment, FileSystemLoader, ChoiceLoader, DictLoader
@@ -12,7 +13,7 @@ os.makedirs(TEMPLATES_DIR, exist_ok=True)
 
 # Build loaders list in order of priority
 loaders = [
-    FileSystemLoader(TEMPLATES_DIR),
+    FileSystemLoader([TEMPLATES_DIR, os.path.join(TEMPLATES_DIR, "default")]),
     FileSystemLoader(WORKSPACE_TEMPLATES_DIR),
     DictLoader({}),  # Fallback empty loader
 ]
@@ -29,7 +30,6 @@ jinja2_env = Environment(
 # Define and register custom utility filters if needed
 def json_filter(value: Any) -> str:
     """Helper filter to format JSON within templates."""
-    import json
 
     return json.dumps(value, ensure_ascii=False, indent=2)
 
