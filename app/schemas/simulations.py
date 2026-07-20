@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Dict, Optional
+from typing import Dict, Optional
 
 
 class SimulationRunRequest(BaseModel):
@@ -10,13 +10,13 @@ class SimulationRunRequest(BaseModel):
 
 
 class ScenarioDetail(BaseModel):
-    scenario_type: str = Field(
-        ..., description="시나리오 종류 (A: 주민 우세, B: 상인 우세, C: 공공 조정)"
-    )
-    title: str = Field(..., description="시나리오 제목")
-    probability: float = Field(..., description="도달 확률 (0.0 ~ 1.0)")
+    scenario: str = Field(..., description="시나리오 종류 (A, B, C)")
+    scenario_description: str = Field(..., description="시나리오 제목/설명")
+    final_acceptance_score: float = Field(..., description="최종 수용도 점수")
+    reason: str = Field(..., description="시나리오 도출 이유")
     summary: str = Field(..., description="시나리오 전개 요약")
     conflict_risk_index: float = Field(..., description="갈등 위험 지수 (0.0 ~ 100.0)")
+    risk_reason: str = Field(..., description="갈등 위험 지수 산출 이유")
 
 
 class SimulationResultResponse(BaseModel):
@@ -28,8 +28,8 @@ class SimulationResultResponse(BaseModel):
         ...,
         description="상세 갈등 인자 영향도 (예: 소음피해, 임대료상승, 보행혼잡, 경관훼손 등)",
     )
-    scenarios: List[ScenarioDetail] = Field(
-        ..., description="3대 시나리오 예측 모델 전개 정보"
+    scenario: ScenarioDetail = Field(
+        ..., description="토론 결과로 도출된 최종 1개의 시나리오 정보"
     )
 
 

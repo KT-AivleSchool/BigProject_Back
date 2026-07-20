@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.schemas.simulations import SimulationResultResponse
-from app.core.sim_ai.graph import build_discussion_graph
+from app.core.sim_ai.graph import build_discussion_graph, vector_db
 from app.api.deps import get_db
 from app.db.models.simulation import Parcel, ConflictSimulation
 from app.services.pdf_service import pdf_builder
@@ -66,12 +66,22 @@ def stream_ai_discussion(
         # 2. LangGraph 초기화 및 상태 세팅
         graph = build_discussion_graph()
 
+        # [NEW] 토론 시작 전 공통 RAG(Common RAG) 1회 선검색
+        query = f"{facility_type} 설치 기준 허가 규제 갈등 중재 혜택"
+        try:
+            retrieved_docs = await vector_db.retrieve_similar_statutes(query, top_k=5)
+            common_rag = "\n".join(retrieved_docs)
+        except Exception:
+            common_rag = "조례 정보 없음"
+
         timestamp = datetime.datetime.now().isoformat()
+
+        import random
 
         initial_state = {
             "messages": [],
-            "css_pro": "HIGH",
-            "css_con": "HIGH",
+            "css_pro": random.choice(["LOW", "MEDIUM", "HIGH"]),
+            "css_con": random.choice(["LOW", "MEDIUM", "HIGH"]),
             "round_count": 0,
             "current_phase": "debate",
             "eval_score": 0.0,
@@ -83,9 +93,7 @@ def stream_ai_discussion(
             "intensity_level": gis_data["intensity_level"],
             "ahp_weights": gis_data["ahp_weights"],
             "timestamp": timestamp,
-            "rag_pro": "",
-            "rag_con": "",
-            "rag_gov": "",
+            "common_rag": common_rag,
             "evaluations": {},
             "final_scenarios": {},
             "is_finished": False,
