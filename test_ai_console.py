@@ -1,6 +1,5 @@
 import asyncio
 import json
-import sys
 from unittest.mock import MagicMock
 
 # --- [중요] DB 의존성 완벽 차단 (Mocking) ---
@@ -10,7 +9,7 @@ import app.core.sim_ai.vector_db
 app.core.sim_ai.vector_db.RagVectorStorage = MagicMock
 
 # 가짜 객체를 주입한 후 안전하게 LangGraph를 불러옵니다.
-from app.core.sim_ai.graph import build_discussion_graph
+from app.core.sim_ai.graph import build_discussion_graph  # noqa: E402
 
 async def main():
     print("🤖 [DB 없이 실행] AI 모의 심의 토론 콘솔 테스트 시작...\n")
