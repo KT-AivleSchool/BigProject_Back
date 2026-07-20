@@ -9,9 +9,11 @@ WORKSPACE_TEMPLATES_DIR = os.path.join(os.path.dirname(BASE_DIR), "templates")
 
 # Ensure template directories exist
 os.makedirs(TEMPLATES_DIR, exist_ok=True)
+DEFAULT_TEMPLATES_DIR = os.path.join(TEMPLATES_DIR, "default")
 
 # Build loaders list in order of priority
 loaders = [
+    FileSystemLoader(DEFAULT_TEMPLATES_DIR),
     FileSystemLoader(TEMPLATES_DIR),
     FileSystemLoader(WORKSPACE_TEMPLATES_DIR),
     DictLoader({}),  # Fallback empty loader

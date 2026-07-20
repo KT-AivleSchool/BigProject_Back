@@ -75,10 +75,12 @@ def stream_ai_discussion(
 
         timestamp = datetime.datetime.now().isoformat()
 
+        import random
+
         initial_state = {
             "messages": [],
-            "css_pro": "HIGH",
-            "css_con": "HIGH",
+            "css_pro": random.choice(["LOW", "MEDIUM", "HIGH"]),
+            "css_con": random.choice(["LOW", "MEDIUM", "HIGH"]),
             "round_count": 0,
             "current_phase": "debate",
             "eval_score": 0.0,
@@ -109,7 +111,7 @@ def stream_ai_discussion(
                 if "final_scenarios" in node_state:
                     current_state["final_scenarios"] = node_state["final_scenarios"]
 
-                if node_name in ["pro", "con", "gov", "gov_wrapup"]:
+                if node_name in ["pro", "con", "gov", "gov_wrapup", "evaluator"]:
                     if "messages" in node_state and len(node_state["messages"]) > 0:
                         msg = node_state["messages"][-1]
 
@@ -157,7 +159,8 @@ def stream_ai_discussion(
                         "timestamp": current_state.get("timestamp"),
                         "debate_logs": debate_logs,
                         "raw_text": "\n\n".join(raw_text_lines),
-                        "scenarios": scenarios.get("scenarios", []),
+                        "eval_score": current_state.get("eval_score", 0.0),
+                        "scenario": scenarios,
                     }
 
                     # 최종 JSON을 DB에 저장 (ConflictSimulation)
@@ -194,40 +197,51 @@ def stream_ai_discussion(
 
 
 @router.get("/results/{parcel_id}", response_model=SimulationResultResponse)
-def get_simulation_results(parcel_id: int):
+async def get_simulation_results(parcel_id: int, db: AsyncSession = Depends(get_db)):
     """
-    [동현 AI 메인] 모의 심의 토론 종결 후 최종 도출된 3대 시나리오 예측치 조회 API
+    [동현 AI 메인] 모의 심의 토론 종결 후 최종 도출된 단일 시나리오 예측치 조회 API
     - 시점: 프론트엔드가 /stream SSE 커넥션을 닫은 직후, 최종 통계 데이터를 단독 로드하기 위해 호출합니다.
     """
-    # [협업 지침] 실제 데이터베이스(conflict_simulations 테이블) 조회 결과에 따라
-    # 동적으로 점수 및 시나리오 통계치 데이터를 로드하도록 구현해 주세요.
+    result = await db.execute(
+        select(ConflictSimulation)
+        .where(ConflictSimulation.parcel_id == parcel_id)
+        .order_by(ConflictSimulation.created_at.desc())
+    )
+    sim = result.scalar_first()
+
+    if not sim or not sim.result_json:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="해당 지번의 시뮬레이션 결과를 찾을 수 없습니다."
+        )
+
+    result_data = sim.result_json
+    
+    scenario = result_data.get("scenario", {})
+    if not scenario:
+        scenario = {
+            "scenario": "A",
+            "scenario_description": "결과 분석 오류",
+            "final_acceptance_score": 0.0,
+            "reason": "데이터 없음",
+            "summary": "AI가 시나리오 생성에 실패했습니다.",
+            "conflict_risk_index": 50.0,
+            "risk_reason": "알 수 없는 오류"
+        }
+
+    ahp_weights = result_data.get("ahp_weights", {})
+    if not ahp_weights:
+        ahp_weights = {"소음피해": 0.0, "보행혼잡": 0.0, "임대료상승": 0.0}
+        
+    eval_score = result_data.get("eval_score", 0.0)
+    # 갈등 민감도(CSS)는 10점 만점: 수용도가 높을수록 갈등은 낮음
+    css_score = round(10.0 - (eval_score * 10.0), 1)
+
     return {
         "parcel_id": parcel_id,
-        "conflict_sensitivity_score": 7.8,  # 종합 갈등 민감도 점수 (CSS)
-        "conflict_factors": {"소음피해": 8.5, "보행혼잡": 6.2, "임대료상승": 9.0},
-        "scenarios": [
-            {
-                "scenario_type": "A",
-                "title": "주민 합의 차폐막 설치 조건부 타결 시나리오",
-                "probability": 0.65,  # 타결 예상 확률 (65%)
-                "summary": "방음 펜스 및 차폐 조경 설치 예산을 구청이 부담하여 주민 소음 우려를 완화하고 설치를 완료함.",
-                "conflict_risk_index": 35.0,  # 갈등 잔존 위험 지표
-            },
-            {
-                "scenario_type": "B",
-                "title": "상인 연계 야외 데크 추가 확장 시나리오",
-                "probability": 0.20,  # 타결 예상 확률 (20%)
-                "summary": "스마트 쉼터 외부 휴게 공간을 주변 상가 입구와 수평 연계하여 골목 소상공인 매출 극대화를 꾀함.",
-                "conflict_risk_index": 65.0,
-            },
-            {
-                "scenario_type": "C",
-                "title": "공공 중재 전면 취소 및 대안 부지 이전 시나리오",
-                "probability": 0.15,  # 타결 예상 확률 (15%)
-                "summary": "민원 반발의 장기화 및 행정 비용의 과다로 인해 인근 공공 공지로 설치 대상을 전격 이전함.",
-                "conflict_risk_index": 85.0,
-            },
-        ],
+        "conflict_sensitivity_score": css_score,
+        "conflict_factors": ahp_weights,
+        "scenario": scenario,
     }
 
 
@@ -241,12 +255,26 @@ async def upload_statute_document(file: UploadFile = File(...)):
     import os
 
     ext = os.path.splitext(file.filename)[1].lower()
-    allowed_extensions = [".pdf", ".docx", ".doc", ".hwp"]
+    
+    # [수정] 파일 확장자와 MIME Type 매핑 (위장 파일 방어)
+    allowed_types = {
+        ".pdf": ["application/pdf"],
+        ".docx": ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+        ".doc": ["application/msword"],
+        ".hwp": ["application/x-hwp", "application/haansofthwp", "application/vnd.hancom.hwp"],
+    }
 
-    if ext not in allowed_extensions:
+    if ext not in allowed_types:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"지원하지 않는 파일 형식입니다. {allowed_extensions} 포맷만 업로드 가능합니다.",
+            detail=f"지원하지 않는 파일 형식입니다. {list(allowed_types.keys())} 포맷만 업로드 가능합니다.",
+        )
+
+    # MIME Type 검증
+    if not file.content_type or file.content_type not in allowed_types[ext]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="파일 확장자와 데이터 타입이 일치하지 않습니다. (위조 파일 의심)",
         )
 
     try:

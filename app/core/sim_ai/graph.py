@@ -197,12 +197,16 @@ async def evaluator_node(state: AgentState) -> dict:
     history_text = _format_chat_history(state.get("messages", []))
     round_count = state.get("round_count", 0) + 1
 
+    prev_evals = state.get("evaluations", {})
+    prev_pro_acc = prev_evals.get("pro_acceptance", 0.0)
+    prev_con_acc = prev_evals.get("con_acceptance", 0.0)
+
     llm_json = llm.bind(response_format={"type": "json_object"})
     response = await llm_json.ainvoke(
         [
             SystemMessage(content=EVALUATOR_PROMPT),
             HumanMessage(
-                content=f"이전 대화:\n{history_text}\n\n위 대화 내용을 바탕으로 평가 JSON을 반환하세요."
+                content=f"[이전 라운드 수용도 점수]\n- 찬성측: {prev_pro_acc}\n- 반대측: {prev_con_acc}\n\n이전 대화:\n{history_text}\n\n위 대화 내용 중 '가장 최근 발언'을 바탕으로 평가 JSON을 반환하세요. 타협의 여지가 조금이라도 생겼다면 반드시 이전 점수보다 상향시켜야 합니다."
             ),
         ]
     )
@@ -217,13 +221,24 @@ async def evaluator_node(state: AgentState) -> dict:
     con_acc = evals.get("con_acceptance", 0.0)
     avg_acc = (pro_acc + con_acc) / 2.0
 
-    # ACC 점수와 무관하게 평가자 AI가 내린 순수 감정 민감도(CSS)를 적용 (실패 시 기존 값 유지)
-    new_css_pro = evals.get("pro_css", state.get("css_pro", "HIGH"))
-    new_css_con = evals.get("con_css", state.get("css_con", "HIGH"))
+    # 프롬프트 의존성을 제거하고, 파이썬 코드 레벨에서 수용도 점수를 기반으로 CSS를 강제 매핑
+    def _map_css_by_score(acc_score: float) -> str:
+        if acc_score < 0.35:
+            return "HIGH"
+        elif acc_score < 0.65:
+            return "MEDIUM"
+        else:
+            return "LOW"
+            
+    new_css_pro = _map_css_by_score(pro_acc)
+    new_css_con = _map_css_by_score(con_acc)
 
     next_phase = "debate"
     if round_count >= 3 or avg_acc >= 0.8:
         next_phase = "intervention"
+
+    reason = evals.get("reason", "평가 사유 없음")
+    msg_text = f"💡 [라운드 {round_count} 분석] 찬성측 수용도: {pro_acc*100}%, 반대측 수용도: {con_acc*100}%\n👉 (현재 CSS) 찬성: {new_css_pro} / 반대: {new_css_con}\n📝 사유: {reason}"
 
     return {
         "evaluations": evals,
@@ -231,6 +246,7 @@ async def evaluator_node(state: AgentState) -> dict:
         "round_count": round_count,
         "css_pro": new_css_pro,
         "css_con": new_css_con,
+        "messages": [f"시스템: {msg_text}"],
         "spoken_this_round": [],  # 다음 라운드/페이즈를 위해 초기화
         "current_phase": next_phase,
     }
@@ -239,13 +255,14 @@ async def evaluator_node(state: AgentState) -> dict:
 async def reporter_node(state: AgentState) -> dict:
     """토론 종료 후 최종 시나리오 도출 노드"""
     history_text = _format_chat_history(state.get("messages", []))
+    eval_score = state.get("eval_score", 0.0)
 
     llm_json = llm.bind(response_format={"type": "json_object"})
     response = await llm_json.ainvoke(
         [
             SystemMessage(content=REPORTER_PROMPT),
             HumanMessage(
-                content=f"전체 토론 내용:\n{history_text}\n\n위 대화 내용을 바탕으로 최종 시나리오 JSON을 도출하세요."
+                content=f"전체 토론 내용:\n{history_text}\n\n[최종 수용도 점수(0.0~1.0)]: {eval_score}\n\n위 대화 내용과 수용도 점수를 바탕으로 1개의 최종 시나리오 JSON을 도출하세요."
             ),
         ]
     )

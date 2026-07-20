@@ -76,8 +76,11 @@ class RagVectorStorage:
         """
         try:
             # LangChain의 비동기 유사도 검색 (asimilarity_search) 사용
-            # facility_type 강제 필터를 해제하여 의미론적 유사도만으로 검색되도록 개선 (유연한 RAG)
             search_kwargs = {"k": top_k}
+
+            # [수정] 환각(Hallucination) 방지를 위해 facility_type을 쿼리 prefix로 추가
+            if facility_type:
+                query = f"[{facility_type}] {query}"
 
             docs = await self.statutes_store.asimilarity_search(query, **search_kwargs)
 
