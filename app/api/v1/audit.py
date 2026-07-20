@@ -1,10 +1,12 @@
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 from app.db.session import get_db
-from app.schemas.audit import AuditVerifyResponse, AuditSaveResponse, AuditSaveRequest
 from app.db.models.precedent import VerifiedPrecedent
+from app.db.models.simulation import ConflictSimulation
 from app.core.audit_ai.parser import pdf_parser
 from app.core.audit_ai.classifier import audit_classifier
+from app.schemas.audit import AuditVerifyResponse, AuditSaveResponse, AuditSaveRequest
 import datetime
 
 router = APIRouter()
@@ -12,7 +14,9 @@ router = APIRouter()
 
 @router.post("/verify", response_model=AuditVerifyResponse)
 async def verify_precedent_document(
-    file: UploadFile = File(...), simulation_id: int = Form(...)
+    file: UploadFile = File(...),
+    simulation_id: int = Form(...),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     [승헌 TL 파트 & 장천명 풀스택] 준공 및 행정 종결 공문 PDF OCR 검증 및 RAG 실제 사례 자동 분류 API
@@ -38,38 +42,31 @@ async def verify_precedent_document(
                 detail="PDF 파일 내에 물리 텍스트 레이어가 존재하지 않거나 이미지 전용 스캔 PDF입니다.",
             )
 
-        # 2. 정규식 기반 메타데이터 파싱 (지번 주소, 문서번호, 날짜 등 추출)
+        # 2. DB에서 원래 에이전트들이 도출했던 3대 예측 시나리오 정보 획득
+        sim_result = await db.execute(
+            select(ConflictSimulation).where(ConflictSimulation.id == simulation_id)
+        )
+        sim_data = sim_result.scalar()
+
+        predicted_scenarios = []
+        if sim_data and sim_data.result_json:
+            predicted_scenarios = sim_data.result_json.get("scenarios", [])
+
+        # 3. 정규식 기반 메타데이터 파싱 (지번 주소, 문서번호, 날짜 등 추출)
         parsed_metadata = pdf_parser.parse_document_metadata(extracted_text)
 
-        # 3. 실증 대조용 3대 시나리오 기획 픽스처 정의
-        # (현실성 있는 유사도 대조를 위해, 추출된 인프라 유형이나 텍스트 키워드에 상응하는 시나리오 데이터셋으로 분기)
-        predicted_scenarios = [
-            {
-                "scenario_type": "A",
-                "summary": "어린이보호구역 및 어린이집 경계선으로부터 10미터 이내 금연구역 가이드 준수 및 흡연부스 설치 계획안 수립.",
-            },
-            {
-                "scenario_type": "B",
-                "summary": "스마트 쉼터 및 버스정류장 인근 보행로 확보와 주민 안전 펜스 보완을 통한 흡연 부스 가용 필지 확정안.",
-            },
-            {
-                "scenario_type": "C",
-                "summary": "주거 인근 소음 민원 및 보행 장애 예방을 위한 가림막 설치와 점용 승인 행정 준공 종결.",
-            },
-        ]
-
-        # 4. 코사인 유사도 기반 시나리오 분류 판정
-        classification_result = audit_classifier.classify_actual_scenario(
+        # 4. 실증 유사도 분류 판정 가동 (DB 예측 시나리오 대조)
+        analysis = audit_classifier.classify_actual_scenario(
             extracted_text, predicted_scenarios
         )
 
         return {
             "ocr_success": True,
-            "extracted_text_snippet": extracted_text[:150].replace("\n", " ").strip()
+            "extracted_text_snippet": extracted_text[:200].replace("\n", " ").strip()
             + "...",
-            "matched_scenario": classification_result["matched_scenario"],
-            "similarity_score": classification_result["similarity_score"],
-            "classification_status": classification_result["classification_status"],
+            "matched_scenario": analysis["matched_scenario"],
+            "similarity_score": analysis["similarity_score"],
+            "classification_status": analysis["classification_status"],
             "parsed_metadata": parsed_metadata,
         }
 
