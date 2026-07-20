@@ -229,7 +229,7 @@ async def evaluator_node(state: AgentState) -> dict:
             return "MEDIUM"
         else:
             return "LOW"
-            
+
     new_css_pro = _map_css_by_score(pro_acc)
     new_css_con = _map_css_by_score(con_acc)
 
@@ -238,7 +238,7 @@ async def evaluator_node(state: AgentState) -> dict:
         next_phase = "intervention"
 
     reason = evals.get("reason", "평가 사유 없음")
-    msg_text = f"💡 [라운드 {round_count} 분석] 찬성측 수용도: {pro_acc*100}%, 반대측 수용도: {con_acc*100}%\n👉 (현재 CSS) 찬성: {new_css_pro} / 반대: {new_css_con}\n📝 사유: {reason}"
+    msg_text = f"💡 [라운드 {round_count} 분석] 찬성측 수용도: {pro_acc * 100}%, 반대측 수용도: {con_acc * 100}%\n👉 (현재 CSS) 찬성: {new_css_pro} / 반대: {new_css_con}\n📝 사유: {reason}"
 
     return {
         "evaluations": evals,
