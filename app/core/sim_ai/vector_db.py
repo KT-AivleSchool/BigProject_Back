@@ -99,8 +99,10 @@ class RagVectorStorage:
                 search_kwargs["filter"] = {"facility_type": facility_type}
 
             # [A-3] 유사도 임계치(0.25) 검사 및 점수 포함 검색
-            docs_with_scores = await self.statutes_store.asimilarity_search_with_relevance_scores(
-                query, **search_kwargs
+            docs_with_scores = (
+                await self.statutes_store.asimilarity_search_with_relevance_scores(
+                    query, **search_kwargs
+                )
             )
 
             # 검색 결과가 없을 경우 안전한 빈 배열 또는 폴백 반환
@@ -108,11 +110,13 @@ class RagVectorStorage:
                 return self._get_fallback_data()
 
             # 임계치 0.25 이상인 문서만 순수 텍스트(page_content) 추출
-            filtered_docs = [doc.page_content for doc, score in docs_with_scores if score >= 0.25]
+            filtered_docs = [
+                doc.page_content for doc, score in docs_with_scores if score >= 0.25
+            ]
 
             if not filtered_docs:
                 return ["관련 조례 없음"]
-            
+
             return filtered_docs
         except Exception as e:
             # DB 미생성, 연결 오류 등에 대비한 폴백 처리 (프론트엔드 크래시 방지)
