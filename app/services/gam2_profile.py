@@ -53,19 +53,103 @@ _NON_VALUE_COLS = ("geometry",)          # 샘플/중복에서 제외(shp geomet
 # 1. 파일 읽기 — 모두 str 로 읽어 값 원형 보존. 대용량은 nrows 표본.
 # ══════════════════════════════════════════════════════════════════
 def _read_csv(path: str, nrows: int | None = None) -> pd.DataFrame:
-    """config.CSV_ENCODINGS 순차 시도(한국 공공데이터 인코딩 혼재 대응)."""
+    """config.CSV_ENCODINGS 순차 시도(한국 공공데이터 인코딩 혼재 대응).
+    index_col=False 필수: 헤더보다 데이터 필드가 많으면(행 끝 여분 콤마 등) pandas 가
+    첫 컬럼을 index 로 삼아 컬럼이 통째로 한 칸씩 밀린다 → 감리가 틀린 스키마를 본다."""
     last_err = None
     for enc in CSV_ENCODINGS:
         try:
-            return pd.read_csv(path, encoding=enc, dtype=str,
-                               keep_default_na=True, nrows=nrows, low_memory=False)
+            return _fix_csv_header(
+                pd.read_csv(path, encoding=enc, dtype=str, index_col=False,
+                            keep_default_na=True, nrows=nrows, low_memory=False), path, nrows)
+        except pd.errors.ParserError:
+            # 제목 행의 콤마 수가 데이터 행보다 적으면 pandas 가 컬럼 수를 적게 잡고
+            # 데이터 행에서 파싱 에러를 낸다(예: 1행 '○○구 통계' / 3행 '동명,인구').
+            # → 컬럼 수를 파일에서 직접 세어 header 없이 읽은 뒤 헤더를 교정한다.
+            try:
+                return _fix_csv_header(_read_csv_headerless(path, enc, nrows), path, nrows)
+            except (UnicodeDecodeError, LookupError):
+                continue
         except (UnicodeDecodeError, LookupError) as e:
             last_err = e
             continue
     # 최후 폴백: 원본에 깨진 바이트가 소수 섞인 경우 → cp949+replace 로 읽어 프로파일은 확보.
     print(f"[profile] ⚠ 인코딩 폴백 소진 → cp949+replace: {os.path.basename(path)} ({last_err})")
-    return pd.read_csv(path, encoding="cp949", encoding_errors="replace", dtype=str,
-                       keep_default_na=True, nrows=nrows, low_memory=False)
+    return _fix_csv_header(pd.read_csv(
+        path, encoding="cp949", encoding_errors="replace", dtype=str,
+        index_col=False, keep_default_na=True, nrows=nrows, low_memory=False), path, nrows)
+
+
+def _read_csv_headerless(path: str, enc: str, nrows: int | None) -> pd.DataFrame:
+    """행마다 필드 수가 다른 CSV 대응. 파일에서 최대 필드 수를 직접 세어
+    header 없이(names 지정) 읽는다. 헤더 지정은 _fix_csv_header 가 이어서 한다."""
+    import csv as _csv
+    ncol = 0
+    with open(path, encoding=enc, errors="replace", newline="") as f:
+        for i, row in enumerate(_csv.reader(f)):
+            ncol = max(ncol, len(row))
+            if i >= 50:                     # 앞부분만 봐도 충분
+                break
+    ncol = max(ncol, 1)
+    return pd.read_csv(path, encoding=enc, dtype=str, header=None,
+                       names=list(range(ncol)), index_col=False,
+                       keep_default_na=True, nrows=nrows,
+                       engine="python", on_bad_lines="skip")
+
+
+def _fix_csv_header(df: pd.DataFrame, path: str, nrows: int | None) -> pd.DataFrame:
+    """CSV 상단 장식 행(제목·작성기준) 대응. 엑셀에만 있던 헤더 교정을 CSV 에도 적용한다.
+    (예: 1행 '○○구 인구 및 세대현황' / 2행 '행정기관,세대,인구…' → 그대로 읽으면
+     제목이 컬럼명이 되고 나머지가 Unnamed 로 잡혀, 감리가 지정한 컬럼과 어긋난다)
+    정상 파일은 건드리지 않는다(Unnamed 가 절반 미만이면 그대로 반환)."""
+    if not _header_looks_broken(df.columns):
+        return df
+    hdr = _header_row_from_rows(df.head(8))          # 이미 읽은 앞부분으로 판별
+    if hdr < 0 or hdr >= len(df):                    # hdr==0 도 유효(첫 데이터 행이 진짜 헤더)
+        return df
+    new_cols = [str(v).strip() if pd.notna(v) and str(v).strip() else f"col_{i}"
+                for i, v in enumerate(df.iloc[hdr].tolist())]
+    out = df.iloc[hdr + 1:].reset_index(drop=True)
+    out.columns = new_cols
+    print(f"[profile] 헤더 교정: {os.path.basename(path)} — {hdr}행을 헤더로 사용")
+    return out.head(nrows) if nrows else out
+
+
+def _header_row_from_rows(raw: pd.DataFrame) -> int:
+    """상단 장식 행을 건너뛴 '진짜 헤더' 행 번호. 파일 형식과 무관한 공통 판별.
+    (CSV·엑셀 모두 공공기관 자료에 제목/작성기준 행이 붙는 패턴이 흔하다)
+
+    헤더 행의 특징(결정론적):
+      · 채워진 셀이 2개 이상 (장식 행은 보통 1칸)
+      · 값이 텍스트 위주 (데이터 행은 숫자가 대부분 — 인구수·세대수 등)
+    → 위 둘을 만족하는 '첫' 행 번호. 없으면 -1.
+      (0 = '첫 행이 헤더'와 '못 찾음'을 구분해야 하므로 -1 을 쓴다)
+    """
+    if raw is None or raw.empty or raw.shape[1] < 2:
+        return -1
+
+    def _is_num(v) -> bool:
+        t = str(v).strip().replace(",", "").replace("-", "").replace(".", "")
+        return t.isdigit()
+
+    for i in range(len(raw)):
+        cells = [v for v in raw.iloc[i].tolist() if pd.notna(v) and str(v).strip()]
+        if len(cells) < 2:
+            continue                       # 장식 행(제목·주석)은 1칸만 채워짐
+        n_num = sum(1 for v in cells if _is_num(v))
+        if n_num <= len(cells) / 2:        # 숫자가 절반 이하 → 헤더로 판단
+            return i
+    return -1
+
+
+def _header_looks_broken(cols) -> bool:
+    """읽어온 컬럼이 '제목 행을 헤더로 잡은' 모양인지. Unnamed 가 절반 이상이면 그렇다."""
+    cols = list(cols)
+    if len(cols) < 2:
+        return False
+    unnamed = sum(1 for c in cols
+                  if str(c).startswith("Unnamed") or str(c).isdigit())
+    return unnamed >= len(cols) / 2
 
 
 def _detect_header_row(path: str, max_scan: int = 8) -> int:
@@ -82,21 +166,7 @@ def _detect_header_row(path: str, max_scan: int = 8) -> int:
         raw = pd.read_excel(path, header=None, nrows=max_scan, dtype=str)
     except Exception:
         return 0
-    if raw.empty or raw.shape[1] < 2:
-        return 0
-
-    def _is_num(v) -> bool:
-        s = str(v).strip().replace(",", "").replace("-", "").replace(".", "")
-        return s.isdigit()
-
-    for i in range(len(raw)):
-        cells = [v for v in raw.iloc[i].tolist() if pd.notna(v) and str(v).strip()]
-        if len(cells) < 2:
-            continue                       # 장식 행(제목·주석)은 1칸만 채워짐
-        n_num = sum(1 for v in cells if _is_num(v))
-        if n_num <= len(cells) / 2:        # 숫자가 절반 이하 → 헤더로 판단
-            return i
-    return 0
+    return max(0, _header_row_from_rows(raw))
 
 
 def _read_excel(path: str, nrows: int | None = None) -> pd.DataFrame:

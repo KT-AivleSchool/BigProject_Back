@@ -3,7 +3,7 @@
 OmniSite 감리 AI — 판정 테스트 하네스 (실제 판정 테스트)
 ======================================================
 목적: 감리 AI(LLM)가 데이터 프로파일을 보고 올바른 역할 + op 조합을 고르는지를
-      EXPECTED_RECIPES(정답표)와 대조 채점한다.
+      (정답표 대조 채점 구조는 폐기 — 판정 결과를 그대로 리포트한다.)
 
 설계(사용자 확정)
   - (나) 하네스+목 우선: LLM 호출부는 인터페이스(LLMClient)만 두고, MockLLM 으로
@@ -28,7 +28,7 @@ import re
 from dataclasses import dataclass
 
 from app import config
-from app.services.gam2_audit_ops_catalog import describe_all, EXPECTED_RECIPES
+from app.services.gam2_audit_ops_catalog import describe_all
 from app.config import STEP1_OUTPUT_DIR, SEARCH_CACHE_DIR, EXCLUSION_CACHE_PATH
 
 
@@ -102,6 +102,12 @@ SYSTEM_PROMPT_TEMPLATE = """너는 스마트시티 입지선정 플랫폼 OmniSi
   "버스정류소", "지하철역", "도시공원"). 이 값은 배제반경 캐시의 키로 쓰이므로 일반적인
   시설 유형명으로 적는다(파일명·데이터셋ID 말고 시설 종류).
 - hard_exclusion 의 배제반경_m 은 exclusion_type=radius 일 때만 조례 근거로 채운다.
+- **한 데이터셋의 hard_exclusion 은 1개만 낸다.** 데이터에 시설 종류 컬럼이 있어
+  여러 유형(어린이집·초등학교·유치원 등)이 섞여 있어도 나누지 마라.
+  배제는 현재 데이터셋 단위로 적용되므로, 유형을 나눠도 행마다 다른 반경을 적용할 수 없다
+  (같은 데이터셋이 HITL 에 두 번 올라와 사람만 두 번 묻게 된다).
+  이 경우 facility_type 은 데이터 전체를 대표하는 이름(예: "어린이보호구역")으로 하고,
+  반경은 섞인 유형 중 가장 보수적인(넓은) 값을 쓴다.
 - 다음 데이터는 hard_exclusion 이 아니다. 배제로 판정하지 마라:
   · 조례·법령 텍스트(rag_document): 배제 규칙의 '근거 문서'일 뿐, 그 자체가 배제 대상이 아니다.
   · 행정경계·연속지적도 등 공간 기반 데이터: 후보지·범위 정보이지 배제 시설이 아니다(coord_status=spatial).
@@ -125,7 +131,9 @@ SYSTEM_PROMPT_TEMPLATE = """너는 스마트시티 입지선정 플랫폼 OmniSi
 - weight 는 대략값이다. 사람이 HITL 로 조정하므로 방향(+/-)과 크기 감만 맞으면 된다.
 - cleaning_ops 의 op_id 는 operation_catalog 에 있는 것만. profile 근거가 있을 때만 추가.
   (예: null_coords=0 이면 run_geocode 를 넣지 않는다.)
-- 지역 판정 기본은 spatial_join_admin(경계 SHP). filter_bbox·reverse_geocode 는 경계 SHP 없을 때 폴백.
+- 지역 판정 기본은 spatial_join_admin(경계 SHP 공간조인, API 0회). 이 op 가 좌표에
+  SIGUNGU_NM(자치구명)·ADM_NM(행정동명)을 붙이므로, 대상 자치구 필터는
+  filter_by_value(col='SIGUNGU_NM') 로 건다. reverse_geocode 는 경계 SHP 를 못 쓸 때의 폴백.
 - 입력 팩터(가점/감점/배제)로 볼 근거가 약하거나 용도가 불분명하면, 억지로 분류하지 말고
   roles=[{{"role":"reference_only", "rationale": "왜 입력 팩터로 보기 어려운지"}}] 로 판정한다.
   (모르면 지어내지 말 것 — reference_only 로 두면 사람이 HITL 에서 의도를 확인한다.)
@@ -195,9 +203,45 @@ def resolve_facility_mock(user_input: str, fixtures: dict, model: str | None = N
             "source_input": user_input}
 
 
-def build_prompt(profile: dict, domain: dict, ordinance_rag: list[str] | None = None) -> dict:
+MAX_PEER_COLS = 15          # 프롬프트 팽창(429) 방지 — peer 당 노출 컬럼 상한
+
+
+def _peer_summaries(fixtures: dict | None, self_id, profile: dict | None = None) -> list[dict]:
+    """다른 데이터셋 요약(조인 짝 판단용). 감리는 데이터셋을 하나씩 보므로,
+    이게 없으면 '어느 데이터셋에서 키 목록을 가져와야 하는지'를 알 수 없다.
+    (실제로 지하철·버스 승하차 통계가 지역 필터를 못 걸어 0행/전체통과가 났다)
+
+    ※ 좌표나 주소가 있어 스스로 지역을 좁힐 수 있는 데이터셋에는 주입하지 않는다.
+      필요 없는데도 넣으면 프롬프트가 커져 TPM 한도(429)를 유발한다."""
+    if not fixtures:
+        return []
+    if profile is not None and (profile.get("has_coord_col") or profile.get("has_addr_col")):
+        return []                      # 자체 필터 가능 → 조인 짝 정보 불필요
+    out = []
+    for did, pf in fixtures.items():
+        if str(did) == str(self_id):
+            continue
+        # 조인 '생산자'가 될 수 있는 데이터셋만 넣는다 = 스스로 지역을 좁힐 수 있는 것
+        # (좌표 또는 주소 보유). 통계표끼리는 서로 도움이 안 되므로 제외.
+        #   ※ 전부 넣으면 프롬프트가 데이터셋 수만큼 불어나 TPM 한도(429)에 걸린다.
+        if not (pf.get("has_coord_col") or pf.get("has_addr_col")):
+            continue
+        cols = list(pf.get("columns") or [])
+        out.append({
+            "dataset_id": did,
+            "filename": pf.get("filename"),
+            # 키가 될 만한 컬럼만 보이면 되므로 상한을 둔다(수치 통계 컬럼이 수십 개인 경우 대비)
+            "columns": cols[:MAX_PEER_COLS] + (["…"] if len(cols) > MAX_PEER_COLS else []),
+            "has_coord_col": pf.get("has_coord_col"),
+        })
+    return out
+
+
+def build_prompt(profile: dict, domain: dict, ordinance_rag: list[str] | None = None,
+                 fixtures: dict | None = None) -> dict:
     """시스템+유저 프롬프트 조립. 카탈로그는 describe_all()로 동적 주입.
-    조례는 profile에 실린 것을 우선 사용(데이터셋별 주입), 인자로도 덮어쓸 수 있음."""
+    조례는 profile에 실린 것을 우선 사용(데이터셋별 주입), 인자로도 덮어쓸 수 있음.
+    fixtures 를 주면 다른 데이터셋 스키마를 함께 보여준다(조인 짝 판단용)."""
     ordinance = ordinance_rag if ordinance_rag is not None else \
         ([profile["ordinance"]] if profile.get("ordinance") else [])
     facility = domain.get("facility", "대상 시설")
@@ -215,6 +259,9 @@ def build_prompt(profile: dict, domain: dict, ordinance_rag: list[str] | None = 
                         if k in profile},
         },
         "ordinance_rag": ordinance,
+        # 다른 데이터셋 스키마 — 이 데이터셋만으로 지역을 못 좁힐 때(좌표·자치구명 없음)
+        # 어느 데이터셋에서 emit_whitelist 로 키 목록을 만들지 판단하는 데 쓴다.
+        "other_datasets": _peer_summaries(fixtures, profile.get("dataset_id"), profile),
         "operation_catalog": describe_all(),
         "output_schema": {
             "dataset_id": "str",
@@ -234,6 +281,67 @@ def build_prompt(profile: dict, domain: dict, ordinance_rag: list[str] | None = 
             "cleaning_ops": [{"op_id": "<카탈로그 내 값>", "params": {}}],
             "hitl_flags": [],
         },
+        # cleaning_ops 작성 규칙 — 실제 실패 사례에서 도출. 위반하면 결과가 조용히 틀린다.
+        "cleaning_ops_rules": [
+            "op_id 는 operation_catalog 에 있는 값만 쓴다. 없는 op 를 새로 만들지 마라 "
+            "(만들면 그 op 는 실행되지 않고 건너뛴다).",
+            "각 op 의 params 는 params_schema 의 필수 항목을 반드시 채운다. "
+            "특히 좌표 op 의 coord_cols 는 [경도컬럼, 위도컬럼] 순서로 실제 컬럼명을 쓴다.",
+            "params 의 컬럼명은 위 dataset.schema 에 실제로 있는 이름만 쓴다.",
+            "대상 자치구로 좁힐 때: 자치구명 컬럼이 스키마에 있으면 그 컬럼으로 filter_by_value, "
+            "주소 컬럼만 있으면 filter_by_address_contains, "
+            "좌표만 있으면 spatial_join_admin 후 filter_by_value(col='SIGUNGU_NM') 를 쓴다. "
+            "spatial_join_admin 이 만드는 ADM_NM 은 행정동명(예 '이촌1동')이라 "
+            "자치구명으로 거르면 결과가 0행이 된다.",
+            "지역을 좁히는 방법은 다음 순서로 고른다. 앞의 방법이 되면 뒤의 방법을 쓰지 마라. "
+            "(1) **좌표가 있으면** spatial_join_admin 후 filter_by_value(col='SIGUNGU_NM'). "
+            "자치구명 컬럼이 따로 있어도 좌표를 우선한다 — 위치선정은 좌표로 배제 버퍼를 그리므로 "
+            "'주소상 A구인데 좌표는 B구'인 행을 넣으면 엉뚱한 곳에 배제가 생긴다. "
+            "이 op 는 ADM_NM(행정동명)도 함께 붙여 주므로 이후 행정동 단위 분석에도 쓰인다. "
+            "★ spatial_join_admin 은 **좌표가 있거나 생기는 모든 데이터셋에 항상 포함**하라. "
+            "지역 필터를 자치구명·주소 등 다른 방법으로 하더라도 마찬가지다 "
+            "— 모든 레이어에 자치구·행정동 태그가 붙어 있어야 행정동 단위 집계·필터가 가능하다. "
+            "coord_status=needs_geocoding 인 데이터도 run_geocode 로 좌표가 생기므로 "
+            "run_geocode 뒤에 spatial_join_admin 을 넣는다(순서: run_geocode → spatial_join_admin → 필터). "
+            "좌표가 아예 없는 통계표(stat_join)에만 생략한다.  "
+            "(2) 좌표가 없고 자치구명 컬럼이 있으면 → filter_by_value  "
+            "(3) 좌표가 없고 주소 컬럼만 있으면 → filter_by_address_contains  "
+            "(4) 지역이 인코딩된 코드 컬럼(행정동코드 등) → filter_by_code_prefix "
+            "(예: 행안부 행정동코드는 앞 5자리가 자치구)  "
+            "(4b) **행정동 '이름'만 있고 자치구 표현이 없으면** → filter_by_admin_name. "
+            "행정동 통계표가 여기 해당한다(값이 '왕십리제2동'·'합계' 뿐). "
+            "이런 데이터에 filter_by_value(allowed=['<자치구>']) 를 걸면 0행이 된다.  "
+            "(5) 위 어느 것도 없을 때만 → filter_by_join_key",
+            "filter_by_value 의 allowed 에 **샘플 행에서 본 값을 나열하지 마라**. "
+            "샘플은 데이터의 앞 2행일 뿐이고 실제로는 훨씬 많은 값이 있다. "
+            "(실패 사례: 행정동 통계표에서 샘플에 보인 allowed=['왕십리제2동','성동구'] 로 걸러 "
+            "17개 행정동 중 1개만 남았다) "
+            "파일명에 대상 지역명이 들어 있고(예: '성동구_인구 및 세대현황.xlsx') "
+            "sample_rows 도 그 지역 내용으로 보이면, 이미 그 지역 전용 데이터다 "
+            "— 지역 필터를 넣지 마라(넣으면 값이 안 맞아 0행이 되기 쉽다). "
+            "다만 '합계'·'소계' 같은 집계 행이 섞여 있으면 filter_by_admin_name 으로 걸러라.",
+            "allowed 값이 그 컬럼의 sample_rows 에 실제로 나타나는 형태인지 확인하라. "
+            "(실패 사례: '행정기관' 컬럼 값은 '왕십리제2동'·'합계' 인데 allowed=['성동구'] 를 걸어 "
+            "18행이 0행이 됐다. 컬럼에 없는 값으로 거르면 레이어가 통째로 사라진다) "
+            "allowed 에는 '걸러내려는 기준값'만 넣는다 — 지역 필터면 대상 지역명, "
+            "운영상태 필터면 남길 상태값. 그리고 데이터가 이미 대상 지역 전용이면(파일명·내용상) "
+            "지역 필터 자체를 넣지 마라.",
+            "emit_whitelist 로 만든 이름을 **같은 데이터셋에서** filter_by_join_key 로 "
+            "소비하지 마라. 자기 값으로 자기를 거르는 것이라 아무 효과가 없다. "
+            "emit_whitelist 는 '이미 지역이 좁혀진 데이터셋'이 다른 데이터셋에 키를 넘길 때만 쓴다.",
+            "이 데이터셋에 좌표도 자치구명도 주소도 지역코드도 없으면(예: 역명·정류장ID 만 있는 승하차 통계) "
+            "자기 힘으로 지역을 좁힐 수 없다. 이때는 other_datasets 에서 "
+            "'좌표가 있고 같은 대상을 가리키는 키 컬럼을 가진 데이터셋'을 찾아 "
+            "filter_by_join_key(key_col='<이 데이터셋의 키 컬럼>', whitelist='<이름>') 를 쓴다. "
+            "컬럼명이 서로 달라도 된다(예: '표준버스정류장ID'↔'NODE_ID', '역명'↔'역사명'). "
+            "짝이 될 데이터셋이 안 보이면 filter_by_join_key 를 쓰되 key_col 은 "
+            "이 데이터셋의 식별자 컬럼으로 정확히 지정하라 — 정제 엔진이 실제 값 겹침으로 "
+            "짝을 찾아 자동 연결한다.",
+            "거를 수 없다고 해서 값이 안 맞는 컬럼으로 filter_by_value 를 쓰지 마라. "
+            "(예: 노선명='5호선' 컬럼을 allowed=['용산구'] 로 거르면 결과가 0행이 된다)",
+            "서울 전역/전국 데이터인데 지역을 좁히는 op 가 하나도 없으면 안 된다 "
+            "(원본이 그대로 통과해 다음 단계가 잘못된다).",
+        ],
     }
     return {"system": get_system_prompt(facility),
             "user": json.dumps(user, ensure_ascii=False, indent=2)}
@@ -294,13 +402,12 @@ class MockLLM(LLMClient):
             else:
                 w = 0.7 if rn == "positive_factor" else -0.5
                 roles.append({"role": rn, "weight": w, "rationale": "mock"})
-        exp = EXPECTED_RECIPES.get(did, {"ops": []})
         return json.dumps({
             "dataset_id": did,
             "summary": self._SUMMARY.get(did, f"{did} 데이터"),
             "roles": roles,
             "coord_status": ref["coord"],
-            "cleaning_ops": [{"op_id": o, "params": {}} for o in exp["ops"]],
+            "cleaning_ops": [],   # mock 은 형식·시간 확인용. op 판정은 real(gpt-4o)에서만.
             "hitl_flags": [],
         }, ensure_ascii=False)
 
@@ -317,17 +424,50 @@ class RealLLM(LLMClient):
         self.client = OpenAI(api_key=OPENAI_API_KEY)
         self.model = model or AUDIT_LLM_MODEL
 
+    # TPM(분당 토큰) 한도에 걸리면(429) 잠시 쉬고 재시도. 데이터셋을 연속 호출하므로
+    # 한도가 낮은 계정에서는 정상적으로 발생한다 → 파이프라인을 중단시키지 않는다.
+    #   ★ 대기 시간은 API 가 알려주는 값을 쓴다("Please try again in 1.122s").
+    #     고정 20초로 기다리면 11개 데이터셋에서 1분 이상을 그냥 버린다.
+    RETRY = 6
+    BACKOFF_SEC = 5          # 응답에 대기시간이 없을 때만 쓰는 기본값(지수 증가)
+    MAX_WAIT_SEC = 60
+
+    @staticmethod
+    def _retry_after(msg: str) -> float | None:
+        """429 메시지에서 권장 대기시간(초) 추출. 'try again in 1.122s' / '2m30s' 대응."""
+        m = re.search(r"try again in\s+(?:(\d+)m)?\s*([\d.]+)s", msg)
+        if not m:
+            return None
+        mins = float(m.group(1) or 0)
+        return mins * 60 + float(m.group(2))
+
     def complete(self, system: str, user: str) -> str:
-        resp = self.client.chat.completions.create(
-            model=self.model,
-            temperature=0,                              # 판정 재현성 위해 0
-            response_format={"type": "json_object"},    # JSON 모드(형식 이탈 방지)
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        )
-        return resp.choices[0].message.content
+        import time as _t
+        last = None
+        for attempt in range(self.RETRY):
+            try:
+                resp = self.client.chat.completions.create(
+                    model=self.model,
+                    temperature=0,                              # 판정 재현성 위해 0
+                    response_format={"type": "json_object"},    # JSON 모드(형식 이탈 방지)
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                )
+                return resp.choices[0].message.content
+            except Exception as e:
+                last = e
+                if "rate_limit" not in str(e).lower() and "429" not in str(e):
+                    raise
+                hinted = self._retry_after(str(e))
+                wait = (hinted + 0.5) if hinted else self.BACKOFF_SEC * (2 ** attempt)
+                wait = min(wait, self.MAX_WAIT_SEC)
+                src = "API 권장" if hinted else "기본"
+                print(f"\n  [rate limit] {wait:.1f}s 대기 후 재시도 "
+                      f"({attempt+1}/{self.RETRY}, {src})")
+                _t.sleep(wait)
+        raise last
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -365,7 +505,7 @@ def run_harness(llm: LLMClient, fixtures: dict, domain: dict, progress=None):
     """
     out, raw_preds = [], {}
     for did, profile in fixtures.items():
-        prompt = build_prompt(profile, domain)
+        prompt = build_prompt(profile, domain, fixtures=fixtures)
         raw = llm.complete(prompt["system"], prompt["user"])
         try:
             pred = json.loads(raw)
@@ -569,21 +709,7 @@ def enrich_hitl_flags(pred: dict) -> dict:
             "confirmed": False,
         })
     pred["hitl_flags"] = flags
-
-    # cleaning_ops 보정: spatial_join_admin 의 shp_path 는 LLM 이 알 수 없는 값이다.
-    #   실제로 null/"null"/"config.ADM_DONG_SHP"(변수명을 문자열로 베낌) 등을 채워 넣었다.
-    #   → '실존하는 .shp 경로'가 아니면 무조건 공용 행정동경계 경로로 덮어쓴다.
-    #   ('규칙이 명확하면 코드가 결정한다' — LLM 은 op 선택만, 경로는 코드가.)
-    for op in pred.get("cleaning_ops", []):
-        if op.get("op_id") != "spatial_join_admin":
-            continue
-        params = op.setdefault("params", {})
-        p = params.get("shp_path")
-        valid = isinstance(p, str) and p.endswith(".shp") and os.path.exists(p)
-        if not valid:
-            params["shp_path"] = config.ADM_DONG_SHP     # 공용 경계 (도메인 무관)
     return pred
-
 
 def search_exclusion_radius(dataset_summary: str, region: str, facility: str = "",
                             model: str | None = None) -> dict:
@@ -757,12 +883,68 @@ def apply_intent_answer(result: dict, choice: int, weight: float | None = None) 
         result["roles"] = []
 
 
+ADM_CODE_SHEET = "행정동코드"          # 시트명(행자부행정동코드↔시군구명)
+_ADM_CODE_CACHE: dict | None = None    # {코드접두: 시군구명} 세션 캐시
+
+
+def _load_admin_code_map() -> dict:
+    """행자부 행정동코드 ↔ 시군구명 매핑을 읽어 {코드접두: 시군구명} 으로 만든다.
+    5자리(자치구)와 8자리(행정동) 접두를 모두 담아 어느 길이로 걸러도 검증된다.
+    파일이 없으면 빈 dict → 검증을 건너뛰고 HITL 확인만 남는다(조용히 통과시키지 않음).
+    """
+    global _ADM_CODE_CACHE
+    if _ADM_CODE_CACHE is not None:
+        return _ADM_CODE_CACHE
+    _ADM_CODE_CACHE = {}
+    path = getattr(config, "ADM_CODE_MAP", "")
+    if not path or not os.path.isfile(path):
+        return _ADM_CODE_CACHE
+    try:
+        import pandas as pd
+        df = pd.read_excel(path, sheet_name=ADM_CODE_SHEET, dtype=str, skiprows=1)
+        df.columns = ["통계청행정동코드", "행자부행정동코드", "시도명", "시군구명", "행정동명"][:len(df.columns)]
+        for code, gu in zip(df["행자부행정동코드"], df["시군구명"]):
+            if not isinstance(code, str) or not isinstance(gu, str):
+                continue
+            code, gu = code.strip(), gu.strip()
+            if not code or not gu:
+                continue
+            _ADM_CODE_CACHE[code] = gu          # 8자리(행정동)
+            _ADM_CODE_CACHE[code[:5]] = gu      # 5자리(자치구)
+    except Exception as e:
+        print(f"  [경고] 행정동 코드표 로드 실패({e}) — 코드 검증 없이 HITL 확인만 수행")
+    return _ADM_CODE_CACHE
+
+
+def verify_code_prefix(prefix: str, region: str) -> tuple:
+    """코드 접두가 대상 지역인지 대조. 반환: (판정, 실제지역명|None)
+      판정: 'ok'(일치) | 'mismatch'(다른 지역) | 'unknown'(매핑에 없음/표 없음)
+    감리 AI 가 추측한 행정코드를 **데이터로 검증**하는 유일한 수단이다.
+    (실제 사고: 용산구인데 11440(마포구)을 써서 데이터 전체가 다른 구였다)
+    """
+    m = _load_admin_code_map()
+    if not m or not prefix:
+        return "unknown", None
+    got = m.get(str(prefix).strip())
+    if got is None:
+        return "unknown", None
+    return ("ok" if got == region else "mismatch"), got
+
+
+def suggest_code_prefix(region: str) -> str | None:
+    """대상 지역명으로 올바른 자치구 코드 접두를 찾아준다(HITL 기본값 제시용)."""
+    m = _load_admin_code_map()
+    cands = sorted({c for c, g in m.items() if g == region and len(c) == 5})
+    return cands[0] if len(cands) == 1 else None
+
+
 def review_hitl(in_path: str | None = None, out_path: str | None = None) -> str:
     """HITL — 사람이 확인·확정하는 단계. 두 종류의 flag 를 처리한다.
       1) exclusion_radius_missing : 배제반경 확인/입력 (need_review=true 인 배제)
            · 제안값 있음(search 가 상위법에서 찾음) → 보여주고 승인/수정
            · 제안값 없음(조례 없어 검색 생략)      → 근거만 보여주고 직접 입력
       2) data_intent_unclear      : 애매한 데이터의 용도 확인(1~5)
+      3) filter_by_code_prefix    : 지역 코드 접두 확인(AI 가 추측한 행정코드 — 검증 불가)
     입력: audit_result_enriched.json 이 있으면 우선(제안값 포함), 없으면 audit_result.json.
     출력: audit_result_reviewed.json (원본 보존)
     """
@@ -843,6 +1025,53 @@ def review_hitl(in_path: str | None = None, out_path: str | None = None) -> str:
         if choice in (3, 4):
             print("    ※ 표시만 — 위치선정(GIS) 단계에서 참고/처리")
 
+    # ── 3) 지역 코드 접두 확인 ──────────────────────────────────────
+    #  filter_by_code_prefix 는 감리 AI 가 '행정 코드'라는 외부 지식을 알아야 하는
+    #  유일한 op 다. 다른 경로(좌표·주소·자치구명)는 데이터 안에서 검증되지만 이건 아니다.
+    #  실제 사고: 용산구(11170) 대신 마포구(11440) 를 써서 데이터 전체가 다른 구였는데,
+    #  마포구도 행정동이 16개라 행수 검증(11904=16x24x31)을 통과해 조용히 넘어갔다.
+    code_jobs = [(r, op) for r in results
+                 for op in (r.get("cleaning_ops") or [])
+                 if op.get("op_id") == "filter_by_code_prefix"]
+    if code_jobs:
+        region = (doc.get("facility_inference", {}) or {}).get("region", "")
+        print(f"\n{'#' * 60}\n# 지역 코드 확인 — {len(code_jobs)}건")
+        print(f"#  AI 가 '{region}' 의 행정 코드를 추측한 값입니다. 반드시 확인하세요.")
+        print("#  (틀려도 행수가 그럴듯하게 나와 자동 검증으로는 못 걸러냅니다)")
+        print("#" * 60)
+        for r, op in code_jobs:
+            prm = op.setdefault("params", {})
+            cur = prm.get("prefix", "")
+            verdict, actual = verify_code_prefix(cur, region)
+            hint = suggest_code_prefix(region)
+            print(f"\n[{r.get('dataset_id')}] {r.get('summary','')[:60]}")
+            print(f"  컬럼 '{prm.get('col')}' 이 '{cur}' 로 시작하는 행만 남깁니다.")
+            if verdict == "ok":
+                print(f"  ✅ 코드표 대조: '{cur}' = {actual} — 대상 지역과 일치")
+            elif verdict == "mismatch":
+                print(f"  ❌ 코드표 대조: '{cur}' 는 **{actual}** 입니다. 대상은 '{region}' 입니다!")
+                if hint:
+                    print(f"     → '{region}' 의 코드는 '{hint}' 입니다.")
+            else:
+                print("  ⚠ 코드표에서 확인 불가 — 사람이 직접 판단해야 합니다.")
+                if hint:
+                    print(f"     참고: '{region}' 의 자치구 코드는 '{hint}' 입니다.")
+            default = hint if (verdict == "mismatch" and hint) else cur
+            print(f"  ▶ 이 코드가 '{region}' 이 맞습니까?")
+            ans = input(f"  [Enter='{default}' 적용] · 다른 코드 입력 · s=건너뜀: ").strip()
+            if not ans:
+                ans = default if default != cur else ""
+            if ans.lower() == "s":
+                print("  → 건너뜀 (미확인 상태로 진행 — 결과가 다른 지역일 수 있음)")
+                prm["prefix_confirmed"] = False
+                continue
+            if ans:
+                prm["prefix"] = ans
+                print(f"  → '{ans}' 로 수정")
+            else:
+                print(f"  → '{cur}' 확정")
+            prm["prefix_confirmed"] = True
+
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     json.dump(doc, open(out_path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 
@@ -851,6 +1080,13 @@ def review_hitl(in_path: str | None = None, out_path: str | None = None) -> str:
              .get("facility_type", "?"))
             for r in results for f in r.get("hitl_flags", [])
             if f.get("type") == "exclusion_radius_missing" and not f.get("confirmed")]
+    unconf = [r.get("dataset_id") for r in results
+              for op in (r.get("cleaning_ops") or [])
+              if op.get("op_id") == "filter_by_code_prefix"
+              and not (op.get("params") or {}).get("prefix_confirmed")]
+    if unconf:
+        print(f"\n⚠ 미확인 지역코드 {len(unconf)}건: {', '.join(unconf)} "
+              f"— 다른 지역 데이터일 수 있습니다.")
     if left:
         print(f"\n⚠ 미확정 배제반경 {len(left)}건 남음 (건너뜀): "
               f"{', '.join(f'{d}:{t}' for d, t in left)}")
