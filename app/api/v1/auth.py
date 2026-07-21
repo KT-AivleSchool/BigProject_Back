@@ -71,7 +71,7 @@ async def login_user(
     [Cj(찬진) 파트] JWT 발급을 통한 구정 실무자 로그인 인증 (Redis 기반 로그인 실패 차단 가드 포함)
     """
     lock_manager = LoginLockoutManager(redis)
-    
+
     # 1. 로그인 시도 전 차단 여부 선제 확인
     await lock_manager.check_if_locked(credentials.email)
 

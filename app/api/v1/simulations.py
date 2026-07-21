@@ -88,7 +88,9 @@ async def run_debate_and_publish(
                     "ahp_weights": parcel.ahp_weights or {},
                 }
             except Exception as e:
-                print(f"[Fallback] DB 연결 실패({e}). 로컬 모의 GIS 데이터로 대체합니다.")
+                print(
+                    f"[Fallback] DB 연결 실패({e}). 로컬 모의 GIS 데이터로 대체합니다."
+                )
                 gis_data = {
                     "lat": 37.534,
                     "lng": 126.994,
@@ -115,7 +117,9 @@ async def run_debate_and_publish(
             # 토론 시작 전 공통 RAG(Common RAG) 1회 선검색
             query = f"{facility_type} 설치 기준 허가 규제 갈등 중재 혜택"
             try:
-                retrieved_docs = await vector_db.retrieve_similar_statutes(query, top_k=5)
+                retrieved_docs = await vector_db.retrieve_similar_statutes(
+                    query, top_k=5
+                )
                 common_rag = "\n".join(retrieved_docs)
             except Exception:
                 common_rag = "조례 정보 없음"
@@ -244,7 +248,10 @@ async def run_debate_and_publish(
                             print(f"=== DB 저장 실패: {e} ===")
 
                         await pubsub_manager.publish_debate_message(
-                            parcel_id, "시스템", "토론 종료. 3대 시나리오 도출이 완료되었습니다.", is_finished=True
+                            parcel_id,
+                            "시스템",
+                            "토론 종료. 3대 시나리오 도출이 완료되었습니다.",
+                            is_finished=True,
                         )
 
         except Exception as quota_err:
@@ -273,8 +280,7 @@ async def run_debate_and_publish(
 
 @router.post("/stream", dependencies=[Depends(rate_limiter)])
 async def stream_ai_discussion(
-    request: StreamRequest,
-    redis: aioredis.Redis = Depends(get_redis)
+    request: StreamRequest, redis: aioredis.Redis = Depends(get_redis)
 ):
     parcel_id = request.parcel_id
     facility_type = request.facility_type
@@ -301,10 +307,7 @@ async def stream_ai_discussion(
 
     async def event_generator():
         async for data in pubsub_manager.subscribe_debate_stream(parcel_id):
-            yield {
-                "event": "message",
-                "data": json.dumps(data, ensure_ascii=False)
-            }
+            yield {"event": "message", "data": json.dumps(data, ensure_ascii=False)}
 
     # sse_starlette 라이브러리의 EventSourceResponse를 반환하여 비동기 HTTP 청크 전송 스트림 활성화
     return EventSourceResponse(event_generator())
