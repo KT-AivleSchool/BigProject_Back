@@ -124,12 +124,21 @@ def stream_ai_discussion(request: StreamRequest, db: AsyncSession = Depends(get_
         graph = build_discussion_graph()
 
         # [NEW] 토론 시작 전 공통 RAG(Common RAG) 1회 선검색
-        query = f"{facility_type} 설치 기준 허가 규제 갈등 중재 혜택"
+        # [A-2 후속] 시설 종류를 질의 문자열에 섞지 않고 메타데이터 필터로 넘깁니다.
+        #   기존: query = f"{facility_type} 설치 기준 ..." → vector_db가 필터로 전환됐는데도
+        #   호출부에 prefix가 남아 있어 A-2가 무력화된 상태였습니다(필터 분기 미실행).
+        query = "설치 기준 허가 규제 갈등 중재 혜택"
         try:
-            retrieved_docs = await vector_db.retrieve_similar_statutes(query, top_k=5)
-            common_rag = "\n".join(retrieved_docs)
-        except Exception:
-            common_rag = "조례 정보 없음"
+            retrieved_docs = await vector_db.retrieve_similar_statutes(
+                query, top_k=5, facility_type=facility_type
+            )
+            # 0건(=해당 조례 없음)과 검색 장애를 문구로 구분합니다.
+            common_rag = (
+                "\n".join(retrieved_docs) if retrieved_docs else "관련 조례 없음"
+            )
+        except Exception as e:
+            print(f"[RAG Fallback] 조례 검색 실패({e}). 조례 없이 토론을 진행합니다.")
+            common_rag = "조례 정보 없음(검색 실패)"
 
         timestamp = datetime.datetime.now().isoformat()
 

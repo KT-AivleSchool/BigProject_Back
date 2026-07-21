@@ -86,9 +86,19 @@ class RagVectorStorage:
         """
         [동현 AI 메인] 토론 시나리오 발화 문맥(query)과 가장 유사한 조례 규정 텍스트를
         '기본 조례 콜렉션(statutes_collection)'에서 비동기로 검색합니다.
+
+        [C-7 후속] 반환 규약을 분리합니다.
+          · 조례를 찾음          → 조문 텍스트 리스트
+          · 임계치 통과분 없음   → [] (정상 응답. '해당 조례가 없다'는 사실)
+          · DB 미연결/검색 실패  → 예외 전파 (호출부가 '장애'로 구분 처리)
+        기존에는 세 경우가 모두 같은 문자열을 반환해 호출부에서 구분이 불가능했고,
+        DB가 죽어도 정상 응답처럼 보였습니다.
         """
-        if not self.statutes_store:
-            return self._get_fallback_data()
+        if self.statutes_store is None:
+            # 초기화 실패(=장애)를 0건(=정상)으로 감추지 않고 호출부로 올립니다.
+            raise RuntimeError(
+                "Vector DB(statutes_collection)가 초기화되지 않았습니다."
+            )
 
         try:
             # LangChain의 비동기 유사도 검색 (asimilarity_search_with_relevance_scores) 사용
@@ -99,28 +109,29 @@ class RagVectorStorage:
                 search_kwargs["filter"] = {"facility_type": facility_type}
 
             # [A-3] 유사도 임계치(0.25) 검사 및 점수 포함 검색
-            docs_with_scores = await self.statutes_store.asimilarity_search_with_relevance_scores(
-                query, **search_kwargs
+            docs_with_scores = (
+                await self.statutes_store.asimilarity_search_with_relevance_scores(
+                    query, **search_kwargs
+                )
             )
 
-            # 검색 결과가 없을 경우 안전한 빈 배열 또는 폴백 반환
-            if not docs_with_scores:
-                return self._get_fallback_data()
-
-            # 임계치 0.25 이상인 문서만 순수 텍스트(page_content) 추출
-            filtered_docs = [doc.page_content for doc, score in docs_with_scores if score >= 0.25]
-
-            if not filtered_docs:
-                return ["관련 조례 없음"]
-            
-            return filtered_docs
         except Exception as e:
-            # DB 미생성, 연결 오류 등에 대비한 폴백 처리 (프론트엔드 크래시 방지)
-            logger.error(
-                f"[RAG Warning] Vector DB Search Error (Falling back to dummy data): {e}"
-            )
-            return self._get_fallback_data()
+            # [C-7 후속] 검색 실패를 빈 결과로 치환하지 않고 그대로 올립니다.
+            #   삼켜버리면 DB 장애가 '조례 없음'으로 보여 원인 추적이 불가능합니다.
+            logger.error(f"[RAG Error] Vector DB Search Error: {e}")
+            raise
 
-    def _get_fallback_data(self) -> List[str]:
-        """DB 미연결 또는 데이터 부재 시 반환되는 임시 폴백 데이터"""
-        return ["관련 조례 없음"]
+        # 임계치 0.25 이상인 문서만 순수 텍스트(page_content) 추출
+        filtered_docs = [
+            doc.page_content for doc, score in docs_with_scores if score >= 0.25
+        ]
+
+        if not filtered_docs:
+            # 0건은 정상 응답입니다. 다만 임계치 때문인지 코퍼스가 비어서인지는
+            # 로그로 남겨 A-3 임계치 튜닝의 근거로 씁니다.
+            logger.info(
+                f"[RAG] 임계치(0.25) 통과 조례 0건 "
+                f"(검색 {len(docs_with_scores)}건, 질의: {query[:40]})"
+            )
+
+        return filtered_docs
