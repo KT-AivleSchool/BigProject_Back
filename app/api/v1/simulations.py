@@ -391,22 +391,26 @@ async def download_feasibility_report_pdf(
     if not res_json:
         raise HTTPException(
             status_code=404,
-            detail="[SIMULATION_NOT_FOUND] 시뮬레이션 결과 데이터가 존재하지 않습니다."
+            detail="[SIMULATION_NOT_FOUND] 시뮬레이션 결과 데이터가 존재하지 않습니다.",
         )
 
     candidate_lat = res_json.get("candidate_lat")
     candidate_lng = res_json.get("candidate_lng")
-    if candidate_lat is None or candidate_lng is None or (candidate_lat == 0.0 and candidate_lng == 0.0):
+    if (
+        candidate_lat is None
+        or candidate_lng is None
+        or (candidate_lat == 0.0 and candidate_lng == 0.0)
+    ):
         raise HTTPException(
-            status_code=422, 
-            detail="[GEOCODING_FAILED] 시뮬레이션 대상의 유효한 위경도 좌표가 존재하지 않습니다."
+            status_code=422,
+            detail="[GEOCODING_FAILED] 시뮬레이션 대상의 유효한 위경도 좌표가 존재하지 않습니다.",
         )
 
     css_score = res_json.get("conflict_sensitivity_score")
     if css_score is None:
         raise HTTPException(
-            status_code=503, 
-            detail="[AI_SCORE_UNAVAILABLE] 갈등 민감도 지수(CSS) 연산에 실패했거나 아직 완료되지 않았습니다."
+            status_code=503,
+            detail="[AI_SCORE_UNAVAILABLE] 갈등 민감도 지수(CSS) 연산에 실패했거나 아직 완료되지 않았습니다.",
         )
 
     # 2. PDF 조립용 컨텍스트 정보 포맷팅

@@ -166,7 +166,7 @@ async def audit_csv_dataset(files: List[UploadFile] = File(...)):
         logger.error("[AI Ingestion] OPENAI_API_KEY is missing.")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="[AI_INGESTION_FAILED] 서버에 AI API 키가 설정되지 않아 감리를 수행할 수 없습니다."
+            detail="[AI_INGESTION_FAILED] 서버에 AI API 키가 설정되지 않아 감리를 수행할 수 없습니다.",
         )
 
     # 3. OpenAI 비동기 멀티파일 감리 호출
@@ -211,7 +211,7 @@ async def audit_csv_dataset(files: List[UploadFile] = File(...)):
         logger.error(f"[AI Ingestion Failure] OpenAI call failed: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"[AI_INGESTION_FAILED] AI 입지 사전 감리 처리 중 오류가 발생했습니다: {str(e)}"
+            detail=f"[AI_INGESTION_FAILED] AI 입지 사전 감리 처리 중 오류가 발생했습니다: {str(e)}",
         )
 
 
