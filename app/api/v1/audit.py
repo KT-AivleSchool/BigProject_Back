@@ -28,6 +28,23 @@ async def verify_precedent_document(
             detail="Audit AI 검증용 문서는 오직 PDF 포맷만 지원합니다.",
         )
 
+    # [보안 조치] 파일 크기 제한 (최대 10MB)
+    MAX_FILE_SIZE = 10 * 1024 * 1024
+    file_size = getattr(file, "size", None)
+    if file_size is None:
+        try:
+            file.file.seek(0, 2)
+            file_size = file.file.tell()
+            file.file.seek(0)
+        except Exception:
+            file_size = 0
+
+    if file_size > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="업로드 가능한 파일의 최대 크기는 10MB입니다.",
+        )
+
     try:
         # PDF 바이너리 수신 및 텍스트 추출
         pdf_bytes = await file.read()

@@ -29,15 +29,47 @@ def upload_datasets(files: List[UploadFile] = File(...), district_id: int = Form
     [Cj(찬진) 파트 서브 & 장천명 풀스택] 다목적 데이터셋 및 조례 파일 일괄 적재 라우터
     수신된 파일의 확장자를 체크하여 .csv/.shp는 DB팀 파이프라인으로, .pdf는 RAG 파이프라인으로 라우팅합니다.
     """
+    # [보안 조치] 파일 업로드 개수 및 크기, 확장자 전체 유효성 검사
+    MAX_FILE_COUNT = 5
+    MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+    ALLOWED_EXTENSIONS = {"csv", "shp", "pdf", "hwp", "txt", "md"}
+
+    if len(files) > MAX_FILE_COUNT:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"한 번에 업로드할 수 있는 파일 개수는 최대 {MAX_FILE_COUNT}개입니다.",
+        )
+
+    for file in files:
+        filename = file.filename or "dummy.csv"
+        ext = filename.split(".")[-1].lower() if "." in filename else ""
+
+        # 1. 확장자 체크
+        if ext not in ALLOWED_EXTENSIONS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"지원하지 않는 파일 형식(확장자)이 포함되어 있습니다: {filename}",
+            )
+
+        # 2. 파일 크기 체크 (seek & tell을 활용하여 메모리 버퍼 오버헤드 없이 크기 조회)
+        file_size = getattr(file, "size", None)
+        if file_size is None:
+            try:
+                file.file.seek(0, 2)
+                file_size = file.file.tell()
+                file.file.seek(0)
+            except Exception:
+                file_size = 0
+
+        if file_size > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"개별 파일의 최대 허용 크기는 10MB입니다: {filename}",
+            )
+
     first_file = files[0] if files else None
     filename = first_file.filename if first_file else "dummy.csv"
     ext = filename.split(".")[-1].lower() if "." in filename else "csv"
-
-    if ext not in ["csv", "shp", "pdf", "hwp", "txt", "md"]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"지원하지 않는 확장자 파일이 포함되어 있습니다: {filename}",
-        )
 
     # Pydantic Schema에 따른 DTO 반환
     return {
