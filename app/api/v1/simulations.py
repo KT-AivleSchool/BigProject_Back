@@ -161,15 +161,46 @@ def stream_ai_discussion(request: StreamRequest, db: AsyncSession = Depends(get_
         # 내부 상태 누적용 변수
         current_state = dict(initial_state)
 
-        # 3. 그래프 비동기 스트리밍 (astream) — OpenAI Quota 초과 시 에러 이벤트 즉시 송출
+        # 3. 그래프 비동기 스트리밍 (astream_events) — OpenAI Quota 초과 시 에러 이벤트 즉시 송출
         try:
-            async for output in graph.astream(initial_state):
-                for node_name, node_state in output.items():
-                    # 상태 업데이트 누적
-                    if "messages" in node_state:
-                        current_state["messages"].extend(node_state["messages"])
-                    if "final_scenarios" in node_state:
-                        current_state["final_scenarios"] = node_state["final_scenarios"]
+            async for event in graph.astream_events(initial_state, version="v1"):
+                kind = event["event"]
+
+                # [NEW] 실시간 한 글자(Token) 스트리밍
+                if kind == "on_chat_model_stream":
+                    chunk = event["data"]["chunk"].content
+                    if chunk:
+                        # LangGraph 메타데이터에서 현재 발화 중인 노드 추출
+                        langgraph_node = event.get("metadata", {}).get(
+                            "langgraph_node", "알 수 없음"
+                        )
+
+                        # 페르소나 노드일 경우에만 한 글자씩 프론트로 푸시
+                        if langgraph_node in ["pro", "con", "gov", "gov_wrapup"]:
+                            # 기존 구조(sender: pro, con...)에 맞춰서 토큰 전송
+                            sender_map = {
+                                "pro": "찬성",
+                                "con": "반대",
+                                "gov": "정부",
+                                "gov_wrapup": "정부",
+                            }
+                            sender = sender_map.get(langgraph_node, "참여자")
+
+                            yield {
+                                "event": "token",
+                                "data": json.dumps(
+                                    {
+                                        "sender": sender,
+                                        "text": chunk,
+                                        "is_finished": False,
+                                    },
+                                    ensure_ascii=False,
+                                ),
+                            }
+
+                # [기존 로직 보존] 노드 작업이 완전히 끝났을 때 상태(State) 누적 및 DB 저장
+                elif kind == "on_chain_end":
+                    node_name = event["name"]
 
                     if node_name in [
                         "pro",
@@ -178,113 +209,142 @@ def stream_ai_discussion(request: StreamRequest, db: AsyncSession = Depends(get_
                         "gov_wrapup",
                         "evaluator",
                         "reporter",
+                        "supervisor",
                     ]:
-                        if "messages" in node_state and len(node_state["messages"]) > 0:
-                            msg = node_state["messages"][-1]
+                        node_state = event["data"].get("output")
+                        if not node_state or not isinstance(node_state, dict):
+                            continue
 
-                            parts = msg.split(":", 1)
-                            if len(parts) == 2:
-                                sender = parts[0].strip()
-                                text = parts[1].strip()
+                        # 상태 업데이트 누적
+                        if "messages" in node_state:
+                            appended_messages = node_state["messages"]
+                            current_state["messages"].extend(appended_messages)
+
+                            # 한 페르소나의 발언이 끝났음을 알림
+                            if node_name in ["pro", "con", "gov", "gov_wrapup"]:
+                                yield {
+                                    "event": "message_end",
+                                    "data": json.dumps(
+                                        {"sender": node_name, "is_finished": False}
+                                    ),
+                                }
+                            # evaluator(시스템)의 턴 종료 시 전체 메시지를 한 번에 쏴줌
+                            elif node_name == "evaluator":
+                                if len(appended_messages) > 0:
+                                    msg = appended_messages[-1]
+                                    parts = msg.split(":", 1)
+                                    sender = (
+                                        parts[0].strip()
+                                        if len(parts) == 2
+                                        else "시스템"
+                                    )
+                                    text = parts[1].strip() if len(parts) == 2 else msg
+
+                                    yield {
+                                        "event": "message",
+                                        "data": json.dumps(
+                                            {
+                                                "sender": sender,
+                                                "text": text,
+                                                "is_finished": False,
+                                            },
+                                            ensure_ascii=False,
+                                        ),
+                                    }
+
+                        if "final_scenarios" in node_state:
+                            current_state["final_scenarios"] = node_state[
+                                "final_scenarios"
+                            ]
+
+                        # reporter 노드가 끝나면 최종 DB 저장 및 마무리 전송
+                        if node_name == "reporter":
+                            # 단일 시나리오 객체일 경우 리스트로 래핑
+                            final_scenarios_obj = current_state.get(
+                                "final_scenarios", {}
+                            )
+                            if (
+                                isinstance(final_scenarios_obj, dict)
+                                and "scenario" in final_scenarios_obj
+                            ):
+                                final_scenarios_list = [final_scenarios_obj]
                             else:
-                                sender = "참여자"
-                                text = msg
+                                final_scenarios_list = final_scenarios_obj.get(
+                                    "scenarios", []
+                                )
+
+                            # CSS 점수 계산 (평균 점수(0.0~1.0)를 0~10점 척도로 환산)
+                            avg_acc = current_state.get("eval_score", 0.0)
+                            css_score = round(avg_acc * 10, 2)
+                            if css_score == 0.0:
+                                css_score = 7.5  # 기본값 처리
+
+                            # --- DB 저장용 최종 JSON 포맷 구성 ---
+                            debate_logs = []
+                            sys_msg = "[시스템 면책 고지] 본 모의 심의 토론 내용은 AI 페르소나 엔진에 의해 생성된 가상의 시나리오이며, 실제 인물이나 단체, 사실관계와는 전혀 무관합니다."
+                            debate_logs.append({"sender": "시스템", "text": sys_msg})
+                            raw_text_lines = [sys_msg]
+
+                            for msg in current_state.get("messages", []):
+                                parts = msg.split(":", 1)
+                                if len(parts) == 2:
+                                    s, t = parts[0].strip(), parts[1].strip()
+                                else:
+                                    s, t = "참여자", msg
+                                debate_logs.append({"sender": s, "text": t})
+                                raw_text_lines.append(msg)
+
+                            result_json = {
+                                "candidate_jibun": current_state.get("candidate_jibun"),
+                                "candidate_lat": current_state.get("candidate_lat"),
+                                "candidate_lng": current_state.get("candidate_lng"),
+                                "facility_type": current_state.get("facility_type"),
+                                "intensity_level": current_state.get("intensity_level"),
+                                "ahp_weights": current_state.get("ahp_weights"),
+                                "timestamp": current_state.get("timestamp"),
+                                "debate_logs": debate_logs,
+                                "raw_text": "\n\n".join(raw_text_lines),
+                                "scenarios": final_scenarios_list,
+                                "conflict_sensitivity_score": css_score,
+                                "conflict_factors": current_state.get(
+                                    "ahp_weights", {}
+                                ),
+                            }
+
+                            # 최종 JSON을 DB에 저장 (ConflictSimulation)
+                            try:
+                                new_sim = ConflictSimulation(
+                                    parcel_id=parcel_id,
+                                    facility_type=facility_type,
+                                    result_json=result_json,
+                                )
+                                db.add(new_sim)
+                                await db.commit()
+                                print("=== 최종 도출된 JSON 결과 (DB 저장 성공) ===")
+                            except Exception as e:
+                                await db.rollback()
+                                print(f"=== DB 저장 실패: {e} ===")
+
+                            print(json.dumps(result_json, ensure_ascii=False, indent=2))
+
+                            final_text = (
+                                "[시스템] 토론이 종료되었습니다. 도출된 최종 단일 시나리오:\n\n"
+                                + json.dumps(
+                                    final_scenarios_obj, ensure_ascii=False, indent=2
+                                )
+                            )
 
                             yield {
                                 "event": "message",
                                 "data": json.dumps(
                                     {
-                                        "sender": sender,
-                                        "text": text,
-                                        "is_finished": False,
+                                        "sender": "시스템",
+                                        "text": final_text,
+                                        "is_finished": True,
                                     },
                                     ensure_ascii=False,
                                 ),
                             }
-
-                    if node_name == "reporter":
-                        # 단일 시나리오 객체일 경우 리스트로 래핑
-                        final_scenarios_obj = current_state.get("final_scenarios", {})
-                        if (
-                            isinstance(final_scenarios_obj, dict)
-                            and "scenario" in final_scenarios_obj
-                        ):
-                            final_scenarios_list = [final_scenarios_obj]
-                        else:
-                            final_scenarios_list = final_scenarios_obj.get(
-                                "scenarios", []
-                            )
-
-                        # CSS 점수 계산 (평균 점수(0.0~1.0)를 0~10점 척도로 환산)
-                        avg_acc = current_state.get("eval_score", 0.0)
-                        css_score = round(avg_acc * 10, 2)
-                        if css_score == 0.0:
-                            css_score = 7.5  # 기본값 처리
-
-                        # --- DB 저장용 최종 JSON 포맷 구성 ---
-                        debate_logs = []
-                        sys_msg = "[시스템 면책 고지] 본 모의 심의 토론 내용은 AI 페르소나 엔진에 의해 생성된 가상의 시나리오이며, 실제 인물이나 단체, 사실관계와는 전혀 무관합니다."
-                        debate_logs.append({"sender": "시스템", "text": sys_msg})
-                        raw_text_lines = [sys_msg]
-
-                        for msg in current_state.get("messages", []):
-                            parts = msg.split(":", 1)
-                            if len(parts) == 2:
-                                s, t = parts[0].strip(), parts[1].strip()
-                            else:
-                                s, t = "참여자", msg
-                            debate_logs.append({"sender": s, "text": t})
-                            raw_text_lines.append(msg)
-
-                        result_json = {
-                            "candidate_jibun": current_state.get("candidate_jibun"),
-                            "candidate_lat": current_state.get("candidate_lat"),
-                            "candidate_lng": current_state.get("candidate_lng"),
-                            "facility_type": current_state.get("facility_type"),
-                            "intensity_level": current_state.get("intensity_level"),
-                            "ahp_weights": current_state.get("ahp_weights"),
-                            "timestamp": current_state.get("timestamp"),
-                            "debate_logs": debate_logs,
-                            "raw_text": "\n\n".join(raw_text_lines),
-                            "scenarios": final_scenarios_list,
-                            "conflict_sensitivity_score": css_score,
-                            "conflict_factors": current_state.get("ahp_weights", {}),
-                        }
-
-                        # 최종 JSON을 DB에 저장 (ConflictSimulation)
-                        try:
-                            new_sim = ConflictSimulation(
-                                parcel_id=parcel_id,
-                                facility_type=facility_type,
-                                result_json=result_json,
-                            )
-                            db.add(new_sim)
-                            await db.commit()
-                            print("=== 최종 도출된 JSON 결과 (DB 저장 성공) ===")
-                        except Exception as e:
-                            await db.rollback()
-                            print(f"=== DB 저장 실패: {e} ===")
-
-                        print(json.dumps(result_json, ensure_ascii=False, indent=2))
-
-                        final_text = (
-                            "[시스템] 토론이 종료되었습니다. 도출된 최종 단일 시나리오:\n\n"
-                            + json.dumps(
-                                final_scenarios_obj, ensure_ascii=False, indent=2
-                            )
-                        )
-
-                        yield {
-                            "event": "message",
-                            "data": json.dumps(
-                                {
-                                    "sender": "시스템",
-                                    "text": final_text,
-                                    "is_finished": True,
-                                },
-                                ensure_ascii=False,
-                            ),
-                        }
 
         except Exception as quota_err:
             # OpenAI API Quota 초과(429) 또는 기타 AI 엔진 오류 발생 시 즉시 에러 SSE 이벤트 송출

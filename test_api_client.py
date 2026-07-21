@@ -23,10 +23,17 @@ def main():
         with requests.post(url, json=payload, stream=True) as response:
             response.raise_for_status()
 
+            current_event = None
+            current_sender = None
+
             for line in response.iter_lines():
                 if line:
                     decoded_line = line.decode("utf-8")
-                    # SSE 규격(data: ...)에 맞춰서 출력
+
+                    if decoded_line.startswith("event: "):
+                        current_event = decoded_line[7:].strip()
+                        continue
+
                     if decoded_line.startswith("data: "):
                         data_content = decoded_line[6:]
                         try:
@@ -34,15 +41,28 @@ def main():
                             sender = msg_json.get("sender", "알 수 없음")
                             text = msg_json.get("text", "")
 
-                            print(f"\n[{sender}]")
-                            print(text)
+                            if current_event == "token":
+                                # 화자가 바뀌면 이름 출력
+                                if current_sender != sender:
+                                    print(f"\n[{sender}]")
+                                    current_sender = sender
+                                # 토큰을 줄바꿈 없이 이어서 출력
+                                sys.stdout.write(text)
+                                sys.stdout.flush()
+
+                            elif current_event == "message_end":
+                                # 한 화자의 턴이 끝남
+                                print()
+                                current_sender = None
+
+                            elif current_event == "message":
+                                # 전체 메시지(시스템 메시지 등)
+                                print(f"\n[{sender}]")
+                                print(text)
+                                current_sender = None
 
                         except json.JSONDecodeError:
                             print(data_content)
-                    elif decoded_line.startswith("event: "):
-                        pass  # event: message 줄은 무시하고 깔끔하게 출력
-                    else:
-                        print(decoded_line)
 
             print("-" * 50)
             print("✅ 실시간 스트리밍이 종료되었습니다.\n")
