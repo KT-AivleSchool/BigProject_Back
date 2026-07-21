@@ -124,12 +124,18 @@ def stream_ai_discussion(request: StreamRequest, db: AsyncSession = Depends(get_
         graph = build_discussion_graph()
 
         # [NEW] 토론 시작 전 공통 RAG(Common RAG) 1회 선검색
-        query = f"{facility_type} 설치 기준 허가 규제 갈등 중재 혜택"
+        query = "설치 기준 허가 규제 갈등 중재 혜택"
         try:
-            retrieved_docs = await vector_db.retrieve_similar_statutes(query, top_k=5)
-            common_rag = "\n".join(retrieved_docs)
-        except Exception:
-            common_rag = "조례 정보 없음"
+            retrieved_docs = await vector_db.retrieve_similar_statutes(
+                query, top_k=5, facility_type=facility_type
+            )
+            if not retrieved_docs:
+                common_rag = "관련 조례 없음"
+            else:
+                common_rag = "\n".join(retrieved_docs)
+        except Exception as e:
+            print(f"[RAG Error] 조례 검색 실패: {e}")
+            common_rag = "조례 검색 중 오류 발생"
 
         timestamp = datetime.datetime.now().isoformat()
 
