@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 # 유사도 임계치 (데이터팀에서 3-small 적재 후 무관 질의 분포를 측정해 최적값으로 조정 예정)
 SIMILARITY_THRESHOLD = 0.25
 
+
 # [동현님 담당] pgvector Vector DB 연결 및 RAG 문서 적재/조회 모듈
 class RagVectorStorage:
     def __init__(self):
@@ -113,7 +114,9 @@ class RagVectorStorage:
 
             # 임계치 이상인 문서만 순수 텍스트(page_content) 추출
             filtered_docs = [
-                doc.page_content for doc, score in docs_with_scores if score >= SIMILARITY_THRESHOLD
+                doc.page_content
+                for doc, score in docs_with_scores
+                if score >= SIMILARITY_THRESHOLD
             ]
 
             return filtered_docs
