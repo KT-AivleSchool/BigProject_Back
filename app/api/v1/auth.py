@@ -3,11 +3,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import asyncio
 
-from app.api.deps import get_db
+from app.api.deps import get_db, get_redis
 from app.config import settings
 from app.db.base import User
 from app.utils.auth_utils import create_access_token
 from app.schemas.auth import UserRegister, UserLogin, TokenResponse, UserResponse
+from app.core.security_limiter import LoginLockoutManager
+import redis.asyncio as aioredis
 import bcrypt
 
 router = APIRouter()
@@ -60,18 +62,27 @@ async def register_user(user: UserRegister, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login_user(credentials: UserLogin, db: AsyncSession = Depends(get_db)):
+async def login_user(
+    credentials: UserLogin,
+    db: AsyncSession = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis),
+):
     """
-    [Cj(찬진) 파트] JWT 발급을 통한 구정 실무자 로그인 인증
+    [Cj(찬진) 파트] JWT 발급을 통한 구정 실무자 로그인 인증 (Redis 기반 로그인 실패 차단 가드 포함)
     """
+    lock_manager = LoginLockoutManager(redis)
+    
+    # 1. 로그인 시도 전 차단 여부 선제 확인
+    await lock_manager.check_if_locked(credentials.email)
 
-    # email ID 기분으로 유저를 쿼리
+    # email ID 기준으로 유저를 쿼리
     stmt = select(User).where(User.email == credentials.email)
     result = await db.execute(stmt)
     user = result.scalars().first()
 
     # 유저 조회 결과
     if not user:
+        await lock_manager.record_fail_attempt(credentials.email)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="이메일 혹은 패스워드가 올바르지 않습니다.",
@@ -91,10 +102,14 @@ async def login_user(credentials: UserLogin, db: AsyncSession = Depends(get_db))
     )
 
     if not is_password_correct:
+        await lock_manager.record_fail_attempt(credentials.email)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="이메일 혹은 패스워드가 올바르지 않습니다.",
         )
+
+    # 로그인 성공 시 잠금 카운트 리셋
+    await lock_manager.reset_attempts(credentials.email)
 
     # 토큰 식별자
     token_payload = {
