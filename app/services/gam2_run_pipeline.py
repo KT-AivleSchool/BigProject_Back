@@ -17,7 +17,6 @@ profile → real(감리 판정) → search(배제반경 상위법 검색) 을 �
 
 기존 파일(audit_judgment_test.py)은 수정하지 않고 함수만 가져다 쓴다.
 """
-
 from __future__ import annotations
 
 import sys
@@ -29,9 +28,8 @@ import app.services.gam2_audit_judgment_test as A
 # tqdm 은 선택 의존 — 없으면 간단한 텍스트 진행 표시로 폴백(파이프라인은 그대로 동작).
 try:
     from tqdm import tqdm
-
     HAS_TQDM = True
-except ImportError:  # pip install tqdm
+except ImportError:                                  # pip install tqdm
     HAS_TQDM = False
 
 
@@ -40,16 +38,9 @@ class _Bar:
 
     def __init__(self, total: int, desc: str):
         self.total, self.desc, self.n = total, desc, 0
-        self.bar = (
-            tqdm(
-                total=total,
-                desc=desc,
-                unit="개",
-                bar_format="  {desc} |{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}] {postfix}",
-            )
-            if HAS_TQDM
-            else None
-        )
+        self.bar = tqdm(total=total, desc=desc, unit="개",
+                        bar_format="  {desc} |{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}] {postfix}"
+                        ) if HAS_TQDM else None
 
     def update(self, label: str = "") -> None:
         self.n += 1
@@ -73,12 +64,11 @@ class _Bar:
 # 시간 측정 유틸
 # ══════════════════════════════════════════════════════════════════
 
-
 class Timer:
     """단계별 소요 시간 기록 → 마지막에 표로 출력."""
 
     def __init__(self):
-        self.laps: list[tuple[str, float, str]] = []  # (단계명, 초, 상태)
+        self.laps: list[tuple[str, float, str]] = []   # (단계명, 초, 상태)
         self.t0 = time.perf_counter()
 
     def lap(self, name: str, seconds: float, status: str = "완료") -> None:
@@ -96,9 +86,7 @@ class Timer:
         for name, sec, status in self.laps:
             pct = (sec / total * 100) if total else 0
             bar = "█" * max(1, int(pct / 4)) if status == "완료" else ""
-            print(
-                f"  {name:22} {sec:7.2f}s  {pct:5.1f}%  {bar} {'' if status == '완료' else '(' + status + ')'}"
-            )
+            print(f"  {name:22} {sec:7.2f}s  {pct:5.1f}%  {bar} {'' if status=='완료' else '('+status+')'}")
         print("-" * 60)
         print(f"  {'합계':22} {total:7.2f}s")
         print("=" * 60)
@@ -121,10 +109,8 @@ def _step(timer: Timer, name: str, fn, *args, **kwargs):
 # 파이프라인
 # ══════════════════════════════════════════════════════════════════
 
-
-def run(
-    domain_dir: str, user_input: str, skip_search: bool = False, mock: bool = False
-) -> dict:
+def run(domain_dir: str, user_input: str,
+        skip_search: bool = False, mock: bool = False) -> dict:
     """profile(자동) → real → search. 반환: {산출물 경로들}"""
     timer = Timer()
     paths: dict[str, str] = {}
@@ -132,9 +118,7 @@ def run(
     # ── STEP 0. 도메인 설정 (경로·프리픽스 확정)
     A.set_domain(domain_dir)
     print(f"[도메인] {domain_dir}  (프리픽스: {A._DOMAIN['prefix']})")
-    print(
-        f'[입력]   "{user_input}"' + ("   ※ MOCK 모드(LLM 호출 없음)" if mock else "")
-    )
+    print(f"[입력]   \"{user_input}\"" + ("   ※ MOCK 모드(LLM 호출 없음)" if mock else ""))
 
     # ── STEP 0-1. fixture 확보 (없으면 build_fixtures 가 자동 프로파일링)
     fixtures = _step(timer, "STEP 0  프로파일/조례", A.build_fixtures)
@@ -146,29 +130,25 @@ def run(
         return fn(user_input, fixtures)
 
     fac = _step(timer, "STEP 0.5 시설·지역 확정", _facility)
-    print(f"[시설 확정] '{fac['facility']}' / 지역 '{fac.get('region', '')}'")
+    print(f"[시설 확정] '{fac['facility']}' / 지역 '{fac.get('region','')}'")
     if fac.get("근거"):
         print(f"  근거: {fac['근거']}")
     if fac.get("mismatch"):
-        print(f"  ⚠ 입력↔데이터 불일치: {fac.get('mismatch_reason', '')}")
+        print(f"  ⚠ 입력↔데이터 불일치: {fac.get('mismatch_reason','')}")
     print("  ※ 확정 아님 — HITL에서 확인/수정")
 
-    domain = {
-        "facility": fac["facility"],
-        "region": fac.get("region") or A.DOMAIN["region"],
-    }
+    domain = {"facility": fac["facility"],
+              "region": fac.get("region") or A.DOMAIN["region"]}
 
     # ── STEP 1. 감리 판정 (gpt-4o)
     from app.config import AUDIT_LLM_MODEL
-
     model = "mock" if mock else AUDIT_LLM_MODEL
     llm = A.MockLLM() if mock else A.RealLLM()
 
     def _audit():
         with _Bar(len(fixtures), "감리 판정") as bar:
-            return A.run_harness(
-                llm, fixtures, domain, progress=lambda did: bar.update(f"#{did}")
-            )
+            return A.run_harness(llm, fixtures, domain,
+                                 progress=lambda did: bar.update(f"#{did}"))
 
     judgments, raw_preds = _step(timer, f"STEP 1  감리 판정 ({model})", _audit)
     A.report(judgments, raw_preds)
@@ -176,12 +156,9 @@ def run(
     print(f"\n[저장] {paths['audit']}")
 
     # ── STEP 2. 배제반경 상위법 검색 (mini)
-    n_missing = sum(
-        1
-        for p in raw_preds.values()
-        for f in p.get("hitl_flags", [])
-        if f.get("type") == "exclusion_radius_missing"
-    )
+    n_missing = sum(1 for p in raw_preds.values()
+                    for f in p.get("hitl_flags", [])
+                    if f.get("type") == "exclusion_radius_missing")
 
     if skip_search:
         timer.lap("STEP 2  배제반경 검색", 0.0, status="생략")
@@ -233,12 +210,9 @@ if __name__ == "__main__":
         sys.exit(1)
 
     try:
-        run(
-            args[0],
-            args[1],
+        run(args[0], args[1],
             skip_search="--skip-search" in flags,
-            mock="--mock" in flags,
-        )
+            mock="--mock" in flags)
     except FileNotFoundError as e:
         print(f"\n[중단] {e}")
         sys.exit(1)

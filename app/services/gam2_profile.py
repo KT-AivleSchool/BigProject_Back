@@ -41,12 +41,12 @@ from app.config import CSV_ENCODINGS, COORD_COL_CANDIDATES
 
 
 # ── 프로파일 파라미터 (추후 config 로 이동 가능) ──
-PROFILE_MAX_ROWS = 50000  # 대용량 파일은 이만큼만 표본으로 읽어 프로파일
-MANIFEST_NAME = "_manifest.json"  # 폴더 내 파일명↔dataset_id 매핑(선택)
-ADDR_COL_KEYWORDS = ("주소", "소재지", "상세위치", "설치위치")  # 실주소 텍스트 컬럼
+PROFILE_MAX_ROWS = 50000                 # 대용량 파일은 이만큼만 표본으로 읽어 프로파일
+MANIFEST_NAME = "_manifest.json"         # 폴더 내 파일명↔dataset_id 매핑(선택)
+ADDR_COL_KEYWORDS = ("주소", "소재지", "상세위치", "설치위치")   # 실주소 텍스트 컬럼
 ADDR_COL_EXCLUDE = ("홈페이지", "이메일", "전자우편", "url", "코드")  # 오탐 제외
 DATA_EXTENSIONS = (".csv", ".xlsx", ".xls", ".shp", ".json")
-_NON_VALUE_COLS = ("geometry",)  # 샘플/중복에서 제외(shp geometry 등)
+_NON_VALUE_COLS = ("geometry",)          # 샘플/중복에서 제외(shp geometry 등)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -57,30 +57,15 @@ def _read_csv(path: str, nrows: int | None = None) -> pd.DataFrame:
     last_err = None
     for enc in CSV_ENCODINGS:
         try:
-            return pd.read_csv(
-                path,
-                encoding=enc,
-                dtype=str,
-                keep_default_na=True,
-                nrows=nrows,
-                low_memory=False,
-            )
+            return pd.read_csv(path, encoding=enc, dtype=str,
+                               keep_default_na=True, nrows=nrows, low_memory=False)
         except (UnicodeDecodeError, LookupError) as e:
             last_err = e
             continue
     # 최후 폴백: 원본에 깨진 바이트가 소수 섞인 경우 → cp949+replace 로 읽어 프로파일은 확보.
-    print(
-        f"[profile] ⚠ 인코딩 폴백 소진 → cp949+replace: {os.path.basename(path)} ({last_err})"
-    )
-    return pd.read_csv(
-        path,
-        encoding="cp949",
-        encoding_errors="replace",
-        dtype=str,
-        keep_default_na=True,
-        nrows=nrows,
-        low_memory=False,
-    )
+    print(f"[profile] ⚠ 인코딩 폴백 소진 → cp949+replace: {os.path.basename(path)} ({last_err})")
+    return pd.read_csv(path, encoding="cp949", encoding_errors="replace", dtype=str,
+                       keep_default_na=True, nrows=nrows, low_memory=False)
 
 
 def _detect_header_row(path: str, max_scan: int = 8) -> int:
@@ -107,9 +92,9 @@ def _detect_header_row(path: str, max_scan: int = 8) -> int:
     for i in range(len(raw)):
         cells = [v for v in raw.iloc[i].tolist() if pd.notna(v) and str(v).strip()]
         if len(cells) < 2:
-            continue  # 장식 행(제목·주석)은 1칸만 채워짐
+            continue                       # 장식 행(제목·주석)은 1칸만 채워짐
         n_num = sum(1 for v in cells if _is_num(v))
-        if n_num <= len(cells) / 2:  # 숫자가 절반 이하 → 헤더로 판단
+        if n_num <= len(cells) / 2:        # 숫자가 절반 이하 → 헤더로 판단
             return i
     return 0
 
@@ -118,9 +103,7 @@ def _read_excel(path: str, nrows: int | None = None) -> pd.DataFrame:
     """엑셀 로드. 상단 장식 행(제목·주석)을 건너뛰고 진짜 헤더부터 읽는다.
     2단(병합) 헤더면 하위 헤더 행을 합쳐 컬럼명을 만든다."""
     hdr = _detect_header_row(path)
-    df = pd.read_excel(
-        path, dtype=str, nrows=nrows, header=hdr
-    )  # xlsx=openpyxl, xls=xlrd
+    df = pd.read_excel(path, dtype=str, nrows=nrows, header=hdr)  # xlsx=openpyxl, xls=xlrd
     df.columns = [str(c).strip() for c in df.columns]
 
     # 2단 병합 헤더 처리: 상위 헤더가 병합되면 하위 칸이 Unnamed 로 남고,
@@ -129,30 +112,26 @@ def _read_excel(path: str, nrows: int | None = None) -> pd.DataFrame:
     if len(df) and any(c.startswith("Unnamed") for c in df.columns):
         first = df.iloc[0]
         vals = [v for v in first.tolist() if pd.notna(v) and str(v).strip()]
-
-        def is_num(v):
-            return str(v).strip().replace(",", "").replace(".", "").isdigit()
-
-        if vals and not any(is_num(v) for v in vals):  # 첫 행이 전부 텍스트 → 하위 헤더
+        is_num = lambda v: str(v).strip().replace(",", "").replace(".", "").isdigit()
+        if vals and not any(is_num(v) for v in vals):     # 첫 행이 전부 텍스트 → 하위 헤더
             new_cols, parent = [], ""
             for c, sub in zip(df.columns, first.tolist()):
                 if not c.startswith("Unnamed"):
-                    parent = c  # 상위 헤더 갱신
+                    parent = c                            # 상위 헤더 갱신
                 sub = str(sub).strip() if pd.notna(sub) else ""
                 if sub and c.startswith("Unnamed"):
                     new_cols.append(f"{parent}_{sub}" if parent else sub)
                 elif sub and parent:
-                    new_cols.append(f"{parent}_{sub}")  # 상위+하위 (예: 인구수_계)
+                    new_cols.append(f"{parent}_{sub}")    # 상위+하위 (예: 인구수_계)
                 else:
                     new_cols.append(c)
             df.columns = new_cols
-            df = df.iloc[1:].reset_index(drop=True)  # 하위 헤더 행 제거
+            df = df.iloc[1:].reset_index(drop=True)       # 하위 헤더 행 제거
     return df
 
 
 def _read_shp(path: str, nrows: int | None = None) -> pd.DataFrame:
     import geopandas as gpd
-
     # 한국 공간데이터(.dbf)는 cp949 가 흔함(.cpg 미인식 대비) → 인코딩 폴백.
     last = None
     for enc in (None, "cp949", "euc-kr"):
@@ -163,7 +142,7 @@ def _read_shp(path: str, nrows: int | None = None) -> pd.DataFrame:
             if enc:
                 kw["encoding"] = enc
             return gpd.read_file(path, **kw)
-        except TypeError:  # 구버전: rows 미지원
+        except TypeError:                               # 구버전: rows 미지원
             kw.pop("rows", None)
             try:
                 return gpd.read_file(path, **kw)
@@ -179,9 +158,8 @@ def _shp_feature_count(path: str) -> int | None:
     """필지 수를 메타만 읽어 값싸게 집계(geometry 미로딩). 실패 시 None."""
     try:
         import pyogrio
-
         return int(pyogrio.read_info(path)["features"])
-    except Exception:  # noqa: BLE001
+    except Exception:                                   # noqa: BLE001
         return None
 
 
@@ -192,7 +170,7 @@ def _read_json(path: str, nrows: int | None = None) -> pd.DataFrame:
         df = pd.DataFrame(data, dtype=str)
     elif isinstance(data, dict):
         df = None
-        for v in data.values():  # {..:[레코드]} 흔한 형태
+        for v in data.values():                         # {..:[레코드]} 흔한 형태
             if isinstance(v, list) and v and isinstance(v[0], dict):
                 df = pd.DataFrame(v, dtype=str)
                 break
@@ -236,18 +214,17 @@ def _detect_addr_cols(columns) -> list[str]:
     out = []
     for c in columns:
         name = str(c)
-        if any(k in name for k in ADDR_COL_KEYWORDS) and not any(
-            x in name.lower() for x in ADDR_COL_EXCLUDE
-        ):
+        if any(k in name for k in ADDR_COL_KEYWORDS) and \
+           not any(x in name.lower() for x in ADDR_COL_EXCLUDE):
             out.append(c)
     return out
 
 
 def _count_null_coords(df, coord_cols, has_addr, row_count) -> int:
     """좌표 결측 행 수(FIXTURES 규칙):
-    - 좌표컬럼 있으면: 표본의 결측률 × row_count 로 추정(표본이 전체면 정확)
-    - 좌표없고 주소만: 전 행이 지오코딩 대상 → row_count
-    - 좌표도 주소도 없으면(통계·공간): 0
+       - 좌표컬럼 있으면: 표본의 결측률 × row_count 로 추정(표본이 전체면 정확)
+       - 좌표없고 주소만: 전 행이 지오코딩 대상 → row_count
+       - 좌표도 주소도 없으면(통계·공간): 0
     """
     if coord_cols:
         sub = df[coord_cols]
@@ -267,7 +244,7 @@ def _dup_estimate(df) -> int:
     if not value_cols:
         return 0
     try:
-        return int(df[value_cols].duplicated().sum())  # 표본 기준(근사)
+        return int(df[value_cols].duplicated().sum())      # 표본 기준(근사)
     except TypeError:
         return 0
 
@@ -296,25 +273,24 @@ def _load_manifest(folder: str) -> dict:
 
 
 def _assign_id(filename: str, manifest: dict) -> str:
-    fn = unicodedata.normalize("NFC", filename)  # macOS zip NFD → NFC
+    fn = unicodedata.normalize("NFC", filename)        # macOS zip NFD → NFC
     stem = os.path.splitext(fn)[0]
     if manifest:
-        if fn in manifest:  # 정확한 파일명 키
+        if fn in manifest:                              # 정확한 파일명 키
             return manifest[fn]
-        if stem in manifest:  # 확장자 뗀 키
+        if stem in manifest:                            # 확장자 뗀 키
             return manifest[stem]
-        for key in sorted(manifest, key=len, reverse=True):  # 부분문자열(긴 키 우선)
+        for key in sorted(manifest, key=len, reverse=True):   # 부분문자열(긴 키 우선)
             if unicodedata.normalize("NFC", key) in fn:
                 return manifest[key]
-    return stem.split("_")[0]  # 폴백: 'A1_...' → 'A1'
+    return stem.split("_")[0]                            # 폴백: 'A1_...' → 'A1'
 
 
 # ══════════════════════════════════════════════════════════════════
 # 4. 공개 API
 # ══════════════════════════════════════════════════════════════════
-def profile_file(
-    path: str, dataset_id: str | None = None, max_rows: int = PROFILE_MAX_ROWS
-) -> dict:
+def profile_file(path: str, dataset_id: str | None = None,
+                 max_rows: int = PROFILE_MAX_ROWS) -> dict:
     """단일 파일 → 프로파일 dict. (조례는 상위에서 주입)"""
     ext = os.path.splitext(path)[1].lower()
     df = _read_sample(path, ext, max_rows)
@@ -322,10 +298,10 @@ def profile_file(
     if ext == ".csv":
         row_count = _linecount_csv(path)
     elif ext == ".shp":
-        row_count = _shp_feature_count(path) or int(len(df))  # 메타로 실제 필지수
+        row_count = _shp_feature_count(path) or int(len(df))   # 메타로 실제 필지수
     else:
         row_count = int(len(df))
-    if row_count < len(df):  # 방어(따옴표 개행 등)
+    if row_count < len(df):                          # 방어(따옴표 개행 등)
         row_count = int(len(df))
     coord_cols = _detect_coord_cols(columns)
     addr_cols = _detect_addr_cols(columns)
@@ -342,7 +318,7 @@ def profile_file(
         coord_cols=coord_cols,
         dup_estimate=_dup_estimate(df),
         sample_rows=_sample_rows(df),
-        sampled=(len(df) >= max_rows),  # 표본 추정이면 True
+        sampled=(len(df) >= max_rows),               # 표본 추정이면 True
     )
 
 
@@ -358,12 +334,12 @@ def profile_folder(folder: str, max_rows: int = PROFILE_MAX_ROWS) -> dict:
     profiles: dict[str, dict] = {}
     for path in sorted(set(paths)):
         fname = os.path.basename(path)
-        if fname == MANIFEST_NAME or fname.startswith("._"):  # 매핑파일·macOS 파편 제외
+        if fname == MANIFEST_NAME or fname.startswith("._"):   # 매핑파일·macOS 파편 제외
             continue
         did = _assign_id(fname, manifest)
         try:
             p = profile_file(path, dataset_id=did, max_rows=max_rows)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:                        # noqa: BLE001
             print(f"[profile] 건너뜀 {fname}: {e}")
             continue
         if did in profiles:
@@ -388,9 +364,7 @@ if __name__ == "__main__":
     from app.config import domain_paths
 
     if len(sys.argv) < 2:
-        print(
-            "사용법: python profile.py <도메인폴더>   예: python profile.py EV_데이터셋"
-        )
+        print("사용법: python profile.py <도메인폴더>   예: python profile.py EV_데이터셋")
         sys.exit(1)
     domain_dir = sys.argv[1]
     p = domain_paths(domain_dir)
@@ -409,7 +383,5 @@ if __name__ == "__main__":
             flags.append(f"중복 {prof['dup_estimate']}")
         if prof["sampled"]:
             flags.append("※표본추정")
-        print(
-            f"  {did:4s} {prof['filename']}  ({prof['extension']}, {prof['row_count']:,}행)"
-        )
+        print(f"  {did:4s} {prof['filename']}  ({prof['extension']}, {prof['row_count']:,}행)")
         print(f"       {' | '.join(flags) if flags else '(좌표/주소/중복 없음)'}")

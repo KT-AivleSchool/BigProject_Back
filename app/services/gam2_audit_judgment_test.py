@@ -34,12 +34,8 @@ from app.config import STEP1_OUTPUT_DIR, SEARCH_CACHE_DIR, EXCLUSION_CACHE_PATH
 
 # ── 도메인 컨텍스트 (실행 시 set_domain 으로 채움; 전까지는 기존 기본값) ──
 _DOMAIN = {
-    "prefix": "",
-    "data": None,
-    "law": None,
-    "fixture": None,
-    "profiles": None,
-    "cache_path": EXCLUSION_CACHE_PATH,
+    "prefix": "", "data": None, "law": None, "fixture": None,
+    "profiles": None, "cache_path": EXCLUSION_CACHE_PATH,
 }
 
 
@@ -47,14 +43,10 @@ def set_domain(domain_dir: str) -> None:
     """도메인 루트 폴더로 경로·프리픽스를 확정. 모든 모드 시작 시 1회 호출."""
     p = config.domain_paths(domain_dir)
     _DOMAIN.update(
-        prefix=p["prefix"],
-        data=p["data"],
-        law=p["law"],
-        fixture=p["fixture"],
-        profiles=p["profiles"],
-        cache_path=os.path.join(
-            SEARCH_CACHE_DIR, f"{p['prefix']}_exclusion_radius_cache.json"
-        ),
+        prefix=p["prefix"], data=p["data"], law=p["law"],
+        fixture=p["fixture"], profiles=p["profiles"],
+        cache_path=os.path.join(SEARCH_CACHE_DIR,
+                                f"{p['prefix']}_exclusion_radius_cache.json"),
     )
 
 
@@ -152,7 +144,6 @@ def resolve_facility(user_input: str, fixtures: dict, model: str | None = None) 
     이 결과는 hitl 확인 대상(confirmed=false)."""
     from openai import OpenAI
     from app.config import OPENAI_API_KEY, FACILITY_LLM_MODEL
-
     if not OPENAI_API_KEY:
         raise RuntimeError(".env 에 OPENAI_API_KEY 를 설정하세요.")
     client = OpenAI(api_key=OPENAI_API_KEY)
@@ -179,84 +170,49 @@ def resolve_facility(user_input: str, fixtures: dict, model: str | None = None) 
         f'"mismatch": <true|false>, "mismatch_reason": "<불일치 시 이유, 없으면 빈 문자열>"}}'
     )
     resp = client.chat.completions.create(
-        model=m,
-        temperature=0,
-        response_format={"type": "json_object"},
+        model=m, temperature=0, response_format={"type": "json_object"},
         messages=[{"role": "user", "content": prompt}],
     )
     try:
         out = json.loads(resp.choices[0].message.content)
     except json.JSONDecodeError:
-        out = {
-            "facility": user_input or "(추론 실패)",
-            "region": "",
-            "근거": "",
-            "mismatch": False,
-            "mismatch_reason": "",
-        }
+        out = {"facility": user_input or "(추론 실패)", "region": "", "근거": "",
+               "mismatch": False, "mismatch_reason": ""}
     out.setdefault("region", "")
-    out["confirmed"] = False  # hitl 확인 전
+    out["confirmed"] = False    # hitl 확인 전
     out["source_input"] = user_input
     return out
 
 
-def resolve_facility_mock(
-    user_input: str, fixtures: dict, model: str | None = None
-) -> dict:
+def resolve_facility_mock(user_input: str, fixtures: dict, model: str | None = None) -> dict:
     """mock — 사용자 입력에서 시설명만 대략 추출(웹/키 없이 형식 검증용, 도메인 무관)."""
-    fac = (
-        user_input.replace("부지 선정해줘", "")
-        .replace("입지 선정", "")
-        .replace("선정해줘", "")
-        .replace("선정", "")
-        .strip()
-    )
+    fac = user_input.replace("부지 선정해줘", "").replace("입지 선정", "").replace("선정해줘", "").replace("선정", "").strip()
     # 입력에서 '~구/~시/~군' 지역 추출(없으면 빈값)
     mreg = re.search(r"(\S+?[구시군])", user_input)
     region = mreg.group(1) if mreg else ""
-    return {
-        "facility": fac or "(미지정)",
-        "region": region,
-        "근거": "(mock)",
-        "mismatch": False,
-        "mismatch_reason": "",
-        "confirmed": False,
-        "source_input": user_input,
-    }
+    return {"facility": fac or "(미지정)", "region": region, "근거": "(mock)",
+            "mismatch": False, "mismatch_reason": "", "confirmed": False,
+            "source_input": user_input}
 
 
-def build_prompt(
-    profile: dict, domain: dict, ordinance_rag: list[str] | None = None
-) -> dict:
+def build_prompt(profile: dict, domain: dict, ordinance_rag: list[str] | None = None) -> dict:
     """시스템+유저 프롬프트 조립. 카탈로그는 describe_all()로 동적 주입.
     조례는 profile에 실린 것을 우선 사용(데이터셋별 주입), 인자로도 덮어쓸 수 있음."""
-    ordinance = (
-        ordinance_rag
-        if ordinance_rag is not None
-        else ([profile["ordinance"]] if profile.get("ordinance") else [])
-    )
+    ordinance = ordinance_rag if ordinance_rag is not None else \
+        ([profile["ordinance"]] if profile.get("ordinance") else [])
     facility = domain.get("facility", "대상 시설")
     user = {
-        "domain_context": domain,  # {facility, region}
+        "domain_context": domain,                       # {facility, region}
         "dataset": {
             "dataset_id": profile.get("dataset_id"),
             "filename": profile.get("filename"),
             "extension": profile.get("extension"),
             "schema": profile.get("columns"),
             "sample_rows": profile.get("sample_rows", []),
-            "profile": {
-                k: profile[k]
-                for k in (
-                    "row_count",
-                    "has_coord_col",
-                    "coord_cols",
-                    "has_addr_col",
-                    "addr_cols",
-                    "null_coords",
-                    "dup_estimate",
-                )
-                if k in profile
-            },
+            "profile": {k: profile[k] for k in
+                        ("row_count", "has_coord_col", "coord_cols", "has_addr_col",
+                         "addr_cols", "null_coords", "dup_estimate")
+                        if k in profile},
         },
         "ordinance_rag": ordinance,
         "operation_catalog": describe_all(),
@@ -264,42 +220,31 @@ def build_prompt(
             "dataset_id": "str",
             "summary": f"이 데이터가 '{facility}' 입지에서 어떤 역할인지 한 줄(사람 확인용)",
             "roles": [
-                {
-                    "role": "positive_factor|negative_factor",
-                    "weight": "float(-1~1, 대략값)",
-                    "rationale": "str",
-                },
-                {
-                    "role": "hard_exclusion",
-                    "exclusion_type": "radius|polygon",
-                    "facility_type": "시설 유형명(캐시 키). 예: 어린이집·학교·버스정류소",
-                    "배제반경_m": "int|null(radius이고 조례에 있으면 숫자, polygon이면 null)",
-                    "source": "조례 조항|null",
-                    "confirmed": "bool(조례근거 있으면 true)",
-                    "need_review": "bool(radius인데 조례에 반경 없으면 true→HITL)",
-                    "rationale": "str",
-                },
-                {"role": "reference_only", "rationale": "입력 팩터로 보기 어려운 이유"},
+                {"role": "positive_factor|negative_factor",
+                 "weight": "float(-1~1, 대략값)", "rationale": "str"},
+                {"role": "hard_exclusion", "exclusion_type": "radius|polygon",
+                 "facility_type": "시설 유형명(캐시 키). 예: 어린이집·학교·버스정류소",
+                 "배제반경_m": "int|null(radius이고 조례에 있으면 숫자, polygon이면 null)",
+                 "source": "조례 조항|null", "confirmed": "bool(조례근거 있으면 true)",
+                 "need_review": "bool(radius인데 조례에 반경 없으면 true→HITL)",
+                 "rationale": "str"},
+                {"role": "reference_only", "rationale": "입력 팩터로 보기 어려운 이유"}
             ],
             "coord_status": "has_coords|needs_geocoding|stat_join|spatial",
             "cleaning_ops": [{"op_id": "<카탈로그 내 값>", "params": {}}],
             "hitl_flags": [],
         },
     }
-    return {
-        "system": get_system_prompt(facility),
-        "user": json.dumps(user, ensure_ascii=False, indent=2),
-    }
+    return {"system": get_system_prompt(facility),
+            "user": json.dumps(user, ensure_ascii=False, indent=2)}
 
 
 # ══════════════════════════════════════════════════════════════════
 # 2. LLM 호출 인터페이스 + 목
 # ══════════════════════════════════════════════════════════════════
 
-
 class LLMClient:
     """실제 (가)로 넘어갈 때 이 인터페이스만 구현하면 됨."""
-
     def complete(self, system: str, user: str) -> str:
         raise NotImplementedError
 
@@ -307,7 +252,6 @@ class LLMClient:
 class MockLLM(LLMClient):
     """하네스 출력 형식 확인용(키 불필요). 흡연 도메인 가정의 고정 시나리오를 반환.
     → 리포트·flag·저장이 정상 동작하는지 형식만 확인하는 용도."""
-
     # MockLLM 전용 시나리오(흡연 도메인 기준). 실제 판정과 무관 — 형식 확인용.
     _SCENARIO = {
         "01": {"roles": ["positive_factor"], "coord": "needs_geocoding"},
@@ -331,62 +275,43 @@ class MockLLM(LLMClient):
 
     def complete(self, system: str, user: str) -> str:
         u = json.loads(user)
-        did = (
-            u["dataset"].get("dataset_id") or ""
-        )  # 프로파일 dataset_id 사용(manifest 기반)
+        did = u["dataset"].get("dataset_id") or ""      # 프로파일 dataset_id 사용(manifest 기반)
         ref = self._SCENARIO.get(did, {"roles": [], "coord": "stat_join"})
         roles = []
         for rn in ref["roles"]:
             if rn == "hard_exclusion":
-                _ft = {
-                    "03": "어린이보호구역",
-                    "04": "학교절대보호구역",
-                    "05": "어린이집",
-                    "06": "버스정류소",
-                    "07": "지하철역",
-                }.get(did, "시설")
+                _ft = {"03": "어린이보호구역", "04": "학교절대보호구역", "05": "어린이집",
+                       "06": "버스정류소", "07": "지하철역"}.get(did, "시설")
                 # 조례(제5조)에 반경 명시된 것만 확정값. 나머지는 None→HITL.
-                _has_radius = did in ("06", "07")  # 조례에 10m 명시된 것만
-                roles.append(
-                    {
-                        "role": "hard_exclusion",
-                        "exclusion_type": "radius",
-                        "facility_type": _ft,
-                        "배제반경_m": 10 if _has_radius else None,
-                        "source": "조례 제5조" if _has_radius else None,
-                        "confirmed": _has_radius,
-                        "need_review": not _has_radius,
-                        "rationale": "조례 근거"
-                        if _has_radius
-                        else "조례에 반경 없음→HITL",
-                    }
-                )
+                _has_radius = did in ("06", "07")        # 조례에 10m 명시된 것만
+                roles.append({"role": "hard_exclusion", "exclusion_type": "radius",
+                              "facility_type": _ft,
+                              "배제반경_m": 10 if _has_radius else None,
+                              "source": "조례 제5조" if _has_radius else None,
+                              "confirmed": _has_radius,
+                              "need_review": not _has_radius,
+                              "rationale": "조례 근거" if _has_radius else "조례에 반경 없음→HITL"})
             else:
                 w = 0.7 if rn == "positive_factor" else -0.5
                 roles.append({"role": rn, "weight": w, "rationale": "mock"})
         exp = EXPECTED_RECIPES.get(did, {"ops": []})
-        return json.dumps(
-            {
-                "dataset_id": did,
-                "summary": self._SUMMARY.get(did, f"{did} 데이터"),
-                "roles": roles,
-                "coord_status": ref["coord"],
-                "cleaning_ops": [{"op_id": o, "params": {}} for o in exp["ops"]],
-                "hitl_flags": [],
-            },
-            ensure_ascii=False,
-        )
+        return json.dumps({
+            "dataset_id": did,
+            "summary": self._SUMMARY.get(did, f"{did} 데이터"),
+            "roles": roles,
+            "coord_status": ref["coord"],
+            "cleaning_ops": [{"op_id": o, "params": {}} for o in exp["ops"]],
+            "hitl_flags": [],
+        }, ensure_ascii=False)
 
 
 class RealLLM(LLMClient):
     """(가) 실제 판정용 — OpenAI. JSON 모드로 유효 JSON 강제.
     모델명은 config.SEARCH_LLM_MODEL(기본 gpt-4o-mini). 검색·추출이라 mini로 충분.
     키는 .env 의 OPENAI_API_KEY (코드에 안 박음)."""
-
     def __init__(self, model: str | None = None):
-        from openai import OpenAI  # 지연 임포트(목만 쓸 땐 불필요)
+        from openai import OpenAI          # 지연 임포트(목만 쓸 땐 불필요)
         from app.config import OPENAI_API_KEY, AUDIT_LLM_MODEL
-
         if not OPENAI_API_KEY:
             raise RuntimeError(".env 에 OPENAI_API_KEY 를 설정하세요.")
         self.client = OpenAI(api_key=OPENAI_API_KEY)
@@ -395,8 +320,8 @@ class RealLLM(LLMClient):
     def complete(self, system: str, user: str) -> str:
         resp = self.client.chat.completions.create(
             model=self.model,
-            temperature=0,  # 판정 재현성 위해 0
-            response_format={"type": "json_object"},  # JSON 모드(형식 이탈 방지)
+            temperature=0,                              # 판정 재현성 위해 0
+            response_format={"type": "json_object"},    # JSON 모드(형식 이탈 방지)
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -409,17 +334,15 @@ class RealLLM(LLMClient):
 # 3. 채점 — 역할 적중 / op 집합 적중 / 누락·과잉
 # ══════════════════════════════════════════════════════════════════
 
-
 @dataclass
 class Judgment:
     """감리 AI 판정 1건. (참고값 채점은 제거 — 실제 검토 관문은 HITL)"""
-
     dataset_id: str
     summary: str
-    roles: list  # [{role, weight|배제반경_m, ...}]
+    roles: list          # [{role, weight|배제반경_m, ...}]
     coord_status: str
     ops: list
-    exclusions: list  # hard_exclusion 중 조례에 반경 없어 검토 필요한 것
+    exclusions: list     # hard_exclusion 중 조례에 반경 없어 검토 필요한 것
 
 
 def review_one(pred: dict, dataset_id: str) -> Judgment:
@@ -428,19 +351,11 @@ def review_one(pred: dict, dataset_id: str) -> Judgment:
     coord = pred.get("coord_status", "")
     ops = [op["op_id"] for op in pred.get("cleaning_ops", [])]
     # 배제반경 미확정(조례에 없음) → 검토/서핑 대상
-    exclusions = [
-        r
-        for r in roles
-        if r.get("role") == "hard_exclusion"
-        and (r.get("need_review") or r.get("배제반경_m") is None)
-    ]
+    exclusions = [r for r in roles if r.get("role") == "hard_exclusion"
+                  and (r.get("need_review") or r.get("배제반경_m") is None)]
     return Judgment(
-        dataset_id=dataset_id,
-        summary=summary,
-        roles=roles,
-        coord_status=coord,
-        ops=ops,
-        exclusions=exclusions,
+        dataset_id=dataset_id, summary=summary, roles=roles,
+        coord_status=coord, ops=ops, exclusions=exclusions,
     )
 
 
@@ -455,17 +370,10 @@ def run_harness(llm: LLMClient, fixtures: dict, domain: dict, progress=None):
         try:
             pred = json.loads(raw)
         except json.JSONDecodeError:
-            pred = {
-                "dataset_id": did,
-                "summary": "(파싱 실패)",
-                "roles": [],
-                "coord_status": "",
-                "cleaning_ops": [],
-                "hitl_flags": [],
-                "_raw": raw[:200],
-            }
+            pred = {"dataset_id": did, "summary": "(파싱 실패)", "roles": [],
+                    "coord_status": "", "cleaning_ops": [], "hitl_flags": [], "_raw": raw[:200]}
         pred.setdefault("dataset_id", did)
-        pred = enrich_hitl_flags(pred)  # 배제반경 null 등 → hitl_flags 자동 생성(코드)
+        pred = enrich_hitl_flags(pred)      # 배제반경 null 등 → hitl_flags 자동 생성(코드)
         raw_preds[did] = pred
         out.append(review_one(pred, did))
         if progress:
@@ -473,9 +381,62 @@ def run_harness(llm: LLMClient, fixtures: dict, domain: dict, progress=None):
     return out, raw_preds
 
 
-def confirm_exclusion_radius(
-    enriched_path: str, dataset_id: str, radius_m: int, out_path: str | None = None
-) -> str:
+def apply_radius_answer(result: dict, flag: dict, radius_m: int | None,
+                        source: str = "human_confirmed") -> None:
+    """HITL 답변을 roles·flag 에 반영(메모리). radius_m=None 이면 '반경 없음(면 배제 등)'.
+    사람이 확정한 값만 confirmed=true → 캐시 저장(다음 실행에서 재사용).
+    """
+    idx = flag.get("role_index", 0)
+    roles = result.get("roles", [])
+    if idx >= len(roles):
+        return
+    role = roles[idx]
+    ftype = role.get("facility_type")
+
+    role["배제반경_m"] = radius_m
+    role["confirmed"] = True                 # 사람이 확인함 → 확정
+    role["need_review"] = False
+    role["source"] = source
+    flag["제안값"] = radius_m
+    flag["confirmed"] = True
+    flag["confirmed_by_human"] = True
+
+    # 사람 확정값만 캐시 (반경이 실제로 있는 경우만 — None 은 캐시 의미 없음)
+    if ftype and radius_m is not None:
+        save_to_exclusion_cache(ftype, radius_m, source, confirmed_by="human")
+
+
+def _read_radius(default: int | None = None) -> int | None | str:
+    """배제반경(m) 입력.
+      숫자   → 그 값으로 확정
+      Enter  → 제안값 있으면 승인, 없으면 건너뜀(미확정 유지)
+      n      → 반경 없음(면 배제 등)으로 확정
+      s      → 건너뜀(미확정 유지 — 나중에 다시)
+    반환: int | None(반경없음 확정) | "skip"(미확정 유지)
+    """
+    hint = f"[Enter={default}m 승인]" if default is not None else "[Enter=건너뜀]"
+    while True:
+        s = input(f"  배제반경(m) {hint} · n=반경없음 · s=건너뜀: ").strip().lower()
+        if s == "":
+            return default if default is not None else "skip"
+        if s == "n":
+            return None
+        if s == "s":
+            return "skip"
+        try:
+            # '100m', '30 m', '30미터' 같은 단위 표기도 허용(프론트 입력칸도 관대하게)
+            num = s.replace("미터", "").replace("m", "").replace("ｍ", "").strip()
+            v = int(float(num))
+            if v < 0:
+                print("    0 이상으로 입력하세요.")
+                continue
+            return v
+        except ValueError:
+            print("    숫자 · n · s 중 하나를 입력하세요.")
+
+
+def confirm_exclusion_radius(enriched_path: str, dataset_id: str, radius_m: int,
+                             out_path: str | None = None) -> str:
     """HITL 담당자가 서핑 제안값을 확인·확정할 때 호출. confirmed=true 로 바꾸고 캐시에 저장.
     (서핑 제안값은 confirmed=false 라 캐시 안 됨 → 사람이 이 함수로 확정해야 캐시됨)"""
     doc = json.load(open(enriched_path, encoding="utf-8"))
@@ -498,12 +459,8 @@ def confirm_exclusion_radius(
                 r["roles"][idx]["need_review"] = False
             # 사람 확정 → 캐시 저장
             if ftype:
-                save_to_exclusion_cache(
-                    ftype,
-                    radius_m,
-                    f.get("출처", "human_confirmed"),
-                    confirmed_by="human",
-                )
+                save_to_exclusion_cache(ftype, radius_m, f.get("출처", "human_confirmed"),
+                                        confirmed_by="human")
     path = out_path or enriched_path
     json.dump(doc, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
     return path
@@ -512,7 +469,6 @@ def confirm_exclusion_radius(
 def load_exclusion_cache(path: str | None = None) -> dict:
     """시설유형→배제반경 캐시 로드. confirmed=true 로 확인된 값만 들어있다."""
     import os
-
     path = path or _DOMAIN["cache_path"]
     if not os.path.exists(path):
         return {}
@@ -522,25 +478,17 @@ def load_exclusion_cache(path: str | None = None) -> dict:
         return {}
 
 
-def save_to_exclusion_cache(
-    facility_type: str,
-    radius_m,
-    source: str,
-    confirmed_by: str,
-    path: str | None = None,
-) -> None:
+def save_to_exclusion_cache(facility_type: str, radius_m, source: str,
+                            confirmed_by: str, path: str | None = None) -> None:
     """confirmed=true 값만 캐시에 저장(호출부에서 confirmed 확인). 키=시설유형."""
     import os
     from datetime import date
-
     path = path or _DOMAIN["cache_path"]
     os.makedirs(os.path.dirname(path), exist_ok=True)
     cache = load_exclusion_cache(path)
     cache[facility_type] = {
-        "배제반경_m": radius_m,
-        "출처": source,
-        "confirmed_by": confirmed_by,
-        "date": date.today().isoformat(),
+        "배제반경_m": radius_m, "출처": source,
+        "confirmed_by": confirmed_by, "date": date.today().isoformat(),
     }
     json.dump(cache, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 
@@ -548,7 +496,6 @@ def save_to_exclusion_cache(
 def _norm(s: str) -> str:
     """조례 대조용 정규화(NFC). 시설유형·값이 조례 텍스트에 있는지 substring 비교에 사용."""
     import unicodedata
-
     return unicodedata.normalize("NFC", s or "")
 
 
@@ -561,8 +508,9 @@ def enrich_hitl_flags(pred: dict) -> dict:
     캐시 히트(사람·조례로 이미 확정)면 즉시 채움.
     """
     flags = list(pred.get("hitl_flags", []))
+    did = pred.get("dataset_id", "")
     cache = load_exclusion_cache()
-    ord_norm = _norm(load_ordinance())  # 현재 도메인 조례 텍스트(검증 근거)
+    ord_norm = _norm(load_ordinance())              # 현재 도메인 조례 텍스트(검증 근거)
     existing = {(f.get("type"), f.get("role_index")) for f in flags}
     for i, r in enumerate(pred.get("roles", [])):
         if r.get("role") != "hard_exclusion":
@@ -574,13 +522,8 @@ def enrich_hitl_flags(pred: dict) -> dict:
         # 1) 캐시 히트(사람·조례로 이미 확정된 값) → 즉시 채움
         if is_radius and radius is None and ftype and ftype in cache:
             c = cache[ftype]
-            r.update(
-                배제반경_m=c["배제반경_m"],
-                source=c.get("출처"),
-                confirmed=True,
-                need_review=False,
-                from_cache=True,
-            )
+            r.update(배제반경_m=c["배제반경_m"], source=c.get("출처"),
+                     confirmed=True, need_review=False, from_cache=True)
             continue
 
         # 2) 조례 대조: radius 값 존재 + 시설유형·값이 조례에 실제로 있어야만 confirmed
@@ -589,9 +532,8 @@ def enrich_hitl_flags(pred: dict) -> dict:
         if is_radius and radius is not None and ftype_in_ord and value_in_ord:
             r["confirmed"] = True
             r["need_review"] = False
-            save_to_exclusion_cache(
-                ftype, radius, r.get("source", "ordinance"), confirmed_by="ordinance"
-            )
+            save_to_exclusion_cache(ftype, radius, r.get("source", "ordinance"),
+                                    confirmed_by="ordinance")
             continue
 
         # 3) 그 외 전부 → 미확정. LLM 자가확정(조례 근거 없는 confirmed)을 여기서 false 로 벗긴다.
@@ -603,41 +545,29 @@ def enrich_hitl_flags(pred: dict) -> dict:
         if key not in existing:
             # 중복 필드(dataset_id·facility_type·exclusion_type) 없음 —
             # 이 flag 는 해당 데이터셋의 hitl_flags 안에 있고, role_index 로 roles[i] 를 가리킨다.
-            flags.append(
-                {
-                    "type": "exclusion_radius_missing",
-                    "role_index": i,
-                    "message": "배제 대상이나 조례에서 반경/근거 확인 안 됨(LLM 자가판정). 검색·사람 확인 필요.",
-                    "제안값": None,
-                    "출처": None,
-                }
-            )
+            flags.append({
+                "type": "exclusion_radius_missing",
+                "role_index": i,
+                "message": "배제 대상이나 조례에서 반경/근거 확인 안 됨(LLM 자가판정). 검색·사람 확인 필요.",
+                "제안값": None,
+                "출처": None,
+            })
 
     # reference_only(참조/하류/무관 데이터) → 사람에게 '의도'를 묻는 HITL flag.
     #   LLM 은 reference_only 판정만, 질문 flag 생성은 코드가 결정론적으로.
     role_names = {r.get("role") for r in pred.get("roles", [])}
-    if "reference_only" in role_names and not any(
-        f.get("type") == "data_intent_unclear" for f in flags
-    ):
-        flags.append(
-            {
-                "type": "data_intent_unclear",
-                "message": (
-                    f"'{pred.get('summary', '')}' — 입지 판정의 입력 팩터로 보이지 않습니다"
-                    "(참조·하류·무관 가능). 이 데이터를 어떤 용도로 넣으셨나요?"
-                ),
-                "질문": "이 데이터의 의도는?",
-                "선택지": [
-                    "가점(수요) 요인",
-                    "감점(민감도) 요인",
-                    "배제(금지) 요인",
-                    "위치선정 참조용(감리 입력 아님)",
-                    "잘못 넣음 · 제외",
-                ],
-                "제안": "참조용이면 감리에서 제외하고 위치선정 단계에서 사용",
-                "confirmed": False,
-            }
-        )
+    if "reference_only" in role_names and \
+       not any(f.get("type") == "data_intent_unclear" for f in flags):
+        flags.append({
+            "type": "data_intent_unclear",
+            "message": (f"'{pred.get('summary', '')}' — 입지 판정의 입력 팩터로 보이지 않습니다"
+                        "(참조·하류·무관 가능). 이 데이터를 어떤 용도로 넣으셨나요?"),
+            "질문": "이 데이터의 의도는?",
+            "선택지": ["가점(수요) 요인", "감점(민감도) 요인", "배제(금지) 요인",
+                     "위치선정 참조용(감리 입력 아님)", "잘못 넣음 · 제외"],
+            "제안": "참조용이면 감리에서 제외하고 위치선정 단계에서 사용",
+            "confirmed": False,
+        })
     pred["hitl_flags"] = flags
 
     # cleaning_ops 보정: spatial_join_admin 의 shp_path 는 LLM 이 알 수 없는 값이다.
@@ -651,20 +581,18 @@ def enrich_hitl_flags(pred: dict) -> dict:
         p = params.get("shp_path")
         valid = isinstance(p, str) and p.endswith(".shp") and os.path.exists(p)
         if not valid:
-            params["shp_path"] = config.ADM_DONG_SHP  # 공용 경계 (도메인 무관)
+            params["shp_path"] = config.ADM_DONG_SHP     # 공용 경계 (도메인 무관)
     return pred
 
 
-def search_exclusion_radius(
-    dataset_summary: str, region: str, facility: str = "", model: str | None = None
-) -> dict:
+def search_exclusion_radius(dataset_summary: str, region: str, facility: str = "",
+                            model: str | None = None) -> dict:
     """[폴백] OpenAI Responses API + web_search 로 배제반경 후보 검색(법령 API 실패 시).
     반환: {"제안값": int|null, "출처": url|null, "근거문장": str, "source_type": "web_search"}
     ※ 확정 아님 — confirmed 는 호출부에서 계속 false 로 둔다(사람 확인 필수).
     """
     from openai import OpenAI
     from app.config import OPENAI_API_KEY, SEARCH_LLM_MODEL
-
     client = OpenAI(api_key=OPENAI_API_KEY)
     m = model or SEARCH_LLM_MODEL
 
@@ -696,22 +624,15 @@ def search_exclusion_radius(
     return found
 
 
-def enrich_with_search(
-    in_path: str | None = None,
-    out_path: str | None = None,
-    region: str = "용산구",
-    ordinance_rag: str = "",
-) -> str:
+def enrich_with_search(in_path: str | None = None,
+                       out_path: str | None = None,
+                       region: str = "용산구",
+                       ordinance_rag: str = "") -> str:
     """audit_result.json 의 exclusion_radius_missing flag 를, 조례가 인용한 상위법을
     법령 API 로 조회해 배제반경 후보로 채워 별도 저장. 원본 보존, confirmed=false(HITL 확인).
     ordinance_rag: 업로드된 조례 본문(「」 인용 법령 파싱용). 없으면 조례 텍스트 파일 사용."""
-    import copy
-    import os
-    from app.services.gam2_ordinance_acquisition import (
-        extract_cited_laws,
-        find_radius_in_laws,
-    )
-
+    import copy, os
+    from app.services.gam2_ordinance_acquisition import extract_cited_laws, find_radius_in_laws
     in_path = in_path or _out_path("audit_result.json")
     out_path = out_path or _out_path("audit_result_enriched.json")
     doc = json.load(open(in_path, encoding="utf-8"))
@@ -728,18 +649,14 @@ def enrich_with_search(
     # 애초에 배제반경을 조례에서 정하는 시설(재활용정거장 등)은 조례가 없으면
     # 법·웹 어디에도 근거가 없다 → 사람이 HITL 에서 직접 입력하는 것이 정확하고 싸다.
     if not cited:
-        n_missing = sum(
-            1
-            for r in enriched["results"]
-            for f in r.get("hitl_flags", [])
-            if f.get("type") == "exclusion_radius_missing"
-        )
+        n_missing = sum(1 for r in enriched["results"]
+                        for f in r.get("hitl_flags", [])
+                        if f.get("type") == "exclusion_radius_missing")
         print("\n  ※ 조례(또는 인용 상위법) 없음 → 배제반경 검색을 건너뜁니다.")
         print(f"     미확정 배제반경 {n_missing}건은 HITL 에서 직접 확인·입력하세요:")
-        print("       python audit_judgment_test.py hitl <도메인폴더>")
-        enriched["_schema"]["상위법검색"] = (
-            "조례(인용 상위법) 없음 → 검색 생략. 배제반경은 HITL 에서 사람이 입력."
-        )
+        print(f"       python audit_judgment_test.py hitl <도메인폴더>")
+        enriched["_schema"]["상위법검색"] = ("조례(인용 상위법) 없음 → 검색 생략. "
+                                           "배제반경은 HITL 에서 사람이 입력.")
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(enriched, f, ensure_ascii=False, indent=2)
@@ -758,9 +675,8 @@ def enrich_with_search(
             # facility_type 은 flag 에 중복 저장 안 함 — role_index 로 roles[i] 에서 조회.
             _roles = r.get("roles", [])
             _idx = f.get("role_index", 0)
-            ftype = (
-                _roles[_idx].get("facility_type") if _idx < len(_roles) else None
-            ) or r.get("summary", "")[:6]
+            ftype = ((_roles[_idx].get("facility_type") if _idx < len(_roles) else None)
+                     or r.get("summary", "")[:6])
             print(f"  [법령검색] {r['dataset_id']}: '{ftype}' 배제반경 상위법 조회")
 
             # 1차: 조례 인용 상위법을 법령 API로 조회
@@ -771,48 +687,32 @@ def enrich_with_search(
                 found = {"제안값": None, "source_type": "law_api_failed"}
             # 폴백: 법령 API가 통신오류/미발견이면 web_search(감리 결과 참고)
             if found.get("제안값") is None:
-                print("           법령 API 미발견 → web_search 폴백")
+                print(f"           법령 API 미발견 → web_search 폴백")
                 try:
-                    found = search_exclusion_radius(
-                        r.get("summary", ftype), region, facility
-                    )
+                    found = search_exclusion_radius(r.get("summary", ftype), region, facility)
                 except Exception as e:
                     print(f"           [web_search 오류] {e}")
-                    found = {
-                        "제안값": None,
-                        "출처": None,
-                        "근거문장": "검색 실패",
-                        "source_type": "search_failed",
-                    }
+                    found = {"제안값": None, "출처": None, "근거문장": "검색 실패",
+                             "source_type": "search_failed"}
             f["제안값"] = found.get("제안값")
             f["출처"] = found.get("출처")
-            f["source_type"] = found.get(
-                "source_type"
-            )  # law_api / web_search / *_failed
+            f["source_type"] = found.get("source_type")   # law_api / web_search / *_failed
             f["근거문장"] = found.get("근거문장", "")
             # 근거-시설 일치 점검: 근거문장에 facility_type 이 실제로 있는지(오추출 방지).
             #   confirmed 재판정과 같은 substring(NFC) 방식. 자동 반려 아님 — 표시만.
             근거norm = _norm(f["근거문장"])
             f["근거_시설_일치"] = bool(ftype) and _norm(ftype) in 근거norm
-            f["confirmed"] = False  # 어느 경로든 HITL 최종 확인 필수
+            f["confirmed"] = False              # 어느 경로든 HITL 최종 확인 필수
             n_filled += 1
             mark = "" if f["근거_시설_일치"] else "  ⚠근거-시설 불일치"
             if f.get("제안값") is not None and not f["근거_시설_일치"]:
-                f["message"] = (
-                    f"⚠근거-시설 불일치: 근거문장에 '{ftype}'이(가) 없음 — "
-                    f"다른 시설 규정을 긁었을 수 있음. 사람이 반드시 확인."
-                )
-            print(
-                f"           → 제안 {found.get('제안값')}m (source: {found.get('source_type')}){mark}"
-            )
-    enriched["_schema"]["상위법검색"] = (
-        "exclusion_radius_missing flag 를 조례가 인용한 상위법(법령 API)"
-        "에서 반경을 찾아 제안값에 채움. confirmed=false, HITL 확인 필수. "
-        "근거_시설_일치=false 면 근거문장에 해당 시설이 없어 오추출 의심(사람 확인)."
-    )
-    json.dump(
-        enriched, open(out_path, "w", encoding="utf-8"), ensure_ascii=False, indent=2
-    )
+                f["message"] = (f"⚠근거-시설 불일치: 근거문장에 '{ftype}'이(가) 없음 — "
+                                f"다른 시설 규정을 긁었을 수 있음. 사람이 반드시 확인.")
+            print(f"           → 제안 {found.get('제안값')}m (source: {found.get('source_type')}){mark}")
+    enriched["_schema"]["상위법검색"] = ("exclusion_radius_missing flag 를 조례가 인용한 상위법(법령 API)"
+                                       "에서 반경을 찾아 제안값에 채움. confirmed=false, HITL 확인 필수. "
+                                       "근거_시설_일치=false 면 근거문장에 해당 시설이 없어 오추출 의심(사람 확인).")
+    json.dump(enriched, open(out_path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
     print(f"\n[상위법 검색 완료] {n_filled}건 채움 → {out_path}")
     return out_path
 
@@ -839,62 +739,95 @@ def _read_weight() -> float:
 def apply_intent_answer(result: dict, choice: int, weight: float | None = None) -> None:
     """data_intent_unclear 답변(1~5)을 result['roles']에 결정론적으로 반영. 새 필드 없음.
     부호는 선택이 정하고 크기는 입력값(가점=+, 감점=-)."""
-    if choice == 1:  # 가점
-        result["roles"] = [
-            {
-                "role": "positive_factor",
-                "weight": abs(weight),
-                "rationale": "HITL 확정",
-                "confirmed": True,
-            }
-        ]
-    elif choice == 2:  # 감점
-        result["roles"] = [
-            {
-                "role": "negative_factor",
-                "weight": -abs(weight),
-                "rationale": "HITL 확정",
-                "confirmed": True,
-            }
-        ]
-    elif choice == 3:  # 배제 (드묾: 표시만, 반경은 추후)
-        result["roles"] = [
-            {
-                "role": "hard_exclusion",
-                "exclusion_type": "radius",
-                "facility_type": None,
-                "배제반경_m": None,
-                "source": None,
-                "confirmed": False,
-                "need_review": True,
-                "rationale": "HITL 배제 승격 — 반경 미정(추후 확인)",
-            }
-        ]
-    elif choice == 4:  # 위치선정 참조용(감리 입력 아님) — reference_only 유지
-        result["roles"] = [
-            {
-                "role": "reference_only",
-                "confirmed": True,
-                "rationale": "HITL — 위치선정 참조용",
-            }
-        ]
-    else:  # 5 제외
+    if choice == 1:      # 가점
+        result["roles"] = [{"role": "positive_factor", "weight": abs(weight),
+                            "rationale": "HITL 확정", "confirmed": True}]
+    elif choice == 2:    # 감점
+        result["roles"] = [{"role": "negative_factor", "weight": -abs(weight),
+                            "rationale": "HITL 확정", "confirmed": True}]
+    elif choice == 3:    # 배제 (드묾: 표시만, 반경은 추후)
+        result["roles"] = [{"role": "hard_exclusion", "exclusion_type": "radius",
+                            "facility_type": None, "배제반경_m": None, "source": None,
+                            "confirmed": False, "need_review": True,
+                            "rationale": "HITL 배제 승격 — 반경 미정(추후 확인)"}]
+    elif choice == 4:    # 위치선정 참조용(감리 입력 아님) — reference_only 유지
+        result["roles"] = [{"role": "reference_only", "confirmed": True,
+                            "rationale": "HITL — 위치선정 참조용"}]
+    else:                # 5 제외
         result["roles"] = []
 
 
 def review_hitl(in_path: str | None = None, out_path: str | None = None) -> str:
-    """audit_result.json 의 data_intent_unclear 를 CLI로 사람에게 물어 roles 확정.
-    원본 보존 → audit_result_reviewed.json 저장. (재실행 전제 아님: resolved 표시 없음)"""
-    in_path = in_path or _out_path("audit_result.json")
+    """HITL — 사람이 확인·확정하는 단계. 두 종류의 flag 를 처리한다.
+      1) exclusion_radius_missing : 배제반경 확인/입력 (need_review=true 인 배제)
+           · 제안값 있음(search 가 상위법에서 찾음) → 보여주고 승인/수정
+           · 제안값 없음(조례 없어 검색 생략)      → 근거만 보여주고 직접 입력
+      2) data_intent_unclear      : 애매한 데이터의 용도 확인(1~5)
+    입력: audit_result_enriched.json 이 있으면 우선(제안값 포함), 없으면 audit_result.json.
+    출력: audit_result_reviewed.json (원본 보존)
+    """
+    import os
+    if in_path is None:
+        enriched = _out_path("audit_result_enriched.json")
+        in_path = enriched if os.path.exists(enriched) else _out_path("audit_result.json")
     out_path = out_path or _out_path("audit_result_reviewed.json")
+    print(f"[입력] {os.path.basename(in_path)}")
     doc = json.load(open(in_path, encoding="utf-8"))
-    pending = [
-        r
-        for r in doc.get("results", [])
-        if any(f.get("type") == "data_intent_unclear" for f in r.get("hitl_flags", []))
-    ]
+    results = doc.get("results", [])
+
+    # ── 1) 배제반경 확인 ────────────────────────────────────────────
+    radius_jobs = [(r, f) for r in results for f in r.get("hitl_flags", [])
+                   if f.get("type") == "exclusion_radius_missing" and not f.get("confirmed")]
+    if not radius_jobs:
+        print("[HITL] 배제반경 확인 대상 없음.")
+    else:
+        print(f"\n{'#' * 60}\n# 배제반경 확인 — {len(radius_jobs)}건")
+        print("#  AI 제안값은 확정이 아닙니다. 출처를 보고 승인하거나 수정하세요.")
+        print("#" * 60)
+    for r, f in radius_jobs:
+        idx = f.get("role_index", 0)
+        roles = r.get("roles", [])
+        role = roles[idx] if idx < len(roles) else {}
+        ftype = role.get("facility_type", "?")
+        etype = role.get("exclusion_type", "radius")
+
+        print("\n" + "=" * 60)
+        print(f"[{r.get('dataset_id','')}] {ftype}  (배제 방식: {etype})")
+        print(f"  데이터: {r.get('summary','')}")
+        print(f"  AI 판단근거: {role.get('rationale','')}")
+
+        제안 = f.get("제안값")
+        if 제안 is not None:
+            src = f.get("출처") or "?"
+            근거 = f.get("근거문장") or ""
+            print(f"\n  ▶ AI 제안: {제안}m   (출처: {src})")
+            if 근거:
+                print(f"    근거문장: {근거[:110]}")
+            if f.get("근거_시설_일치") is False:
+                print(f"    ⚠ 근거-시설 불일치 — 근거문장에 '{ftype}'가 없습니다."
+                      f" 다른 시설 규정일 수 있으니 반드시 확인하세요.")
+        else:
+            why = ("조례가 없어 검색을 생략했습니다"
+                   if not f.get("source_type") else "검색에서 근거를 찾지 못했습니다")
+            print(f"\n  ▶ AI 제안 없음 — {why}. 직접 입력이 필요합니다.")
+
+        radius = _read_radius(default=제안)
+        if radius == "skip":
+            print("  → 건너뜀 (미확정 유지 — 위치선정 전에 다시 확인 필요)")
+            continue
+        apply_radius_answer(r, f, radius)
+        if radius is None:
+            print("  → 반경 없음(면 배제 등)으로 확정")
+        else:
+            print(f"  → {radius}m 확정 (캐시 저장 — 다음 실행부터 재사용)")
+
+    # ── 2) 데이터 용도 확인 ─────────────────────────────────────────
+    pending = [r for r in results
+               if any(f.get("type") == "data_intent_unclear" for f in r.get("hitl_flags", []))]
     if not pending:
-        print("[HITL] 의도 확인 대상 없음(data_intent_unclear 0).")
+        print("\n[HITL] 의도 확인 대상 없음(data_intent_unclear 0).")
+    else:
+        print(f"\n{'#' * 60}\n# 데이터 용도 확인 — {len(pending)}건\n{'#' * 60}")
     for r in pending:
         print("\n" + "=" * 60)
         print(f"[{r.get('dataset_id', '')}] {r.get('summary', '')}")
@@ -909,23 +842,29 @@ def review_hitl(in_path: str | None = None, out_path: str | None = None) -> str:
         print(f"  → {role} 확정{tail}")
         if choice in (3, 4):
             print("    ※ 표시만 — 위치선정(GIS) 단계에서 참고/처리")
+
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
     json.dump(doc, open(out_path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+
+    # 미확정 잔여 요약(건너뛴 것) — 위치선정 전에 반드시 처리해야 함
+    left = [(r.get("dataset_id"), (r.get("roles", []) + [{}])[f.get("role_index", 0)]
+             .get("facility_type", "?"))
+            for r in results for f in r.get("hitl_flags", [])
+            if f.get("type") == "exclusion_radius_missing" and not f.get("confirmed")]
+    if left:
+        print(f"\n⚠ 미확정 배제반경 {len(left)}건 남음 (건너뜀): "
+              f"{', '.join(f'{d}:{t}' for d, t in left)}")
+        print("  위치선정(GIS) 단계 전에 다시 hitl 을 실행해 확정하세요.")
     print(f"\n[저장] {out_path}")
     return out_path
 
 
-def save_results(
-    judgments: list[Judgment],
-    raw_preds: dict,
-    model: str,
-    out_dir: str | None = None,
-    facility_info: dict | None = None,
-) -> str:
+def save_results(judgments: list[Judgment], raw_preds: dict, model: str,
+                 out_dir: str | None = None, facility_info: dict | None = None) -> str:
     """감리 판정을 하나의 JSON으로 저장. 최상단 _schema에 필드 설명 포함(자기설명적).
     다음 단계(지오코딩·정제)가 이 파일만 보고 각 필드 의미를 알 수 있다."""
     import os
     from datetime import datetime
-
     out_dir = out_dir or STEP1_OUTPUT_DIR
     os.makedirs(out_dir, exist_ok=True)
 
@@ -947,16 +886,16 @@ def save_results(
                 "negative_factor": "갈등·민감도를 높이는 감점 요인. weight(-, -1~0) 동반",
                 "hard_exclusion": "조례·법령상 설치 금지. weight 대신 배제반경_m·source·confirmed 동반",
                 "reference_only": "입지 판정의 입력 팩터가 아님(참조·하류·무관). "
-                "data_intent_unclear 플래그로 사람에게 용도를 되묻는다",
+                                  "data_intent_unclear 플래그로 사람에게 용도를 되묻는다",
             },
             "role_필드": {
                 "weight": "가중치 대략값(-1~1). HITL로 사람이 최종 조정",
                 "exclusion_type": "배제 방식. radius=점+버퍼(반경 배제), polygon=구역 경계로 배제(면)",
                 "배제반경_m": "radius일 때 배제 버퍼 반경(m). polygon이거나 미확정이면 null",
                 "source": "LLM 이 제시한 배제 근거(조항 등). ※ confirmed=false 면 조례 대조에서 "
-                "검증되지 않은 값 — HITL 에서 사람이 판단 근거로 참고만 할 것",
+                          "검증되지 않은 값 — HITL 에서 사람이 판단 근거로 참고만 할 것",
                 "confirmed": "조례 본문 대조로 코드가 검증한 경우만 true. "
-                "LLM 자가판정은 신뢰하지 않음(false → 검색·HITL)",
+                             "LLM 자가판정은 신뢰하지 않음(false → 검색·HITL)",
                 "need_review": "true면 사람 확인 필요(조례 미명시·미확정)",
                 "rationale": "판정 근거",
             },
@@ -978,7 +917,7 @@ def save_results(
             "mismatch": facility_info.get("mismatch", False),
             "mismatch_reason": facility_info.get("mismatch_reason", ""),
             "source_input": facility_info.get("source_input", ""),
-            "confirmed": False,  # HITL 확인 대상
+            "confirmed": False,   # HITL 확인 대상
             "_설명": "사용자 입력+데이터명으로 확정한 선정 시설. HITL에서 확인/수정 후 confirmed=true.",
         }
     path = _out_path("audit_result.json")
@@ -992,40 +931,23 @@ def report(judgments: list[Judgment], raw_preds: dict | None = None) -> None:
     n = len(judgments)
     exclusion_review = []
     for j in judgments:
-        role_str = (
-            "+".join(
-                r.get("role", "?")
-                .replace("_factor", "")
-                .replace("hard_exclusion", "배제")
-                for r in j.roles
-            )
-            or "-"
-        )
+        role_str = "+".join(r.get("role", "?").replace("_factor", "").replace("hard_exclusion", "배제")
+                            for r in j.roles) or "-"
         print(f"[{j.dataset_id}] {role_str:24} 좌표:{j.coord_status:15}")
         print(f"     요약: {j.summary}")
         if j.exclusions:
             exclusion_review.append(j)
     print("-" * 92)
-    n_excl = sum(
-        1 for j in judgments if any(r.get("role") == "hard_exclusion" for r in j.roles)
-    )
-    n_pos = sum(
-        1 for j in judgments if any(r.get("role") == "positive_factor" for r in j.roles)
-    )
-    n_ref = sum(
-        1 for j in judgments if any(r.get("role") == "reference_only" for r in j.roles)
-    )
+    n_excl = sum(1 for j in judgments if any(r.get("role") == "hard_exclusion" for r in j.roles))
+    n_pos = sum(1 for j in judgments if any(r.get("role") == "positive_factor" for r in j.roles))
+    n_ref = sum(1 for j in judgments if any(r.get("role") == "reference_only" for r in j.roles))
     print(f"판정 완료: {n}개 데이터셋  (배제 {n_excl} · 가점 {n_pos} · 참조 {n_ref})")
 
     if exclusion_review:
-        print(
-            "\n[배제반경 검토 — 조례에 반경 미명시. 사람이 확인/입력 (search 로 후보 주입 가능)]"
-        )
+        print("\n[배제반경 검토 — 조례에 반경 미명시. 사람이 확인/입력 (search 로 후보 주입 가능)]")
         for j in exclusion_review:
             for r in j.exclusions:
-                print(
-                    f"  {j.dataset_id}: 배제 대상이나 반경 미확정 → {r.get('rationale', '')[:60]}"
-                )
+                print(f"  {j.dataset_id}: 배제 대상이나 반경 미확정 → {r.get('rationale','')[:60]}")
 
     # 다음 단계(지오코딩)로 넘길 대상 요약
     geo = [j.dataset_id for j in judgments if j.coord_status == "needs_geocoding"]
@@ -1033,13 +955,12 @@ def report(judgments: list[Judgment], raw_preds: dict | None = None) -> None:
 
     # HITL 대기 flag 요약(코드가 자동 생성한 것)
     if raw_preds:
-        flag_items = [
-            (did, f) for did, p in raw_preds.items() for f in p.get("hitl_flags", [])
-        ]
+        flag_items = [(did, f) for did, p in raw_preds.items()
+                      for f in p.get("hitl_flags", [])]
         if flag_items:
             print(f"\n[HITL 대기 — 사람 입력 필요] {len(flag_items)}건")
             for did, f in flag_items:
-                print(f"  {did}: {f.get('type')} — {f.get('message', '')}")
+                print(f"  {did}: {f.get('type')} — {f.get('message','')}")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1047,7 +968,6 @@ def report(judgments: list[Judgment], raw_preds: dict | None = None) -> None:
 # ══════════════════════════════════════════════════════════════════
 # build_fixtures(폴더) = profile_folder() 출력 + 조례(a안: 전 데이터셋 주입).
 # null_coords/has_addr_col/sample_rows/조례가 감리 판정의 근거.
-
 
 # 조례 로드 — 소스 추상화. 지금은 업로드된 파일이지만, 나중에 DB/프론트 전달값으로
 # 바꿔도 이 함수 내부만 교체하면 됨(호출부 불변).
@@ -1059,10 +979,8 @@ def load_ordinance(source: str | None = None) -> str:
     ── 추후 DB/프론트 전환 시 이 함수만 교체(예: return db.fetch_ordinances(region, facility)).
     법령 폴더에 조례+시행규칙 등 여러 파일을 넣으면 모두 합쳐 ordinance_rag 로 쓴다.
     """
-    import os
-    import glob
+    import os, glob
     from app.config import ORDINANCE_DIR
-
     # 1) 텍스트 직접 전달(프론트/DB)
     if source and ("\n" in source) and not os.path.exists(source):
         return source
@@ -1071,10 +989,8 @@ def load_ordinance(source: str | None = None) -> str:
     if not os.path.isdir(folder):
         return ""
     parts = []
-    for path in sorted(
-        glob.glob(os.path.join(folder, "*.txt"))
-        + glob.glob(os.path.join(folder, "*.md"))
-    ):
+    for path in sorted(glob.glob(os.path.join(folder, "*.txt")) +
+                       glob.glob(os.path.join(folder, "*.md"))):
         try:
             with open(path, encoding="utf-8") as f:
                 parts.append(f"[{os.path.basename(path)}]\n" + f.read())
@@ -1094,35 +1010,28 @@ def build_fixtures(profiles_path: str | None = None) -> dict:
     if not os.path.isfile(path):
         # fixture 없음 → data/ 를 프로파일링해서 자동 생성 (무슨 상황인지 출력)
         from app.services.gam2_profile import profile_folder, save_profiles
-
         data_dir = _DOMAIN["data"]
         print(f"[fixture 없음] {path}")
         if not os.path.isdir(data_dir):
             raise FileNotFoundError(
                 f"데이터 폴더도 없음: {data_dir}\n"
-                f"  → <도메인>/data/ 에 원본(csv·xlsx·shp)과 _manifest.json 을 넣으세요."
-            )
+                f"  → <도메인>/data/ 에 원본(csv·xlsx·shp)과 _manifest.json 을 넣으세요.")
         print(f"[자동 프로파일링] {data_dir} 를 읽어 fixture 를 생성합니다...")
         profiles = profile_folder(data_dir)
         if not profiles:
-            raise RuntimeError(
-                f"프로파일 0건 — {data_dir} 에 읽을 수 있는 데이터 파일이 없습니다."
-            )
+            raise RuntimeError(f"프로파일 0건 — {data_dir} 에 읽을 수 있는 데이터 파일이 없습니다.")
         save_profiles(profiles, path)
         print(f"[자동 프로파일링 완료] {len(profiles)}개 데이터셋 → {path}\n")
 
     with open(path, encoding="utf-8") as f:
         profiles = json.load(f)
-    ordinance = load_ordinance()  # <도메인>/law/ 조례
+    ordinance = load_ordinance()                   # <도메인>/law/ 조례
     if not ordinance:
-        print(
-            f"[조례 없음] {_DOMAIN['law']} 에 조례(txt/md) 없음 "
-            f"— 모든 배제가 미확정(HITL)으로 처리됩니다."
-        )
+        print(f"[조례 없음] {_DOMAIN['law']} 에 조례(txt/md) 없음 "
+              f"— 모든 배제가 미확정(HITL)으로 처리됩니다.")
     for p in profiles.values():
-        p["ordinance"] = ordinance  # (a) 전 데이터셋 주입
+        p["ordinance"] = ordinance                 # (a) 전 데이터셋 주입
     return profiles
-
 
 # 테스트용 폴백 기본값. 실제 실행 시 resolve_facility 가 사용자 입력에서 facility·region 을
 # 추출해 이 값을 대체한다(도메인 무관). 사용자 입력이 비었을 때만 이 값이 쓰인다.
@@ -1131,7 +1040,6 @@ DOMAIN = {"facility": "흡연부스", "region": "용산구"}
 
 if __name__ == "__main__":
     import sys
-
     args = sys.argv[1:]
 
     USAGE = (
@@ -1143,16 +1051,13 @@ if __name__ == "__main__":
         "  ※ 먼저 python profile.py <도메인폴더> 로 fixture 생성 필요."
     )
     if not args:
-        print(USAGE)
-        sys.exit(1)
+        print(USAGE); sys.exit(1)
 
     # 도메인 폴더는 항상 마지막 위치 인자. set_domain 으로 경로·프리픽스 확정.
     mode = args[0] if args[0] in ("real", "search", "hitl") else "mock"
     domain_dir = args[-1]
     if (mode == "mock" and len(args) < 2) or (mode != "mock" and len(args) < 2):
-        print(USAGE)
-        sys.exit(1)
-
+        print(USAGE); sys.exit(1)
     set_domain(domain_dir)
     print(f"[도메인] {domain_dir}  (프리픽스: {_DOMAIN['prefix']})")
 
@@ -1165,22 +1070,16 @@ if __name__ == "__main__":
     elif mode == "real":
         # python audit_judgment_test.py real "강남구 EV 충전소 선정" EV_데이터셋
         from app.config import AUDIT_LLM_MODEL, FACILITY_LLM_MODEL
-
         user_input = args[1] if len(args) > 2 else ""
-        fixtures = build_fixtures()  # fixture/profiles.json 로드(+조례 주입)
+        fixtures = build_fixtures()                   # fixture/profiles.json 로드(+조례 주입)
         print(f"[fixture] {_DOMAIN['profiles']} → {len(fixtures)}개 프로파일\n")
         fac = resolve_facility(user_input, fixtures)
-        print(
-            f"[시설 확정] '{fac['facility']}' / 지역 '{fac.get('region', '')}' (모델: {FACILITY_LLM_MODEL})"
-        )
+        print(f"[시설 확정] '{fac['facility']}' / 지역 '{fac.get('region','')}' (모델: {FACILITY_LLM_MODEL})")
         print(f"  근거: {fac['근거']}")
         if fac.get("mismatch"):
             print(f"  ⚠ 입력↔데이터 불일치: {fac['mismatch_reason']}")
         print("  ※ 확정 아님 — HITL에서 확인/수정 필요\n")
-        domain = {
-            "facility": fac["facility"],
-            "region": fac.get("region") or DOMAIN["region"],
-        }
+        domain = {"facility": fac["facility"], "region": fac.get("region") or DOMAIN["region"]}
         print(f"[감리 AI 검수 리포트] 모델: {AUDIT_LLM_MODEL}")
         print("※ 배제반경 미확정·애매 데이터는 아래 HITL 대기로 넘어갑니다.\n")
         judgments, raw_preds = run_harness(RealLLM(), fixtures, domain)
@@ -1194,10 +1093,7 @@ if __name__ == "__main__":
         print(f"[fixture] {_DOMAIN['profiles']} → {len(fixtures)}개 프로파일")
         fac = resolve_facility_mock(user_input, fixtures)
         print(f"[시설 확정(mock)] '{fac['facility']}'  (입력: {user_input})\n")
-        domain = {
-            "facility": fac["facility"],
-            "region": fac.get("region") or DOMAIN["region"],
-        }
+        domain = {"facility": fac["facility"], "region": fac.get("region") or DOMAIN["region"]}
         print("[MockLLM 검수 리포트] — 하네스 출력 형식 확인용\n")
         judgments, raw_preds = run_harness(MockLLM(), fixtures, domain)
         report(judgments, raw_preds)

@@ -221,23 +221,16 @@ async def audit_csv_dataset(files: List[UploadFile] = File(...)):
             "audit_reason": audit_reason_text,
             "user_intent": user_intent_text,
             "extracted_weights": extracted_weights,
+            "audit_data": {"results": list(raw_preds.values())},
         }
 
     except Exception as e:
         logger.error(f"[AI Ingestion Failure] Gam2 Pipeline run failed: {e}")
-        # 오류가 나도 정해진 Fallback 데이터를 서빙하여 E2E가 깨지는 현상을 방어합니다.
-        fallback_data = {
-            "status": "success",
-            "audit_reason": f"감리 연산 도중 예외가 발생했습니다 ({str(e)}). Fallback 가동: 업로드된 통계 데이터셋의 스쿨존 및 소방차 전용 구역 침범 가능성에 따른 사전 감리 검토가 요구됩니다.",
-            "user_intent": "용산구 내 안전 가이드라인 및 조례 규정을 충족하는 최적의 스마트인프라 입지 도출",
-            "extracted_weights": {
-                "소방시설 거리": 5,
-                "배후 주거인구": 5,
-                "대중교통 접근": 5,
-                "이용 편의성": 5,
-            },
-        }
-        return fallback_data
+        # 오류 발생 시 더 이상 Fallback 데이터를 서빙하지 않고 명시적 오류(503)를 반환합니다.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"[AI_INGESTION_FAILED] AI 입지 사전 감리 처리 중 오류가 발생했습니다: {str(e)}"
+        )
 
     finally:
         # 5. [중요] 보안 및 RAG 오염 방지를 위해 임시 디렉토리 원본 파일 물리 완전 삭제

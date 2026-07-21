@@ -182,9 +182,12 @@ CREATE TABLE IF NOT EXISTS conflict_simulations (
 -- 17. Audit AI 공문서 검증을 필터링 통과한 실제 이행 사례 기록 테이블
 CREATE TABLE IF NOT EXISTS verified_precedents (
     id SERIAL PRIMARY KEY,
-    conflict_simulation_id INT REFERENCES conflict_simulations(id) ON DELETE SET NULL, -- 이전 가상 시뮬레이션 매핑 FK
-    document_title VARCHAR(250), -- 행정 공문서 타이틀
-    document_ocr_text TEXT, -- OCR로 정제 추출된 실제 결과 텍스트
-    actual_scenario VARCHAR(50) NOT NULL, -- 실제 매핑된 시나리오 유형 ('NORMAL', 'OPTIMAL', 'WORST')
+    parcel_id INT NOT NULL,
+    document_no VARCHAR(100),
+    matched_scenario VARCHAR(10) NOT NULL,
+    similarity_score NUMERIC NOT NULL,
+    classification_status VARCHAR(20) NOT NULL,
+    extracted_text TEXT NOT NULL,
     verified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+CREATE INDEX IF NOT EXISTS idx_precedents_parcel ON verified_precedents(parcel_id);

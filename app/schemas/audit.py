@@ -31,6 +31,7 @@ class AuditVerifyResponse(BaseModel):
         None,
         description="공문 내 정규식 추출 메타데이터 (지번, 일자, 시설 유형, 문서번호)",
     )
+    parsed_metadata: dict | None = Field(None, description="파싱된 메타데이터 (지번, 날짜, 문서번호 등)")
 
 
 class AuditSaveResponse(BaseModel):
