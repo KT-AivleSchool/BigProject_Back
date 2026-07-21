@@ -100,7 +100,11 @@ def stream_ai_discussion(request: StreamRequest, db: AsyncSession = Depends(get_
                 "lng": 126.994,
                 "jibun": "서울특별시 용산구 이태원동 123-45 (테스트용)",
                 "intensity_level": "높음",
-                "ahp_weights": {"보행혼잡도": 0.4, "소음민감도": 0.3, "상권활성화": 0.3},
+                "ahp_weights": {
+                    "보행혼잡도": 0.4,
+                    "소음민감도": 0.3,
+                    "상권활성화": 0.3,
+                },
             }
 
         # 1. 시스템 시작 메시지 송출
@@ -167,7 +171,14 @@ def stream_ai_discussion(request: StreamRequest, db: AsyncSession = Depends(get_
                     if "final_scenarios" in node_state:
                         current_state["final_scenarios"] = node_state["final_scenarios"]
 
-                    if node_name in ["pro", "con", "gov", "gov_wrapup", "evaluator", "reporter"]:
+                    if node_name in [
+                        "pro",
+                        "con",
+                        "gov",
+                        "gov_wrapup",
+                        "evaluator",
+                        "reporter",
+                    ]:
                         if "messages" in node_state and len(node_state["messages"]) > 0:
                             msg = node_state["messages"][-1]
 
@@ -194,16 +205,21 @@ def stream_ai_discussion(request: StreamRequest, db: AsyncSession = Depends(get_
                     if node_name == "reporter":
                         # 단일 시나리오 객체일 경우 리스트로 래핑
                         final_scenarios_obj = current_state.get("final_scenarios", {})
-                        if isinstance(final_scenarios_obj, dict) and "scenario" in final_scenarios_obj:
+                        if (
+                            isinstance(final_scenarios_obj, dict)
+                            and "scenario" in final_scenarios_obj
+                        ):
                             final_scenarios_list = [final_scenarios_obj]
                         else:
-                            final_scenarios_list = final_scenarios_obj.get("scenarios", [])
+                            final_scenarios_list = final_scenarios_obj.get(
+                                "scenarios", []
+                            )
 
                         # CSS 점수 계산 (평균 점수(0.0~1.0)를 0~10점 척도로 환산)
                         avg_acc = current_state.get("eval_score", 0.0)
                         css_score = round(avg_acc * 10, 2)
                         if css_score == 0.0:
-                            css_score = 7.5 # 기본값 처리
+                            css_score = 7.5  # 기본값 처리
 
                         # --- DB 저장용 최종 JSON 포맷 구성 ---
                         debate_logs = []
@@ -232,7 +248,7 @@ def stream_ai_discussion(request: StreamRequest, db: AsyncSession = Depends(get_
                             "raw_text": "\n\n".join(raw_text_lines),
                             "scenarios": final_scenarios_list,
                             "conflict_sensitivity_score": css_score,
-                            "conflict_factors": current_state.get("ahp_weights", {})
+                            "conflict_factors": current_state.get("ahp_weights", {}),
                         }
 
                         # 최종 JSON을 DB에 저장 (ConflictSimulation)
@@ -252,8 +268,10 @@ def stream_ai_discussion(request: StreamRequest, db: AsyncSession = Depends(get_
                         print(json.dumps(result_json, ensure_ascii=False, indent=2))
 
                         final_text = (
-                            "[시스템] 토론이 종료되었습니다. 도출된 최종 단일 시나리오:\n\n" +
-                            json.dumps(final_scenarios_obj, ensure_ascii=False, indent=2)
+                            "[시스템] 토론이 종료되었습니다. 도출된 최종 단일 시나리오:\n\n"
+                            + json.dumps(
+                                final_scenarios_obj, ensure_ascii=False, indent=2
+                            )
                         )
 
                         yield {
@@ -324,21 +342,28 @@ async def get_simulation_results(parcel_id: int, db: AsyncSession = Depends(get_
 
     # result_json 내에 scenarios 배열이 정상 이식되어 있으면 파싱, 없으면 합리적 시나리오 폴백 매핑
     raw_scenarios = res_json.get("scenarios", [])
-    scenarios_list = []
 
     if raw_scenarios and isinstance(raw_scenarios, list) and len(raw_scenarios) > 0:
         # 단일 시나리오 스키마에 맞게 첫 번째 시나리오만 가져옵니다.
         sc_data = raw_scenarios[0]
-        
+
         # Pydantic 모델(ScenarioDetail)이 요구하는 키와 타입에 맞춰 안전하게 변환
         scenario_obj = {
-            "scenario": str(sc_data.get("scenario") or sc_data.get("scenario_type") or "알 수 없음"),
-            "scenario_description": str(sc_data.get("scenario_description") or sc_data.get("title") or "설명 없음"),
-            "final_acceptance_score": float(sc_data.get("final_acceptance_score") or 0.0),
+            "scenario": str(
+                sc_data.get("scenario") or sc_data.get("scenario_type") or "알 수 없음"
+            ),
+            "scenario_description": str(
+                sc_data.get("scenario_description")
+                or sc_data.get("title")
+                or "설명 없음"
+            ),
+            "final_acceptance_score": float(
+                sc_data.get("final_acceptance_score") or 0.0
+            ),
             "reason": str(sc_data.get("reason") or "이유 없음"),
             "summary": str(sc_data.get("summary") or "요약 없음"),
             "conflict_risk_index": float(sc_data.get("conflict_risk_index") or 0.0),
-            "risk_reason": str(sc_data.get("risk_reason") or "갈등 위험 이유 없음")
+            "risk_reason": str(sc_data.get("risk_reason") or "갈등 위험 이유 없음"),
         }
     elif isinstance(raw_scenarios, dict) and "scenario" in raw_scenarios:
         scenario_obj = raw_scenarios
