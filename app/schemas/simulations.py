@@ -1,10 +1,13 @@
 from pydantic import BaseModel, Field
 from typing import Dict, Optional, Any
 
+
 class StreamRequest(BaseModel):
     parcel_id: int = Field(..., description="시뮬레이션할 적격 후보지 필지 ID")
     facility_type: str = Field(..., description="건립할 시설의 종류 (예: 흡연부스)")
-    audit_data: Optional[Dict[str, Any]] = Field(None, description="프론트엔드 AI 감리 결과 JSON")
+    audit_data: Optional[Dict[str, Any]] = Field(
+        None, description="프론트엔드 AI 감리 결과 JSON"
+    )
 
 
 class SimulationRunRequest(BaseModel):

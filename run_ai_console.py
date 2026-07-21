@@ -69,7 +69,9 @@ async def main():
             lines.append("## 설치 감점/갈등 요인\n" + "\n".join(negative))
         if hard_exclusion:
             lines.append("## 절대 배제(금지) 요인\n" + "\n".join(hard_exclusion))
-        return "\n\n".join(lines) if lines else "유효한 감리 팩터가 발견되지 않았습니다."
+        return (
+            "\n\n".join(lines) if lines else "유효한 감리 팩터가 발견되지 않았습니다."
+        )
 
     # 2. dummy_audit.json 파일 읽어오기
     audit_file_path = "dummy_audit.json"
@@ -78,7 +80,9 @@ async def main():
             with open(audit_file_path, mode="r", encoding="utf-8") as f:
                 audit_data_json = json.load(f)
             audit_context = parse_mock_audit_data(audit_data_json)
-            print(f"✅ '{audit_file_path}' 파일을 불러와 감리 결과를 성공적으로 정제했습니다.\n")
+            print(
+                f"✅ '{audit_file_path}' 파일을 불러와 감리 결과를 성공적으로 정제했습니다.\n"
+            )
         except Exception as e:
             print(f"⚠️ '{audit_file_path}' 읽기 오류: {e}")
             audit_context = "프론트엔드 감리 데이터 없음"

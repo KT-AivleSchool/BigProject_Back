@@ -30,7 +30,9 @@ class RagVectorStorage:
                 embedding_function=self.embeddings,
             )
         except Exception as e:
-            logger.warning(f"⚠️ Vector DB (PGVector) 초기화 실패 - 로컬 DB 미사용 모드로 동작합니다: {e}")
+            logger.warning(
+                f"⚠️ Vector DB (PGVector) 초기화 실패 - 로컬 DB 미사용 모드로 동작합니다: {e}"
+            )
             self.statutes_store = None
 
         # 2. 사후 검증된 피드백 콜렉션 (Model Collapse 예방 및 Audit AI 전용)

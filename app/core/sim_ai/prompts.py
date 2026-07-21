@@ -1,5 +1,5 @@
 # [동현님 담당] AI 페르소나별 시스템 프롬프트 정의서 (템플릿 기반 및 완전 일반화 버전)
-# 다목적 플랫폼(OmniSite) 철학에 따라, topic 기반의 하드코딩된 분기를 제거하고 
+# 다목적 플랫폼(OmniSite) 철학에 따라, topic 기반의 하드코딩된 분기를 제거하고
 # RAG 컨텍스트와 AI 감리 판단에 의해 동적으로 프롬프트가 적용되도록 일반화(Pro/Con/Gov) 하였습니다.
 
 from app.core.jinja2_env import render_template
@@ -54,11 +54,13 @@ def build_prompt(
             "rag_context": rag_context,
             "audit_context": audit_context,
             "discussion_history": discussion_history,
-        }
+        },
     )
 
     # 2. 갈등 민감도별 행동 지침 템플릿 로드
-    css_instruction = CSS_PROMPT_TEMPLATE.get(css_level.upper(), CSS_PROMPT_TEMPLATE["HIGH"])
+    css_instruction = CSS_PROMPT_TEMPLATE.get(
+        css_level.upper(), CSS_PROMPT_TEMPLATE["HIGH"]
+    )
 
     # 최종 프롬프트 빌드
     return f"""
