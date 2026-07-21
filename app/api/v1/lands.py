@@ -100,7 +100,10 @@ def generate_roadview_link(lat: float, lng: float, provider: str = "kakao"):
     elif provider == "naver":
         url = f"https://map.naver.com/v5/?c={lng},{lat},15,0,0,0,dh"
     else:
-        raise HTTPException(status_code=400, detail="Unsupported provider. Use 'kakao' or 'naver'.")
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported provider. Use 'kakao' or 'naver'."
+        )
     
     return RedirectResponse(url=url)
 
