@@ -63,9 +63,12 @@ async def main():
                     source = r.get("source", "출처 불명")
                     hard_exclusion.append(f"- [절대금지] {rationale} (근거: {source})")
         lines = []
-        if positive: lines.append("## 설치 가점 요인\n" + "\n".join(positive))
-        if negative: lines.append("## 설치 감점/갈등 요인\n" + "\n".join(negative))
-        if hard_exclusion: lines.append("## 절대 배제(금지) 요인\n" + "\n".join(hard_exclusion))
+        if positive:
+            lines.append("## 설치 가점 요인\n" + "\n".join(positive))
+        if negative:
+            lines.append("## 설치 감점/갈등 요인\n" + "\n".join(negative))
+        if hard_exclusion:
+            lines.append("## 절대 배제(금지) 요인\n" + "\n".join(hard_exclusion))
         return "\n\n".join(lines) if lines else "유효한 감리 팩터가 발견되지 않았습니다."
 
     # 2. dummy_audit.json 파일 읽어오기
