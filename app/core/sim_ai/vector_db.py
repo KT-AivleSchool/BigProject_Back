@@ -23,18 +23,28 @@ class RagVectorStorage:
         self.connection_string = conn_str
 
         # 1. 기본 조례/법규 콜렉션 (일반적인 RAG 참조용)
-        self.statutes_store = PGVector(
-            collection_name="statutes_collection",
-            connection_string=self.connection_string,
-            embedding_function=self.embeddings,
-        )
+        try:
+            self.statutes_store = PGVector(
+                collection_name="statutes_collection",
+                connection_string=self.connection_string,
+                embedding_function=self.embeddings,
+            )
+        except Exception as e:
+            logger.warning(
+                f"⚠️ Vector DB (PGVector) 초기화 실패 - 로컬 DB 미사용 모드로 동작합니다: {e}"
+            )
+            self.statutes_store = None
 
         # 2. 사후 검증된 피드백 콜렉션 (Model Collapse 예방 및 Audit AI 전용)
-        self.feedback_store = PGVector(
-            collection_name="verified_precedents",
-            connection_string=self.connection_string,
-            embedding_function=self.embeddings,
-        )
+        try:
+            self.feedback_store = PGVector(
+                collection_name="feedback_collection",
+                connection_string=self.connection_string,
+                embedding_function=self.embeddings,
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ Vector DB (PGVector) 피드백 콜렉션 초기화 실패: {e}")
+            self.feedback_store = None
 
     async def add_document_chunks(self, document_id: str, chunks: List[str]):
         """
@@ -74,6 +84,9 @@ class RagVectorStorage:
         [동현 AI 메인] 토론 시나리오 발화 문맥(query)과 가장 유사한 조례 규정 텍스트를
         '기본 조례 콜렉션(statutes_collection)'에서 비동기로 검색합니다.
         """
+        if not self.statutes_store:
+            return self._get_fallback_data()
+
         try:
             # LangChain의 비동기 유사도 검색 (asimilarity_search) 사용
             search_kwargs = {"k": top_k}
