@@ -6,7 +6,7 @@ from sse_starlette.sse import EventSourceResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from app.schemas.simulations import SimulationResultResponse
+from app.schemas.simulations import SimulationResultResponse, StreamRequest
 from app.core.sim_ai.graph import build_discussion_graph, vector_db
 from app.api.deps import get_db
 from app.db.models.simulation import Parcel, ConflictSimulation
@@ -16,10 +16,53 @@ from app.services.pdf_service import pdf_builder
 router = APIRouter()
 
 
-@router.get("/stream")
-def stream_ai_discussion(
-    parcel_id: int, facility_type: str, db: AsyncSession = Depends(get_db)
-):
+def _parse_audit_data(audit_data: dict) -> str:
+    if not audit_data:
+        return "프론트엔드 감리 데이터 없음"
+
+    positive = []
+    negative = []
+    hard_exclusion = []
+
+    results = audit_data.get("results", [])
+    for res in results:
+        roles = res.get("roles", [])
+        for r in roles:
+            role_type = r.get("role", "")
+            rationale = r.get("rationale", "")
+            if role_type == "positive_factor":
+                positive.append(f"- {rationale}")
+            elif role_type == "negative_factor":
+                negative.append(f"- {rationale}")
+            elif role_type == "hard_exclusion":
+                source = r.get("source", "출처 불명")
+                hard_exclusion.append(f"- [절대금지] {rationale} (근거: {source})")
+
+    lines = []
+    if positive:
+        lines.append("## 설치 가점 요인\n" + "\n".join(positive))
+    if negative:
+        lines.append("## 설치 감점/갈등 요인\n" + "\n".join(negative))
+    if hard_exclusion:
+        lines.append("## 절대 배제(금지) 요인\n" + "\n".join(hard_exclusion))
+
+    if not lines:
+        return "유효한 감리 팩터가 발견되지 않았습니다."
+
+    return "\n\n".join(lines)
+
+
+@router.post("/stream")
+def stream_ai_discussion(request: StreamRequest, db: AsyncSession = Depends(get_db)):
+    parcel_id = request.parcel_id
+    facility_type = request.facility_type
+
+    # 전달받은 JSON 데이터를 파싱하여 텍스트로 정제
+    audit_context = (
+        _parse_audit_data(request.audit_data)
+        if request.audit_data
+        else "감리 데이터가 제공되지 않았습니다."
+    )
     """
     [동현 AI 메인 & 장천명 풀스택] LangGraph 3자 페르소나 모의 심의 토론 실시간 SSE 스트리밍 API
     - 동작 방식: HTTP 연결을 유지한 상태로, AI 에이전트의 대화 토큰을 chunk 단위로 지속 밀어줍니다.
@@ -94,6 +137,7 @@ def stream_ai_discussion(
             "ahp_weights": gis_data["ahp_weights"],
             "timestamp": timestamp,
             "common_rag": common_rag,
+            "audit_context": audit_context,
             "evaluations": {},
             "final_scenarios": {},
             "is_finished": False,

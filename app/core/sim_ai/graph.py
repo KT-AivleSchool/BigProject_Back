@@ -40,6 +40,7 @@ class AgentState(TypedDict):
     timestamp: str
 
     common_rag: str  # 공통으로 공유되는 RAG 컨텍스트
+    audit_context: str  # 프론트엔드에서 전달받은 감리 결과 정제 텍스트
     evaluations: dict  # 내부 평가 결과 (수용도)
     final_scenarios: dict  # 도출된 최종 시나리오 결과 객체
     is_finished: bool  # 토론 종결 여부
@@ -111,6 +112,7 @@ async def pro_node(state: AgentState) -> dict:
         intensity_level=state.get("intensity_level", "normal"),
         ahp_weights=state.get("ahp_weights", {}),
         rag_context=rag_context,
+        audit_context=state.get("audit_context", "감리 데이터 없음"),
         discussion_history=history_text,
         css_level=css_level,
     )
@@ -140,6 +142,7 @@ async def con_node(state: AgentState) -> dict:
         intensity_level=state.get("intensity_level", "normal"),
         ahp_weights=state.get("ahp_weights", {}),
         rag_context=rag_context,
+        audit_context=state.get("audit_context", "감리 데이터 없음"),
         discussion_history=history_text,
         css_level=css_level,
     )
@@ -169,6 +172,7 @@ async def gov_node(state: AgentState) -> dict:
         intensity_level=state.get("intensity_level", "normal"),
         ahp_weights=state.get("ahp_weights", {}),
         rag_context=rag_context,
+        audit_context=state.get("audit_context", "감리 데이터 없음"),
         discussion_history=history_text,
         css_level="LOW",  # 정부는 객관적 중재를 위해 LOW 유지
     )

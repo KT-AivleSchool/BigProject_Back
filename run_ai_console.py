@@ -47,6 +47,49 @@ async def main():
             "테스트 조례: 주거지역 인근 10m 이내 금연구역 지정 (DB Vector Search 생략)"
         )
 
+    def parse_mock_audit_data(audit_data: dict) -> str:
+        if not audit_data:
+            return "프론트엔드 감리 데이터 없음"
+        positive, negative, hard_exclusion = [], [], []
+        for res in audit_data.get("results", []):
+            for r in res.get("roles", []):
+                role = r.get("role", "")
+                rationale = r.get("rationale", "")
+                if role == "positive_factor":
+                    positive.append(f"- {rationale}")
+                elif role == "negative_factor":
+                    negative.append(f"- {rationale}")
+                elif role == "hard_exclusion":
+                    source = r.get("source", "출처 불명")
+                    hard_exclusion.append(f"- [절대금지] {rationale} (근거: {source})")
+        lines = []
+        if positive:
+            lines.append("## 설치 가점 요인\n" + "\n".join(positive))
+        if negative:
+            lines.append("## 설치 감점/갈등 요인\n" + "\n".join(negative))
+        if hard_exclusion:
+            lines.append("## 절대 배제(금지) 요인\n" + "\n".join(hard_exclusion))
+        return (
+            "\n\n".join(lines) if lines else "유효한 감리 팩터가 발견되지 않았습니다."
+        )
+
+    # 2. dummy_audit.json 파일 읽어오기
+    audit_file_path = "dummy_audit.json"
+    if os.path.exists(audit_file_path):
+        try:
+            with open(audit_file_path, mode="r", encoding="utf-8") as f:
+                audit_data_json = json.load(f)
+            audit_context = parse_mock_audit_data(audit_data_json)
+            print(
+                f"✅ '{audit_file_path}' 파일을 불러와 감리 결과를 성공적으로 정제했습니다.\n"
+            )
+        except Exception as e:
+            print(f"⚠️ '{audit_file_path}' 읽기 오류: {e}")
+            audit_context = "프론트엔드 감리 데이터 없음"
+    else:
+        print(f"⚠️ '{audit_file_path}' 파일이 없어서 감리 데이터를 생략합니다.\n")
+        audit_context = "프론트엔드 감리 데이터 없음"
+
     # DB 조회를 완벽히 대체하는 가상의(Mock) 데이터
     import random
 
@@ -61,11 +104,12 @@ async def main():
         "candidate_jibun": "서울특별시 용산구 이태원동 123-45",  # 가짜 지번
         "candidate_lat": 37.534,
         "candidate_lng": 126.994,
-        "facility_type": "스마트흡연부스",
+        "facility_type": "흡연부스",
         "intensity_level": "높음",
         "ahp_weights": {"보행혼잡도": 0.4, "소음민감도": 0.3, "상권활성화": 0.3},
         "timestamp": "2026-07-20T10:00:00",
         "common_rag": rag_context_text,
+        "audit_context": audit_context,
         "evaluations": {},
         "final_scenarios": {},
         "is_finished": False,
