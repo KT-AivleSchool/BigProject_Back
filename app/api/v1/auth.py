@@ -82,7 +82,17 @@ async def login_user(
 
     # 유저 조회 결과
     if not user:
-        await lock_manager.record_fail_attempt(credentials.email)
+        attempts = await lock_manager.record_fail_attempt(credentials.email)
+        if attempts >= 5:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="비밀번호 5회 오류로 계정이 잠겼습니다. 5분 후에 다시 시도해 주세요.",
+            )
+        elif attempts >= 3:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"이메일 혹은 패스워드가 올바르지 않습니다. (현재 {attempts}회 실패: 5회 실패 시 5분 동안 계정이 잠깁니다.)",
+            )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="이메일 혹은 패스워드가 올바르지 않습니다.",
@@ -102,7 +112,17 @@ async def login_user(
     )
 
     if not is_password_correct:
-        await lock_manager.record_fail_attempt(credentials.email)
+        attempts = await lock_manager.record_fail_attempt(credentials.email)
+        if attempts >= 5:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="비밀번호 5회 오류로 계정이 잠겼습니다. 5분 후에 다시 시도해 주세요.",
+            )
+        elif attempts >= 3:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"이메일 혹은 패스워드가 올바르지 않습니다. (현재 {attempts}회 실패: 5회 실패 시 5분 동안 계정이 잠깁니다.)",
+            )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="이메일 혹은 패스워드가 올바르지 않습니다.",

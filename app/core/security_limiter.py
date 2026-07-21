@@ -13,8 +13,8 @@ class LoginLockoutManager:
         self.lock_seconds = 300  # 5분 잠금
 
     async def check_if_locked(self, email: str):
-        block_key = f"lockout:block:{email}"
-        is_blocked = await self.r.exists(block_key)
+        block_key = f"lockout:block:{email}"        # 로그인 잠김 계정을 지칭하는 키값
+        is_blocked = await self.r.exists(block_key) # 쿼리를 통해 계정 잠김 여부 확인
         if is_blocked:
             remaining_time = await self.r.ttl(block_key)
             raise HTTPException(
@@ -23,20 +23,19 @@ class LoginLockoutManager:
             )
 
     async def record_fail_attempt(self, email: str):
-        count_key = f"lockout:count:{email}"
-        attempts = await self.r.incr(count_key)
+        count_key = f"lockout:count:{email}"        # 로그인 실패 계정을 지칭하는 키값
+        attempts = await self.r.incr(count_key)     # 로그인 실패 횟수 1회 증가 
         
         if attempts == 1:
             await self.r.expire(count_key, self.lock_seconds)
             
-        if attempts >= self.max_attempts:
-            block_key = f"lockout:block:{email}"
-            await self.r.setex(block_key, self.lock_seconds, "1")
-            await self.r.delete(count_key)
-            return True
-        return False
+        if attempts >= self.max_attempts:   # 실패 횟수가 max_attempts 이상일 경우
+            block_key = f"lockout:block:{email}" # 계정 잠금 키값 생성
+            await self.r.setex(block_key, self.lock_seconds, "1") # 계정 잠금 테이블에 키값과 잠금 유효시간 저장
+            await self.r.delete(count_key) # 계정 실패 횟수 초기화
+        return attempts
 
-    async def reset_attempts(self, email: str):
+    async def reset_attempts(self, email: str): # 로그인 성공 혹은 잠금 유효시간 만료 시 초기화 로직
         count_key = f"lockout:count:{email}"
         block_key = f"lockout:block:{email}"
         await self.r.delete(count_key, block_key)
