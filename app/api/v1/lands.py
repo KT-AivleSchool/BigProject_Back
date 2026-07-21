@@ -161,12 +161,13 @@ async def audit_csv_dataset(files: List[UploadFile] = File(...)):
         },
     }
 
-    # 2. OpenAI API 키가 없을 경우, Fallback 모드 작동
+    # 2. OpenAI API 키가 없을 경우 명시적 에러 반환
     if not settings.OPENAI_API_KEY or settings.OPENAI_API_KEY.strip() == "":
-        logger.warning(
-            "[AI Ingestion] OPENAI_API_KEY is missing. Running in Graceful Fallback Mode."
+        logger.error("[AI Ingestion] OPENAI_API_KEY is missing.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="[AI_INGESTION_FAILED] 서버에 AI API 키가 설정되지 않아 감리를 수행할 수 없습니다."
         )
-        return fallback_data
 
     # 3. OpenAI 비동기 멀티파일 감리 호출
     try:
@@ -207,10 +208,11 @@ async def audit_csv_dataset(files: List[UploadFile] = File(...)):
         }
 
     except Exception as e:
-        logger.error(
-            f"[AI Ingestion Failure] OpenAI call failed: {str(e)}. Switching to Graceful Fallback Mode."
+        logger.error(f"[AI Ingestion Failure] OpenAI call failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"[AI_INGESTION_FAILED] AI 입지 사전 감리 처리 중 오류가 발생했습니다: {str(e)}"
         )
-        return fallback_data
 
 
 @router.get("/screen-candidate")
