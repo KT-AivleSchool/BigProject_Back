@@ -220,7 +220,9 @@ def parse_statute(
 
 def length_report(chunks: List[StatuteChunk]) -> str:
     if not chunks:
-        return "⚠️ 청크 0개 — 조문을 하나도 못 찾았습니다. 조판(들여쓰기·단 구성) 확인 필요"
+        return (
+            "⚠️ 청크 0개 — 조문을 하나도 못 찾았습니다. 조판(들여쓰기·단 구성) 확인 필요"
+        )
     lens = sorted(len(c.text) for c in chunks)
     over = [n for n in lens if n > 1000]
     lines = [
