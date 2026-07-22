@@ -1,7 +1,6 @@
 import os
 from io import BytesIO
 from jinja2 import Environment, FileSystemLoader
-from weasyprint import HTML
 
 
 class PdfReportBuilder:
@@ -25,7 +24,15 @@ class PdfReportBuilder:
 
         pdf_buffer = BytesIO()
         # HTML 텍스트를 파싱하여 PDF 바이너리로 버퍼에 출력
-        HTML(string=rendered_html, base_url=".").write_pdf(pdf_buffer)
+        try:
+            from weasyprint import HTML
+
+            HTML(string=rendered_html, base_url=".").write_pdf(pdf_buffer)
+        except ImportError as e:
+            raise RuntimeError(
+                "Windows 환경에서는 WeasyPrint용 GTK3 라이브러리가 필요합니다. PDF 기능을 사용할 수 없습니다."
+            ) from e
+
         pdf_buffer.seek(0)
 
         return pdf_buffer

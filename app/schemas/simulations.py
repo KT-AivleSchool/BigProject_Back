@@ -39,6 +39,9 @@ class SimulationResultResponse(BaseModel):
     scenario: ScenarioDetail = Field(
         ..., description="토론 결과로 도출된 최종 1개의 시나리오 정보"
     )
+    debate_logs: Optional[list] = Field(
+        None, description="토론에 참여한 페르소나들의 전체 대화 내역 리스트"
+    )
 
 
 class SseMessagePacket(BaseModel):

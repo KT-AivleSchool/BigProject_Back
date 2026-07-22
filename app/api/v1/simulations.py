@@ -1,5 +1,7 @@
 import json
 import datetime
+import asyncio
+import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sse_starlette.sse import EventSourceResponse
@@ -8,9 +10,12 @@ from sqlalchemy.future import select
 
 from app.schemas.simulations import SimulationResultResponse, StreamRequest
 from app.core.sim_ai.graph import build_discussion_graph, vector_db
-from app.api.deps import get_db
+from app.api.deps import get_db, get_redis
 from app.db.models.simulation import Parcel, ConflictSimulation
 from app.services.pdf_service import pdf_builder
+from app.db.session import AsyncSessionLocal
+from app.utils.redis_pubsub import RedisPubSubManager
+from app.core.security_limiter import rate_limiter
 
 # API 라우터 인스턴스 초기화
 router = APIRouter()
@@ -52,103 +57,102 @@ def _parse_audit_data(audit_data: dict) -> str:
     return "\n\n".join(lines)
 
 
-@router.post("/stream")
-def stream_ai_discussion(request: StreamRequest, db: AsyncSession = Depends(get_db)):
-    parcel_id = request.parcel_id
-    facility_type = request.facility_type
+async def run_debate_and_publish(
+    parcel_id: int,
+    facility_type: str,
+    audit_context: str,
+    redis: aioredis.Redis,
+):
+    pubsub_manager = RedisPubSubManager(redis)
+    async with AsyncSessionLocal() as db:
+        try:
+            try:
+                # DB에서 parcel_id로 GIS 데이터를 조회합니다.
+                result = await db.execute(select(Parcel).where(Parcel.id == parcel_id))
+                parcel = result.scalar()
 
-    # 전달받은 JSON 데이터를 파싱하여 텍스트로 정제
-    audit_context = (
-        _parse_audit_data(request.audit_data)
-        if request.audit_data
-        else "감리 데이터가 제공되지 않았습니다."
-    )
-    """
-    [동현 AI 메인 & 장천명 풀스택] LangGraph 3자 페르소나 모의 심의 토론 실시간 SSE 스트리밍 API
-    - 동작 방식: HTTP 연결을 유지한 상태로, AI 에이전트의 대화 토큰을 chunk 단위로 지속 밀어줍니다.
-    - 프론트 연동: Next.js의 EventSource API와 1:1로 비동기식 실시간 세션을 체결하여 렌더링합니다.
-    """
+                if not parcel:
+                    await pubsub_manager.publish_debate_message(
+                        parcel_id,
+                        "시스템",
+                        "해당 필지(Parcel)를 찾을 수 없습니다.",
+                        is_finished=True,
+                    )
+                    return
 
-    async def event_generator():
-        # DB에서 parcel_id로 GIS 데이터를 조회합니다.
-        result = await db.execute(select(Parcel).where(Parcel.id == parcel_id))
-        parcel = result.scalar()
+                gis_data = {
+                    "lat": parcel.lat,
+                    "lng": parcel.lng,
+                    "jibun": parcel.jibun,
+                    "intensity_level": parcel.intensity_level,
+                    "ahp_weights": parcel.ahp_weights or {},
+                }
+            except Exception as e:
+                print(
+                    f"[Fallback] DB 연결 실패({e}). 로컬 모의 GIS 데이터로 대체합니다."
+                )
+                gis_data = {
+                    "lat": 37.534,
+                    "lng": 126.994,
+                    "jibun": "서울특별시 용산구 이태원동 123-45 (테스트용)",
+                    "intensity_level": "높음",
+                    "ahp_weights": {
+                        "보행혼잡도": 0.4,
+                        "소음민감도": 0.3,
+                        "상권활성화": 0.3,
+                    },
+                }
 
-        if not parcel:
-            # 존재하지 않는 parcel_id일 경우 에러 메시지 전송 후 스트림 종료
-            yield {
-                "event": "error",
-                "data": json.dumps(
-                    {"error": "해당 필지(Parcel)를 찾을 수 없습니다."},
-                    ensure_ascii=False,
-                ),
+            # 1. 시스템 시작 메시지 송출
+            await pubsub_manager.publish_debate_message(
+                parcel_id,
+                "시스템",
+                f"선택된 위치(지번: {gis_data['jibun']})의 {facility_type} 모의 심의를 시작합니다...",
+                is_finished=False,
+            )
+
+            # 2. LangGraph 초기화 및 상태 세팅
+            graph = build_discussion_graph()
+
+            # 토론 시작 전 공통 RAG(Common RAG) 1회 선검색
+            query = f"{facility_type} 설치 기준 허가 규제 갈등 중재 혜택"
+            try:
+                retrieved_docs = await vector_db.retrieve_similar_statutes(
+                    query, top_k=5
+                )
+                common_rag = "\n".join(retrieved_docs)
+            except Exception:
+                common_rag = "조례 정보 없음"
+
+            timestamp = datetime.datetime.now().isoformat()
+            import random
+
+            initial_state = {
+                "messages": [],
+                "css_pro": random.choice(["LOW", "MEDIUM", "HIGH"]),
+                "css_con": random.choice(["LOW", "MEDIUM", "HIGH"]),
+                "round_count": 0,
+                "current_phase": "debate",
+                "eval_score": 0.0,
+                "spoken_this_round": [],
+                "candidate_jibun": gis_data["jibun"],
+                "candidate_lat": gis_data["lat"],
+                "candidate_lng": gis_data["lng"],
+                "facility_type": facility_type,
+                "intensity_level": gis_data["intensity_level"],
+                "ahp_weights": gis_data["ahp_weights"],
+                "timestamp": timestamp,
+                "common_rag": common_rag,
+                "audit_context": audit_context,
+                "evaluations": {},
+                "final_scenarios": {},
+                "is_finished": False,
+                "next_speaker": "pro",
             }
-            return
 
-        gis_data = {
-            "lat": parcel.lat,
-            "lng": parcel.lng,
-            "jibun": parcel.jibun,
-            "intensity_level": parcel.intensity_level,
-            "ahp_weights": parcel.ahp_weights or {},
-        }
+            current_state = dict(initial_state)
 
-        # 1. 시스템 시작 메시지 송출
-        yield {
-            "event": "message",
-            "data": json.dumps(
-                {
-                    "sender": "시스템",
-                    "text": f"선택된 위치(지번: {gis_data['jibun']})의 {facility_type} 모의 심의를 시작합니다...",
-                    "is_finished": False,
-                },
-                ensure_ascii=False,
-            ),
-        }
-
-        # 2. LangGraph 초기화 및 상태 세팅
-        graph = build_discussion_graph()
-
-        # [NEW] 토론 시작 전 공통 RAG(Common RAG) 1회 선검색
-        query = f"{facility_type} 설치 기준 허가 규제 갈등 중재 혜택"
-        try:
-            retrieved_docs = await vector_db.retrieve_similar_statutes(query, top_k=5)
-            common_rag = "\n".join(retrieved_docs)
-        except Exception:
-            common_rag = "조례 정보 없음"
-
-        timestamp = datetime.datetime.now().isoformat()
-
-        import random
-
-        initial_state = {
-            "messages": [],
-            "css_pro": random.choice(["LOW", "MEDIUM", "HIGH"]),
-            "css_con": random.choice(["LOW", "MEDIUM", "HIGH"]),
-            "round_count": 0,
-            "current_phase": "debate",
-            "eval_score": 0.0,
-            "spoken_this_round": [],
-            "candidate_jibun": gis_data["jibun"],
-            "candidate_lat": gis_data["lat"],
-            "candidate_lng": gis_data["lng"],
-            "facility_type": facility_type,
-            "intensity_level": gis_data["intensity_level"],
-            "ahp_weights": gis_data["ahp_weights"],
-            "timestamp": timestamp,
-            "common_rag": common_rag,
-            "audit_context": audit_context,
-            "evaluations": {},
-            "final_scenarios": {},
-            "is_finished": False,
-            "next_speaker": "pro",
-        }
-
-        # 내부 상태 누적용 변수
-        current_state = dict(initial_state)
-
-        # 3. 그래프 비동기 스트리밍 (astream) — OpenAI Quota 초과 시 에러 이벤트 즉시 송출
-        try:
+            # 3. 그래프 비동기 스트리밍 (astream)
             async for output in graph.astream(initial_state):
                 for node_name, node_state in output.items():
                     # 상태 업데이트 누적
@@ -157,7 +161,14 @@ def stream_ai_discussion(request: StreamRequest, db: AsyncSession = Depends(get_
                     if "final_scenarios" in node_state:
                         current_state["final_scenarios"] = node_state["final_scenarios"]
 
-                    if node_name in ["pro", "con", "gov", "gov_wrapup"]:
+                    if node_name in [
+                        "pro",
+                        "con",
+                        "gov",
+                        "gov_wrapup",
+                        "evaluator",
+                        "reporter",
+                    ]:
                         if "messages" in node_state and len(node_state["messages"]) > 0:
                             msg = node_state["messages"][-1]
 
@@ -169,20 +180,28 @@ def stream_ai_discussion(request: StreamRequest, db: AsyncSession = Depends(get_
                                 sender = "참여자"
                                 text = msg
 
-                            yield {
-                                "event": "message",
-                                "data": json.dumps(
-                                    {
-                                        "sender": sender,
-                                        "text": text,
-                                        "is_finished": False,
-                                    },
-                                    ensure_ascii=False,
-                                ),
-                            }
+                            await pubsub_manager.publish_debate_message(
+                                parcel_id, sender, text, is_finished=False
+                            )
 
-                    elif node_name == "reporter":
-                        scenarios = current_state.get("final_scenarios", {})
+                    if node_name == "reporter":
+                        # 단일 시나리오 객체일 경우 리스트로 래핑
+                        final_scenarios_obj = current_state.get("final_scenarios", {})
+                        if (
+                            isinstance(final_scenarios_obj, dict)
+                            and "scenario" in final_scenarios_obj
+                        ):
+                            final_scenarios_list = [final_scenarios_obj]
+                        else:
+                            final_scenarios_list = final_scenarios_obj.get(
+                                "scenarios", []
+                            )
+
+                        # CSS 점수 계산 (평균 점수(0.0~1.0)를 0~10점 척도로 환산)
+                        avg_acc = current_state.get("eval_score", 0.0)
+                        css_score = round(avg_acc * 10, 2)
+                        if css_score == 0.0:
+                            css_score = 7.5  # 기본값 처리
 
                         # --- DB 저장용 최종 JSON 포맷 구성 ---
                         debate_logs = []
@@ -209,7 +228,9 @@ def stream_ai_discussion(request: StreamRequest, db: AsyncSession = Depends(get_
                             "timestamp": current_state.get("timestamp"),
                             "debate_logs": debate_logs,
                             "raw_text": "\n\n".join(raw_text_lines),
-                            "scenarios": scenarios.get("scenarios", []),
+                            "scenarios": final_scenarios_list,
+                            "conflict_sensitivity_score": css_score,
+                            "conflict_factors": current_state.get("ahp_weights", {}),
                         }
 
                         # 최종 JSON을 DB에 저장 (ConflictSimulation)
@@ -226,31 +247,23 @@ def stream_ai_discussion(request: StreamRequest, db: AsyncSession = Depends(get_
                             await db.rollback()
                             print(f"=== DB 저장 실패: {e} ===")
 
-                        print(json.dumps(result_json, ensure_ascii=False, indent=2))
-
-                        yield {
-                            "event": "message",
-                            "data": json.dumps(
-                                {
-                                    "sender": "시스템",
-                                    "text": "토론 종료. 3대 시나리오 도출이 완료되었습니다.",
-                                    "is_finished": True,
-                                },
-                                ensure_ascii=False,
-                            ),
-                        }
+                        await pubsub_manager.publish_debate_message(
+                            parcel_id,
+                            "시스템",
+                            "토론 종료. 3대 시나리오 도출이 완료되었습니다.",
+                            is_finished=True,
+                        )
 
         except Exception as quota_err:
-            # OpenAI API Quota 초과(429) 또는 기타 AI 엔진 오류 발생 시 즉시 에러 SSE 이벤트 송출
-            # Fallback 데이터 없이 정직하게 오류 코드를 클라이언트에게 전달합니다.
             err_msg = str(quota_err)
             is_quota = "insufficient_quota" in err_msg or "429" in err_msg
             error_code = "OPENAI_QUOTA_EXCEEDED" if is_quota else "AI_ENGINE_ERROR"
             print(f"[Stream Error] {error_code}: {err_msg}")
 
-            yield {
-                "event": "error",
-                "data": json.dumps(
+            # 에러 메시지 발행 및 스트림 강제 종료
+            await redis.publish(
+                f"debate:{parcel_id}",
+                json.dumps(
                     {
                         "error_code": error_code,
                         "message": (
@@ -262,7 +275,39 @@ def stream_ai_discussion(request: StreamRequest, db: AsyncSession = Depends(get_
                     },
                     ensure_ascii=False,
                 ),
-            }
+            )
+
+
+@router.post("/stream", dependencies=[Depends(rate_limiter)])
+async def stream_ai_discussion(
+    request: StreamRequest, redis: aioredis.Redis = Depends(get_redis)
+):
+    parcel_id = request.parcel_id
+    facility_type = request.facility_type
+
+    # 전달받은 JSON 데이터를 파싱하여 텍스트로 정제
+    audit_context = (
+        _parse_audit_data(request.audit_data)
+        if request.audit_data
+        else "감리 데이터가 제공되지 않았습니다."
+    )
+
+    # 1. 백그라운드 태스크로 시뮬레이션 태스크 실행 (비동기로 루프를 돌며 Redis에 Publish)
+    asyncio.create_task(
+        run_debate_and_publish(
+            parcel_id=parcel_id,
+            facility_type=facility_type,
+            audit_context=audit_context,
+            redis=redis,
+        )
+    )
+
+    # 2. SSE 클라이언트는 동일 채널을 Subscribe하여 실시간 대사 응답
+    pubsub_manager = RedisPubSubManager(redis)
+
+    async def event_generator():
+        async for data in pubsub_manager.subscribe_debate_stream(parcel_id):
+            yield {"event": "message", "data": json.dumps(data, ensure_ascii=False)}
 
     # sse_starlette 라이브러리의 EventSourceResponse를 반환하여 비동기 HTTP 청크 전송 스트림 활성화
     return EventSourceResponse(event_generator())
@@ -296,40 +341,31 @@ async def get_simulation_results(parcel_id: int, db: AsyncSession = Depends(get_
 
     # result_json 내에 scenarios 배열이 정상 이식되어 있으면 파싱, 없으면 합리적 시나리오 폴백 매핑
     raw_scenarios = res_json.get("scenarios", [])
-    scenarios_list = []
 
-    if raw_scenarios and isinstance(raw_scenarios, list):
-        for idx, sc in enumerate(raw_scenarios):
-            sc_type = (
-                sc.get("scenario_type")
-                or sc.get("scenario")
-                or f"Scenario {chr(65 + idx)}"
-            )
-            # "Scenario A" 형태인 경우 뒤의 문자만 취함
-            if "Scenario" in sc_type:
-                sc_type = sc_type.replace("Scenario", "").strip()
+    if raw_scenarios and isinstance(raw_scenarios, list) and len(raw_scenarios) > 0:
+        # 단일 시나리오 스키마에 맞게 첫 번째 시나리오만 가져옵니다.
+        sc_data = raw_scenarios[0]
 
-            scenarios_list.append(
-                {
-                    "scenario_type": sc_type,
-                    "title": sc.get("title")
-                    or sc.get("scenario_description")
-                    or f"시나리오 {sc_type}",
-                    "probability": float(
-                        sc.get("probability")
-                        or sc.get("ratio")
-                        or (0.65 if idx == 0 else 0.20 if idx == 1 else 0.15)
-                    ),
-                    "summary": sc.get("summary")
-                    or sc.get("reason")
-                    or "AI 시뮬레이션 최종 합의 시나리오 내용입니다.",
-                    "conflict_risk_index": float(
-                        sc.get("conflict_risk_index")
-                        or sc.get("risk_score")
-                        or (35.0 if idx == 0 else 65.0 if idx == 1 else 85.0)
-                    ),
-                }
-            )
+        # Pydantic 모델(ScenarioDetail)이 요구하는 키와 타입에 맞춰 안전하게 변환
+        scenario_obj = {
+            "scenario": str(
+                sc_data.get("scenario") or sc_data.get("scenario_type") or "알 수 없음"
+            ),
+            "scenario_description": str(
+                sc_data.get("scenario_description")
+                or sc_data.get("title")
+                or "설명 없음"
+            ),
+            "final_acceptance_score": float(
+                sc_data.get("final_acceptance_score") or 0.0
+            ),
+            "reason": str(sc_data.get("reason") or "이유 없음"),
+            "summary": str(sc_data.get("summary") or "요약 없음"),
+            "conflict_risk_index": float(sc_data.get("conflict_risk_index") or 0.0),
+            "risk_reason": str(sc_data.get("risk_reason") or "갈등 위험 이유 없음"),
+        }
+    elif isinstance(raw_scenarios, dict) and "scenario" in raw_scenarios:
+        scenario_obj = raw_scenarios
     else:
         # 시나리오 배열이 비어있는 경우: AI 토론이 완료되지 않았거나 OpenAI API Quota 초과로 인해
         # 결과가 DB에 정상 적재되지 않은 상태입니다.
@@ -357,11 +393,15 @@ async def get_simulation_results(parcel_id: int, db: AsyncSession = Depends(get_
 
     css_score = float(css_score)
 
+    # 대화 내역 추출
+    debate_logs = res_json.get("debate_logs", [])
+
     return {
         "parcel_id": parcel_id,
         "conflict_sensitivity_score": css_score,
         "conflict_factors": conflict_factors,
-        "scenarios": scenarios_list,
+        "scenario": scenario_obj,
+        "debate_logs": debate_logs,
     }
 
 
@@ -414,6 +454,14 @@ async def download_feasibility_report_pdf(
         )
 
     # 2. PDF 조립용 컨텍스트 정보 포맷팅
+    # 시나리오 추출 로직 (DB에 저장된 scenarios 배열에서 첫 번째 항목 가져오기)
+    raw_scenarios = res_json.get("scenarios", [])
+    scenario_obj = {}
+    if raw_scenarios and isinstance(raw_scenarios, list) and len(raw_scenarios) > 0:
+        scenario_obj = raw_scenarios[0]
+    elif isinstance(raw_scenarios, dict) and "scenario" in raw_scenarios:
+        scenario_obj = raw_scenarios
+
     report_data = {
         "candidate_jibun": res_json.get("candidate_jibun", "알 수 없음"),
         "candidate_lat": candidate_lat,
@@ -421,6 +469,7 @@ async def download_feasibility_report_pdf(
         "facility_type": res_json.get("facility_type", "지정되지 않음"),
         "conflict_sensitivity_score": css_score,
         "ahp_weights": res_json.get("ahp_weights", {}),
+        "scenario": scenario_obj,
         "debate_logs": res_json.get("debate_logs", []),
     }
 
