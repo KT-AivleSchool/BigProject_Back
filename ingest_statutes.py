@@ -41,6 +41,21 @@ STATUTES_COLLECTION_NAME = "statutes_collection"
 #        ("학교", "버스정류소", "지하철역", "어린이집", "어린이보호구역")
 #      · smoking_area_polygons 테이블 컬럼 → CSV '시설종류' 매핑값 ("스마트흡연부스")
 SEED_FACILITY_TYPE = "흡연부스"
+
+# 시드 문서별 facility_type 매핑. 키가 '파일명 또는 조례명'에 부분일치하면 그 값으로 태깅한다.
+#   위에서부터 먼저 맞는 것을 쓰므로, 좁은 조건을 위에 둘 것.
+#   미매칭 시 SEED_FACILITY_TYPE 기본값.
+# ⚠️ 값은 StreamRequest.facility_type과 정확일치해야 검색 필터가 걸린다(신규 추가 시 프론트 값 확인).
+SEED_FACILITY_MAP = {
+    "금연": "흡연부스",
+    "간접흡연": "흡연부스",
+    "국민건강증진": "흡연부스",
+    "교육환경": "흡연부스",  # 학교보호구역 — 흡연부스 이격거리 근거
+    "전기차": "전기차충전소",
+    "친환경자동차": "전기차충전소",
+    "충전시설": "전기차충전소",
+}
+
 TEST_QUERIES = [
     "버스정류소 근처에 흡연부스를 설치해도 되나?",
     "학교 주변 금연 관련 규정",
@@ -54,7 +69,7 @@ def _load_txt(p: Path) -> tuple:
     text = p.read_text(encoding="utf-8")
     first = text.strip().splitlines()[0].strip()
     title = first if ("조례" in first or "법" in first) else p.stem
-    return title, text
+    return title, text, p.name
 
 
 def _load_pdf(p: Path) -> tuple:
@@ -71,7 +86,19 @@ def _load_pdf(p: Path) -> tuple:
             title = ln
             break
 
-    return title, text
+    return title, text, p.name
+
+
+def resolve_facility_type(filename: str, title: str) -> tuple:
+    """(facility_type, 매칭된 키 또는 None) 반환.
+    파일명·조례명에 SEED_FACILITY_MAP 키가 부분일치하면 그 값, 없으면 기본값.
+    seeds/에 여러 시설의 조례를 섞어 넣어도 문서별로 다르게 태깅된다
+    (전 문서를 한 값으로 태깅하면 facility_type 필터가 아무것도 구분하지 못함)."""
+    haystack = f"{filename} {title}"
+    for key, value in SEED_FACILITY_MAP.items():
+        if key in haystack:
+            return value, key
+    return SEED_FACILITY_TYPE, None
 
 
 def load_seeds():
@@ -131,21 +158,31 @@ async def main():
     docs = load_seeds()
 
     all_chunks = []
-    for title, text in docs:
+    for title, text, filename in docs:
         # A4: 시행일·조례번호를 원문에서 추출해 전 청크 메타에 실어보낸다.
         #     (조례 개정 시 '어느 판의 조문인지' 식별 — 발제 B-4 문서 단위 관리의 최소 요건)
         doc_meta = extract_doc_meta(text)
+        # 문서별 facility_type — 전 문서 동일값으로 태깅하면 필터가 무의미해진다.
+        facility_type, matched_key = resolve_facility_type(filename, title)
         chunks = parse_statute(
-            text, title, facility_type=SEED_FACILITY_TYPE, doc_meta=doc_meta
+            text, title, facility_type=facility_type, doc_meta=doc_meta
         )
+        origin = f"'{matched_key}' 매칭" if matched_key else "미매칭 → 기본값"
         print(f"\n== {title}: {len(chunks)}청크")
+        print(f"   facility_type: '{facility_type}' ({origin})")
         print(f"   문서메타: {doc_meta or '(추출 실패 — 원문 머리말 형식 확인 필요)'}")
         print(length_report(chunks))
         for c in chunks[:2]:
             print("  예시:", c.text.splitlines()[0])
         all_chunks += chunks
 
-    print(f"\n총 {len(all_chunks)}청크")
+    tagged = sorted({c.metadata["facility_type"] for c in all_chunks})
+    print(f"\n총 {len(all_chunks)}청크 | 태깅된 facility_type: {tagged}")
+    if len(tagged) == 1 and len(docs) > 1:
+        print(
+            "   ℹ️ 전 문서가 한 값으로 태깅됨 — 대조군 검증을 하려면 "
+            "SEED_FACILITY_MAP에 다른 시설 조례를 추가하세요."
+        )
     if dry:
         print("(dry-run — 적재 생략)")
         return
@@ -178,23 +215,27 @@ async def main():
         top1 = res[0].replace("\n", " ")[:90] if res else "(없음)"
         print(f"[{q}]\n  → {top1}...")
 
-    print(
-        f"\n== 검증 질의 (filter facility_type='{SEED_FACILITY_TYPE}' — 서비스 경로 재현) =="
-    )
+    # 태깅된 facility_type 전부에 대해 필터 검증 — 값이 여럿이면 대조군 효과도 여기서 드러난다.
     empty = 0
-    for q in TEST_QUERIES:
-        res = await storage.retrieve_similar_statutes(
-            q, top_k=3, facility_type=SEED_FACILITY_TYPE
-        )
-        if not res:
-            empty += 1
-        top1 = res[0].replace("\n", " ")[:90] if res else "(없음)"
-        print(f"[{q}]\n  → {top1}...")
+    total = 0
+    for ft in tagged:
+        print(f"\n== 검증 질의 (filter facility_type='{ft}' — 서비스 경로 재현) ==")
+        for q in TEST_QUERIES:
+            res = await storage.retrieve_similar_statutes(q, top_k=3, facility_type=ft)
+            total += 1
+            if not res:
+                empty += 1
+            top1 = res[0].replace("\n", " ")[:90] if res else "(없음)"
+            print(f"[{q}]\n  → {top1}...")
 
-    if empty == len(TEST_QUERIES):
+    if total and empty == total:
         print(
-            f"\n⚠️ 필터 적용 시 전 질의 0건 — 적재 태그('{SEED_FACILITY_TYPE}')와 "
-            f"검색 필터 값이 어긋났을 가능성이 큽니다. 프론트가 보내는 facility_type 값을 확인하세요."
+            f"\n⚠️ 필터 적용 시 전 질의 0건 — 적재 태그({tagged})와 검색 필터가 "
+            f"맞물리지 않았습니다. 다음을 확인하세요:\n"
+            f"   1) vector_db.py가 filter= 를 쓰는 신버전인지 "
+            f"(구버전은 쿼리 prefix라 메타 없이도 결과가 나옴 → 이 경고가 안 뜸)\n"
+            f"   2) 적재가 metadatas 포함으로 됐는지 (위 '적재 완료' 메시지 확인)\n"
+            f"   3) 프론트가 보내는 StreamRequest.facility_type 값과 일치하는지"
         )
 
 
