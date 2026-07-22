@@ -313,7 +313,7 @@ async def stream_ai_discussion(
         else "감리 데이터가 제공되지 않았습니다."
     )
 
-    # 1. 백그라운드 태스크로 시뮬레이션 태스크 실행 (비동기로 루프를 돌며 Redis에 Publish)
+    # 1. 백그라운드 태스크로 모의 심의 테스트 실행 (비동기로 루프를 돌며 Redis에 Publish)
     asyncio.create_task(
         run_debate_and_publish(
             parcel_id=parcel_id,
@@ -323,7 +323,7 @@ async def stream_ai_discussion(
         )
     )
 
-    # 2. SSE 클라이언트는 동일 채널을 Subscribe하여 실시간 대사 응답
+    # 2. SSE 클라이언트는 동일 채널을 Subscribe하여 실시간 청크 응답
     pubsub_manager = RedisPubSubManager(redis)
 
     async def event_generator():
