@@ -32,9 +32,14 @@ from app.core.sim_ai.document_loader import StatuteDocumentLoader  # noqa: E402
 SEED_DIR = Path("seeds")
 STATUTES_COLLECTION_NAME = "statutes_collection"
 
-# ⚠️ 적재 태그 = 검색 필터 값. 프론트가 보내는 facility_type과 '정확히' 일치해야 한다.
+# ⚠️ 적재 태그 = 검색 필터 값. StreamRequest.facility_type과 '정확히' 일치해야 한다.
 #    (simulations.py가 filter={"facility_type": ...} 정확일치로 검색 → 한 글자만 달라도 전량 0건)
-#    미확정 상태 — 프론트 확정 값으로 교체할 것. 이 상수 하나만 바꾸면 적재·검증에 함께 반영된다.
+#
+#    "흡연부스"는 전 브랜치 조사로 확인된 값이다 (test_api_client.py, run_ai_console.py).
+#    혼동 주의 — 같은 이름의 다른 필드가 둘 더 있으며, 아래 값을 여기 쓰면 안 된다:
+#      · audit_data.results[].roles[].facility_type → 배제 근거가 되는 '주변' 시설
+#        ("학교", "버스정류소", "지하철역", "어린이집", "어린이보호구역")
+#      · smoking_area_polygons 테이블 컬럼 → CSV '시설종류' 매핑값 ("스마트흡연부스")
 SEED_FACILITY_TYPE = "흡연부스"
 TEST_QUERIES = [
     "버스정류소 근처에 흡연부스를 설치해도 되나?",
