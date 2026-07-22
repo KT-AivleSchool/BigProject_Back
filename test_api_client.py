@@ -23,7 +23,6 @@ def main():
         with requests.post(url, json=payload, stream=True) as response:
             response.raise_for_status()
 
-            current_event = None
             current_sender = None
 
             for line in response.iter_lines():
@@ -31,40 +30,40 @@ def main():
                     decoded_line = line.decode("utf-8")
 
                     if decoded_line.startswith("event: "):
-                        current_event = decoded_line[7:].strip()
                         continue
 
                     if decoded_line.startswith("data: "):
                         data_content = decoded_line[6:]
                         try:
                             msg_json = json.loads(data_content)
-                            sender = msg_json.get("sender", "알 수 없음")
+
+                            # 에러 응답 처리
+                            if "error_code" in msg_json:
+                                print(f"\n[시스템 오류] {msg_json.get('message')}")
+                                continue
+
+                            sender = msg_json.get("sender") or ""
                             text = msg_json.get("text", "")
 
-                            if current_event == "token":
-                                # 화자가 바뀌면 이름 출력
-                                if current_sender != sender:
-                                    print(f"\n[{sender}]")
-                                    current_sender = sender
-                                # 토큰을 줄바꿈 없이 이어서 출력
+                            # 줄바꿈만 들어오는 개행 메시지는 이름 출력 없이 텍스트만 출력
+                            if not text.strip():
                                 sys.stdout.write(text)
                                 sys.stdout.flush()
+                                continue
 
-                            elif current_event == "message_end":
-                                # 한 화자의 턴이 끝남
-                                print()
-                                current_sender = None
-
-                            elif current_event == "message":
-                                # 전체 메시지(시스템 메시지 등)
+                            # 화자가 변경되었을 때만 화자 태그 출력
+                            if sender and current_sender != sender:
                                 print(f"\n[{sender}]")
-                                print(text)
-                                current_sender = None
+                                current_sender = sender
+
+                            # 실시간 토큰(글자)을 줄바꿈 없이 이어서 출력
+                            sys.stdout.write(text)
+                            sys.stdout.flush()
 
                         except json.JSONDecodeError:
                             print(data_content)
 
-            print("-" * 50)
+            print("\n" + "-" * 50)
             print("✅ 실시간 스트리밍이 종료되었습니다.\n")
 
     except requests.exceptions.ConnectionError:
