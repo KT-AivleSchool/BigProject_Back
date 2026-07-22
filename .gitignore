@@ -44,3 +44,10 @@ data_임시/step2_output/*
 !data_임시/step2_output/.gitkeep
 data_임시/step3_output/*
 !data_임시/step3_output/.gitkeep
+
+
+# Local Dev Tests
+tests/test_geocoder.py
+
+# Dynamic Uploads & Media Files
+uploads/
