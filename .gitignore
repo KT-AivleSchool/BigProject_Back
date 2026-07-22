@@ -17,13 +17,30 @@ ENV/
 # OS
 .DS_Store
 
-# Planning Repository (Cloned for study) 
+# Planning Repository (Cloned for study)
 BigProject_Planning/
 
-# 100MB 넘는 데이터들
+# 폴더는 유지, 내부 파일은 제외
+
+# 데이터들
 data_임시/*/data/
-data_임시/region_data/
-data_임시/step1_output/
-data_임시/search_cache/
+!data_임시/data/.gitkeep
 data_임시/*/fixture/
+!data_임시/fixture/.gitkeep
+data_임시/*/law/*
+!data_임시/*/law/.gitkeep
 *.zip
+
+# 공공 데이터, 캐시
+data_임시/region_data/*
+!data_임시/region_data/.gitkeep
+data_임시/search_cache/*
+!data_임시/search_cache/.gitkeep
+
+# 산출물
+data_임시/step1_output/*
+!data_임시/step1_output/.gitkeep
+data_임시/step2_output/*
+!data_임시/step2_output/.gitkeep
+data_임시/step3_output/*
+!data_임시/step3_output/.gitkeep

@@ -353,7 +353,17 @@ def _assign_id(filename: str, manifest: dict) -> str:
         for key in sorted(manifest, key=len, reverse=True):   # 부분문자열(긴 키 우선)
             if unicodedata.normalize("NFC", key) in fn:
                 return manifest[key]
-    return stem.split("_")[0]                            # 폴백: 'A1_...' → 'A1'
+    # manifest 없이 단독 호출 시: 파일명(확장자 뗀 것) 자체를 ID 로.
+    # (폴더 단위 profile_folder 는 가나다순 seq 를 쓰므로 여기로 안 온다)
+    return stem
+
+
+# 지역 접두어·출처기관·접미어는 '이름 정리용 불용어'다(지역 하드코딩 아님).
+_GEO_PREFIX = ["서울특별시", "서울시", "전국", "경기도", "인천광역시", "부산광역시"]
+_STOP_TAIL = ["표준데이터", "표준 데이터", "위치정보", "기본정보", "세대현황",
+              "현황", "정보", "데이터", "서울", "마스터"]
+
+
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -401,20 +411,32 @@ def profile_folder(folder: str, max_rows: int = PROFILE_MAX_ROWS) -> dict:
     paths = []
     for ext in DATA_EXTENSIONS:
         paths += glob.glob(os.path.join(folder, f"*{ext}"))
+    # 데이터 파일만, 파일명 가나다순으로 확정(실행 간 번호 안정성 — OS 나열 순서 의존 X)
+    data_paths = sorted(
+        pp for pp in set(paths)
+        if os.path.basename(pp) != MANIFEST_NAME
+        and not os.path.basename(pp).startswith("._"))
+
+    if not manifest:
+        print("[profile] manifest 없음 — 파일명 가나다순으로 01,02… 자동 부여")
+        print("           ⚠ 파일을 추가/삭제하면 뒤 번호가 밀립니다. "
+              "이미 감리·정제를 돌렸다면 step1_output 의 reviewed.json·캐시와 "
+              "번호가 어긋날 수 있으니, 그 경우 재감리하거나 _manifest.json 으로 번호를 고정하세요.")
+
     profiles: dict[str, dict] = {}
-    for path in sorted(set(paths)):
+    for seq, path in enumerate(data_paths, 1):
         fname = os.path.basename(path)
-        if fname == MANIFEST_NAME or fname.startswith("._"):   # 매핑파일·macOS 파편 제외
-            continue
-        did = _assign_id(fname, manifest)
+        # manifest 있으면 그 매핑, 없으면 가나다순 2자리 번호
+        did = _assign_id(fname, manifest) if manifest else f"{seq:02d}"
         try:
-            p = profile_file(path, dataset_id=did, max_rows=max_rows)
+            prof = profile_file(path, dataset_id=did, max_rows=max_rows)
         except Exception as e:                        # noqa: BLE001
             print(f"[profile] 건너뜀 {fname}: {e}")
             continue
         if did in profiles:
             print(f"[profile] ⚠ dataset_id 중복 '{did}' — 뒤 파일이 덮어씀: {fname}")
-        profiles[did] = p
+        profiles[did] = prof
+        print(f"  [{did}] {fname}")
     return profiles
 
 
