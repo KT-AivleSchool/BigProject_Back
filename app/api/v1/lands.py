@@ -95,13 +95,14 @@ def generate_roadview_link(lat: float, lng: float, provider: str = "kakao"):
     """
     [장천명 풀스택] Task 8: 특정 부지(위경도)의 로드뷰 딥링크 동적 생성 및 리다이렉트 API
     """
+    provider = provider.strip().lower()
     if provider == "kakao":
         url = f"https://map.kakao.com/link/roadview/{lat},{lng}"
     elif provider == "naver":
         url = f"https://map.naver.com/v5/?c={lng},{lat},15,0,0,0,dh"
     else:
         raise HTTPException(
-            status_code=400, detail="Unsupported provider. Use 'kakao' or 'naver'."
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported provider. Use 'kakao' or 'naver'."
         )
 
     return RedirectResponse(url=url)
