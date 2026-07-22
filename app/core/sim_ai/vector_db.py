@@ -6,12 +6,17 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+# 유사도 임계치 (데이터팀에서 3-small 적재 후 무관 질의 분포를 측정해 최적값으로 조정 예정)
+SIMILARITY_THRESHOLD = 0.25
+
 
 # [동현님 담당] pgvector Vector DB 연결 및 RAG 문서 적재/조회 모듈
 class RagVectorStorage:
     def __init__(self):
         # app/config.py의 OPENAI_API_KEY를 사용하여 임베딩 모델 활성화
-        self.embeddings = OpenAIEmbeddings(api_key=settings.OPENAI_API_KEY)
+        self.embeddings = OpenAIEmbeddings(
+            api_key=settings.OPENAI_API_KEY, model="text-embedding-3-small"
+        )
 
         # 드라이버 호환성을 위해 접속 문자열 조정 (psycopg3 드라이버인 psycopg 명시)
         conn_str = settings.DATABASE_URL
@@ -63,13 +68,19 @@ class RagVectorStorage:
         except Exception as e:
             logger.error(f"[RAG Error] Feedback Data Insert Error: {e}")
 
-    async def add_statute_chunks(self, chunks: List[str]):
+    async def add_statute_chunks(self, chunks: List[str], metadatas: List[dict] = None):
         """
         조례 및 범례 다중 포맷 문서에서 추출된 텍스트 청크를 기본 조례 콜렉션(statutes_collection)에 적재합니다.
         (시설 종류는 사전에 지정하지 않고, 토론 시 AI가 의미(Semantic) 검색을 통해 관련 조례를 스스로 찾아냅니다.)
         """
+        if metadatas is not None and len(metadatas) != len(chunks):
+            raise ValueError(
+                f"metadatas 길이({len(metadatas)})와 chunks 길이({len(chunks)})가 일치하지 않습니다."
+            )
+
         try:
-            metadatas = [{"source": "uploaded_statute"} for _ in chunks]
+            if metadatas is None:
+                metadatas = [{"source": "uploaded_statute"} for _ in chunks]
             await self.statutes_store.aadd_texts(texts=chunks, metadatas=metadatas)
             logger.info(
                 f"[RAG] 성공적으로 {len(chunks)}개의 조례 청크를 statutes_collection에 적재했습니다."
@@ -85,35 +96,36 @@ class RagVectorStorage:
         '기본 조례 콜렉션(statutes_collection)'에서 비동기로 검색합니다.
         """
         if not self.statutes_store:
-            return self._get_fallback_data()
+            return []
 
         try:
-            # LangChain의 비동기 유사도 검색 (asimilarity_search) 사용
+            # LangChain의 비동기 유사도 검색 (asimilarity_search_with_relevance_scores) 사용
             search_kwargs = {"k": top_k}
 
-            # [수정] 환각(Hallucination) 방지를 위해 facility_type을 쿼리 prefix로 추가
+            # [A-2] facility_type 쿼리 prefix 제거 및 필터(filter) 적용
             if facility_type:
-                query = f"[{facility_type}] {query}"
+                search_kwargs["filter"] = {"facility_type": facility_type}
 
-            docs = await self.statutes_store.asimilarity_search(query, **search_kwargs)
-
-            # 검색 결과가 없을 경우 안전한 빈 배열 또는 폴백 반환
-            if not docs:
-                return self._get_fallback_data()
-
-            # Document 객체에서 순수 텍스트(page_content)만 추출하여 리스트로 반환
-            return [doc.page_content for doc in docs]
-        except Exception as e:
-            # DB 미생성, 연결 오류 등에 대비한 폴백 처리 (프론트엔드 크래시 방지)
-            logger.error(
-                f"[RAG Warning] Vector DB Search Error (Falling back to dummy data): {e}"
+            # [A-3] 유사도 임계치 검사 및 점수 포함 검색
+            docs_with_scores = (
+                await self.statutes_store.asimilarity_search_with_relevance_scores(
+                    query, **search_kwargs
+                )
             )
-            return self._get_fallback_data()
 
-    def _get_fallback_data(self) -> List[str]:
-        """DB 미연결 또는 데이터 부재 시 반환되는 임시 폴백 데이터"""
-        return [
-            "서울특별시 용산구 금연 환경 조성 조례 제4조: 주거지역 인근 10m 이내 금연구역 버퍼 지정",
-            "친환경자동차법 제11조의2: 공공건물 및 공중이용시설의 전기차 충전시설 설치 의무화 (주차대수 50면 이상)",
-            "서울특별시 도로관리 조례 시행규칙 제5조: 보행자 통행에 지장을 주지 않는 범위 내에서 시설물 점용 허가",
-        ]
+            # 검색 결과가 없을 경우 안전한 빈 배열 반환
+            if not docs_with_scores:
+                return []
+
+            # 임계치 이상인 문서만 순수 텍스트(page_content) 추출
+            filtered_docs = [
+                doc.page_content
+                for doc, score in docs_with_scores
+                if score >= SIMILARITY_THRESHOLD
+            ]
+
+            return filtered_docs
+        except Exception as e:
+            # 호출부에서 에러를 인지할 수 있도록 예외를 던짐
+            logger.error(f"[RAG Error] Vector DB Search Error: {e}")
+            raise e
