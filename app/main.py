@@ -36,6 +36,11 @@ app.include_router(
     tags=["AI Simulation"],
 )
 app.include_router(
+    simulations.router,
+    prefix=settings.API_V1_STR + "/simulations",
+    tags=["AI Simulation"],
+)
+app.include_router(
     audit.router, prefix=settings.API_V1_STR + "/audit", tags=["Audit AI"]
 )
 
