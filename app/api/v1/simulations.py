@@ -427,6 +427,7 @@ async def get_simulation_results(parcel_id: int, db: AsyncSession = Depends(get_
 
 
 @router.get("/results/{parcel_id}/pdf")
+@router.get("/report/{parcel_id}")
 async def download_feasibility_report_pdf(
     parcel_id: int, db: AsyncSession = Depends(get_db)
 ):
