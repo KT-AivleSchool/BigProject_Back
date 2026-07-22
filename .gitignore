@@ -23,10 +23,10 @@ BigProject_Planning/
 # 폴더는 유지, 내부 파일은 제외
 
 # 데이터들
-data_임시/*/data/
-!data_임시/data/.gitkeep
-data_임시/*/fixture/
-!data_임시/fixture/.gitkeep
+data_임시/*/data/*
+!data_임시/*/data/.gitkeep
+data_임시/*/fixture/*
+!data_임시/*/fixture/.gitkeep
 data_임시/*/law/*
 !data_임시/*/law/.gitkeep
 *.zip
