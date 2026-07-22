@@ -48,7 +48,12 @@ class AgentState(TypedDict):
 
 
 # LLM 및 Vector DB 전역 인스턴스 (온도는 창의적 역할극을 위해 0.7 유지)
-llm = ChatOpenAI(api_key=settings.OPENAI_API_KEY, model="gpt-4o-mini", temperature=0.7)
+llm = ChatOpenAI(
+    api_key=settings.OPENAI_API_KEY,
+    model="gpt-4o-mini",
+    temperature=0.7,
+    streaming=True,
+)
 vector_db = RagVectorStorage()
 
 
