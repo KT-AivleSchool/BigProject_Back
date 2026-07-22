@@ -1,0 +1,28 @@
+hitl 실행시
+
+1단계 : 배제반경 확인 (need_review = true 대상)
+배제반경_m ---- 임시값 : 상위법 검색
+	   ㄴ-- null : 조례 데이터 없어서 pass 된 경우
+
+입력: 숫자(수정) / Enter(제안값 승인) / n(반경 없음) / s(건너뜀)
+사용자 입력받아 수정 후
+
+1. 필드 변경
+need_review = true -> false로 변경
+source = "human_confirmed" 추가
+confirmed = false -> true
+배제반경_m = 사용자 입력값으로 변경
+
+2. 캐시 저장
+search_cache에 confirmed_by : human으로 저장됨
+! n 의 경우 배제 반경 데이터가 없어서 캐시에 저장 X
+
+2단계: 데이터 용도 확인 (data_intent_unclear)
+   1) 가점(수요)      → positive_factor  + weight(0~1)
+   2) 감점(민감도)    → negative_factor  + weight(-1~0)
+   3) 배제(금지)      → hard_exclusion -> hitl 1단계
+   4) 위치선정 참조용 → reference_only (감리 입력 아님)
+   5) 잘못 넣음·제외  → 완전 제외
+
+→ audit_result_reviewed.json (최종 JSON)
+
