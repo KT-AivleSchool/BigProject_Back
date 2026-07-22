@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/omnisite"
     )
+    REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
     # AI 및 외부 연동 API 설정
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
