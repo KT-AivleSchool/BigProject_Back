@@ -27,3 +27,6 @@ data_임시/step1_output/
 data_임시/search_cache/
 data_임시/*/fixture/
 *.zip
+
+# Local Dev Tests
+tests/test_geocoder.py
