@@ -130,12 +130,12 @@ def stream_ai_discussion(request: StreamRequest, db: AsyncSession = Depends(get_
                 query, top_k=5, facility_type=facility_type
             )
             if not retrieved_docs:
-                common_rag = "관련 조례 없음"
+                common_rag = "현재 해당 지역에 적용할 수 있는 조례나 법령 정보가 없습니다."
             else:
                 common_rag = "\n".join(retrieved_docs)
         except Exception as e:
             print(f"[RAG Error] 조례 검색 실패: {e}")
-            common_rag = "조례 검색 중 오류 발생"
+            common_rag = "현재 해당 지역에 적용할 수 있는 조례나 법령 정보가 없습니다."
 
         timestamp = datetime.datetime.now().isoformat()
 

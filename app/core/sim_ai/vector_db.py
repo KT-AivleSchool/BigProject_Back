@@ -73,6 +73,11 @@ class RagVectorStorage:
         조례 및 범례 다중 포맷 문서에서 추출된 텍스트 청크를 기본 조례 콜렉션(statutes_collection)에 적재합니다.
         (시설 종류는 사전에 지정하지 않고, 토론 시 AI가 의미(Semantic) 검색을 통해 관련 조례를 스스로 찾아냅니다.)
         """
+        if metadatas is not None and len(metadatas) != len(chunks):
+            raise ValueError(
+                f"metadatas 길이({len(metadatas)})와 chunks 길이({len(chunks)})가 일치하지 않습니다."
+            )
+
         try:
             if metadatas is None:
                 metadatas = [{"source": "uploaded_statute"} for _ in chunks]
