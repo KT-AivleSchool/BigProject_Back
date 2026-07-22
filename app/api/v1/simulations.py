@@ -121,12 +121,16 @@ async def run_debate_and_publish(
                     query, top_k=5, facility_type=facility_type
                 )
                 if not retrieved_docs:
-                    common_rag = "현재 해당 지역에 적용할 수 있는 조례나 법령 정보가 없습니다."
+                    common_rag = (
+                        "현재 해당 지역에 적용할 수 있는 조례나 법령 정보가 없습니다."
+                    )
                 else:
                     common_rag = "\n".join(retrieved_docs)
             except Exception as e:
                 print(f"[RAG Error] 조례 검색 실패: {e}")
-                common_rag = "현재 해당 지역에 적용할 수 있는 조례나 법령 정보가 없습니다."
+                common_rag = (
+                    "현재 해당 지역에 적용할 수 있는 조례나 법령 정보가 없습니다."
+                )
 
             timestamp = datetime.datetime.now().isoformat()
 
@@ -166,7 +170,9 @@ async def run_debate_and_publish(
                         if "messages" in node_state:
                             current_state["messages"].extend(node_state["messages"])
                         if "final_scenarios" in node_state:
-                            current_state["final_scenarios"] = node_state["final_scenarios"]
+                            current_state["final_scenarios"] = node_state[
+                                "final_scenarios"
+                            ]
 
                         if node_name in [
                             "pro",
@@ -176,7 +182,10 @@ async def run_debate_and_publish(
                             "evaluator",
                             "reporter",
                         ]:
-                            if "messages" in node_state and len(node_state["messages"]) > 0:
+                            if (
+                                "messages" in node_state
+                                and len(node_state["messages"]) > 0
+                            ):
                                 msg = node_state["messages"][-1]
 
                                 parts = msg.split(":", 1)
@@ -193,7 +202,9 @@ async def run_debate_and_publish(
 
                         if node_name == "reporter":
                             # 단일 시나리오 객체일 경우 리스트로 래핑
-                            final_scenarios_obj = current_state.get("final_scenarios", {})
+                            final_scenarios_obj = current_state.get(
+                                "final_scenarios", {}
+                            )
                             if (
                                 isinstance(final_scenarios_obj, dict)
                                 and "scenario" in final_scenarios_obj
@@ -237,7 +248,9 @@ async def run_debate_and_publish(
                                 "raw_text": "\n\n".join(raw_text_lines),
                                 "scenarios": final_scenarios_list,
                                 "conflict_sensitivity_score": css_score,
-                                "conflict_factors": current_state.get("ahp_weights", {}),
+                                "conflict_factors": current_state.get(
+                                    "ahp_weights", {}
+                                ),
                             }
 
                             # 최종 JSON을 DB에 저장 (ConflictSimulation)
