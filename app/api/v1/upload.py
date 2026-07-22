@@ -68,6 +68,14 @@ async def upload_regulation(files: List[UploadFile] = File(...)):
             )
 
         file_path = os.path.join(UPLOAD_DIR, filename)
+
+        # [중복 방지 가드] 이미 동일한 파일명이 디스크에 존재하는 경우 차단
+        if os.path.exists(file_path):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"이미 동일한 이름의 조례 파일이 존재합니다: '{filename}'. 기존 조례 삭제 후 다시 시도해 주세요.",
+            )
+
         file_bytes = await file.read()
 
         # 디스크 파일 저장
