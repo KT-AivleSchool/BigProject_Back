@@ -30,3 +30,6 @@ data_임시/*/fixture/
 
 # Local Dev Tests
 tests/test_geocoder.py
+
+# Dynamic Uploads & Media Files
+uploads/
