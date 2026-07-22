@@ -20,9 +20,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # ── .env 로드 (python-dotenv 있으면 사용, 없으면 os.environ 직접) ──
 try:
     from dotenv import load_dotenv
-    load_dotenv()                      # 같은 폴더의 .env 를 읽어 환경변수로
+
+    load_dotenv()  # 같은 폴더의 .env 를 읽어 환경변수로
 except ImportError:
-    pass                               # dotenv 미설치 시 시스템 환경변수만 사용
+    pass  # dotenv 미설치 시 시스템 환경변수만 사용
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -31,7 +32,7 @@ except ImportError:
 VWORLD_KEY = os.environ.get("VWORLD_KEY", "")
 DATA_GO_KR_KEY = os.environ.get("DATA_GO_KR_KEY", "")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-LAW_GO_KR_OC = os.environ.get("LAW_GO_KR_OC", "")   # 법제처 국가법령정보 OC값(조례 취득)
+LAW_GO_KR_OC = os.environ.get("LAW_GO_KR_OC", "")  # 법제처 국가법령정보 OC값(조례 취득)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -62,7 +63,7 @@ VWORLD_ENDPOINT = "https://api.vworld.kr/req/address"
 # 이 파일 위치: BigProject_Back/app/config.py  →  BASE_DIR = 부모의 부모
 # ⚠ 상대경로("./data")는 실행 위치(cwd)에 따라 깨진다(FastAPI 는 보통 루트에서 기동).
 #   루트 기준 절대경로로 고정해 어디서 실행하든 동일하게 동작시킨다.
-BASE_DIR = Path(__file__).resolve().parent.parent           # …/BigProject_Back
+BASE_DIR = Path(__file__).resolve().parent.parent  # …/BigProject_Back
 
 # 감리(gam2) 데이터 루트 — 도메인 폴더·산출물·캐시가 모두 이 아래에 모인다.
 DATA_ROOT = Path(os.environ.get("OMNISITE_DATA_ROOT", str(BASE_DIR / "data_임시")))
@@ -73,7 +74,7 @@ DOMAIN_ROOT = DATA_ROOT
 
 # 공용 지역 데이터(경계 SHP 등) — 도메인 무관 공유
 REGION_DATA_DIR = DATA_ROOT / "region_data"
-DATA_DIR = str(REGION_DATA_DIR)                             # (구 이름 호환)
+DATA_DIR = str(REGION_DATA_DIR)  # (구 이름 호환)
 
 # 경계 폴리곤 SHP (센서스경계, 국가데이터처) — 세 파일은 같은 기준일 세트로 유지할 것.
 #   spatial_join_admin 이 좌표에 지역을 붙이는 핵심 입력이다.
@@ -126,8 +127,14 @@ CSV_ENCODINGS = ("utf-8-sig", "utf-8", "cp949", "euc-kr")
 # profile() 이 좌표 컬럼을 자동 탐지할 때 훑는 후보 이름들.
 # 데이터마다 좌표 컬럼명이 달라서 목록으로 관리(새 컬럼명은 여기에 추가).
 COORD_COL_CANDIDATES = (
-    "위도", "경도", "lat", "lng", "X좌표", "Y좌표",
-    "시설 위도(좌표값)", "시설 경도(좌표값)",
+    "위도",
+    "경도",
+    "lat",
+    "lng",
+    "X좌표",
+    "Y좌표",
+    "시설 위도(좌표값)",
+    "시설 경도(좌표값)",
 )
 
 
@@ -135,10 +142,8 @@ COORD_COL_CANDIDATES = (
 # 6. 지오코딩 호출 간격 (과호출 방지)
 # ══════════════════════════════════════════════════════════════════
 # 브이월드 API 호출 사이 대기(초). 키 등급/상황에 따라 조정.
-GEOCODE_SLEEP_SEC = 0.3          # run_geocode (주소→좌표)
+GEOCODE_SLEEP_SEC = 0.3  # run_geocode (주소→좌표)
 REVERSE_GEOCODE_SLEEP_SEC = 0.2  # reverse_geocode (좌표→시군구, 폴백)
-
-
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -174,9 +179,9 @@ def resolve_domain_dir(domain: str) -> str:
     이미 존재하는 경로를 직접 주면 그대로 사용(하위호환·테스트).
     """
     p = Path(domain)
-    if p.exists():                       # 전체/상대 경로를 직접 준 경우
+    if p.exists():  # 전체/상대 경로를 직접 준 경우
         return str(p)
-    return str(DOMAIN_ROOT / domain)     # data_임시/흡연
+    return str(DOMAIN_ROOT / domain)  # data_임시/흡연
 
 
 def domain_paths(domain_dir: str) -> dict:
@@ -190,6 +195,7 @@ def domain_paths(domain_dir: str) -> dict:
         "fixture": os.path.join(root, FIXTURE_SUBDIR),
         "profiles": os.path.join(root, FIXTURE_SUBDIR, PROFILES_NAME),
     }
+
 
 # 서버 설정
 class Settings(BaseSettings):
@@ -217,5 +223,6 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
+
 
 settings = Settings()
