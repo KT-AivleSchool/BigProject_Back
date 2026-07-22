@@ -6,6 +6,9 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+# 유사도 임계치 (데이터팀에서 3-small 적재 후 무관 질의 분포를 측정해 최적값으로 조정 예정)
+SIMILARITY_THRESHOLD = 0.25
+
 
 # [동현님 담당] pgvector Vector DB 연결 및 RAG 문서 적재/조회 모듈
 class RagVectorStorage:
@@ -70,6 +73,11 @@ class RagVectorStorage:
         조례 및 범례 다중 포맷 문서에서 추출된 텍스트 청크를 기본 조례 콜렉션(statutes_collection)에 적재합니다.
         (시설 종류는 사전에 지정하지 않고, 토론 시 AI가 의미(Semantic) 검색을 통해 관련 조례를 스스로 찾아냅니다.)
         """
+        if metadatas is not None and len(metadatas) != len(chunks):
+            raise ValueError(
+                f"metadatas 길이({len(metadatas)})와 chunks 길이({len(chunks)})가 일치하지 않습니다."
+            )
+
         try:
             if metadatas is None:
                 metadatas = [{"source": "uploaded_statute"} for _ in chunks]
@@ -88,7 +96,7 @@ class RagVectorStorage:
         '기본 조례 콜렉션(statutes_collection)'에서 비동기로 검색합니다.
         """
         if not self.statutes_store:
-            return self._get_fallback_data()
+            return []
 
         try:
             # LangChain의 비동기 유사도 검색 (asimilarity_search_with_relevance_scores) 사용
@@ -98,33 +106,26 @@ class RagVectorStorage:
             if facility_type:
                 search_kwargs["filter"] = {"facility_type": facility_type}
 
-            # [A-3] 유사도 임계치(0.25) 검사 및 점수 포함 검색
+            # [A-3] 유사도 임계치 검사 및 점수 포함 검색
             docs_with_scores = (
                 await self.statutes_store.asimilarity_search_with_relevance_scores(
                     query, **search_kwargs
                 )
             )
 
-            # 검색 결과가 없을 경우 안전한 빈 배열 또는 폴백 반환
+            # 검색 결과가 없을 경우 안전한 빈 배열 반환
             if not docs_with_scores:
-                return self._get_fallback_data()
+                return []
 
-            # 임계치 0.25 이상인 문서만 순수 텍스트(page_content) 추출
+            # 임계치 이상인 문서만 순수 텍스트(page_content) 추출
             filtered_docs = [
-                doc.page_content for doc, score in docs_with_scores if score >= 0.25
+                doc.page_content
+                for doc, score in docs_with_scores
+                if score >= SIMILARITY_THRESHOLD
             ]
-
-            if not filtered_docs:
-                return ["관련 조례 없음"]
 
             return filtered_docs
         except Exception as e:
-            # DB 미생성, 연결 오류 등에 대비한 폴백 처리 (프론트엔드 크래시 방지)
-            logger.error(
-                f"[RAG Warning] Vector DB Search Error (Falling back to dummy data): {e}"
-            )
-            return self._get_fallback_data()
-
-    def _get_fallback_data(self) -> List[str]:
-        """DB 미연결 또는 데이터 부재 시 반환되는 임시 폴백 데이터"""
-        return ["관련 조례 없음"]
+            # 호출부에서 에러를 인지할 수 있도록 예외를 던짐
+            logger.error(f"[RAG Error] Vector DB Search Error: {e}")
+            raise e
