@@ -16,9 +16,11 @@ engine = create_engine(
     connect_args={"client_encoding": "utf8"},
 )
 
+
 def find_file(keyword: str) -> Path | None:
     matches = list(DATA_DIR.glob(f"*{keyword}*"))
     return matches[0] if matches else None
+
 
 def read_any(path: Path) -> pd.DataFrame:
     for enc in ("utf-8-sig", "cp949"):
@@ -27,6 +29,7 @@ def read_any(path: Path) -> pd.DataFrame:
         except UnicodeDecodeError:
             continue
     raise UnicodeDecodeError("utf-8-sig/cp949 모두 실패", b"", 0, 1, path.name)
+
 
 # ── 1) 버스정류소: 헤더 텍스트가 뒤죽박죽이라 "위치 기준"으로 강제 지정 ──
 bus_path = find_file("버스정류소")
@@ -41,42 +44,112 @@ else:
 
 # ── 2) 나머지 테이블들 ─────────────────────────────────
 jobs = [
-    ("street_trash_bins", "가로휴지통",
-     {"설치주소": "installation_address", "경도": "longitude", "위도": "latitude"}),
-    ("subway_station_passenger_stats", "지하철역",
-     {"역명": "station_name", "총승객수": "total_passengers"}),
-    ("living_population_stats", "생활인구",
-     {"행 레이블": "row_label", "평균 성인인구수": "avg_adult_population",
-      "평균 미성년자인구수": "avg_minor_population", "평균 총생활인구수": "avg_total_population"}),
-    ("candidate_lands", "흡연부스",
-     {"부지_WKT": "land_wkt"}),
-    ("parks", "공원데이터",
-     {"시설이름": "facility_name", "경도": "longitude", "위도": "latitude"}),
-    ("cigarette_litter_hotspots", "담배꽁초",
-     {"지번주소": "parcel_address", "경도": "longitude", "위도": "latitude"}),
-    ("smoking_area_polygons", "흡연구역_폴리곤",
-     {"시설종류": "facility_type", "기준": "restriction_standard", "게이트_WKT": "gate_wkt"}),
-    ("smoking_areas", "흡연구역.csv",
-     {"서울특별시 용산구 설치 위치": "installation_location", "경도": "longitude", "위도": "latitude"}),
-    ("commercial_shops", "상가",
-     {"도로명주소": "road_address", "상권업종대분류명": "business_category",
-      "경도": "longitude", "위도": "latitude"}),
-    ("cctv_locations", "CCTV",
-     {"구분": "location_description", "위도": "latitude", "경도": "longitude"}),
-    ("public_wifi_locations", "와이파이",
-     {"구분": "location_description", "위도": "latitude", "경도": "longitude"}),
-    ("public_parking_lots", "공영주차장",
-     {"주차장명": "parking_lot_name", "소재지도로명주소": "road_address",
-      "소재지지번주소": "parcel_address", "위도": "latitude", "경도": "longitude"}),
-    ("public_toilets", "공중화장실",
-     {"구분": "location_description", "위도": "latitude", "경도": "longitude"}),
-    ("cultural_event_locations", "문화행사",
-     {"장소명": "place_name", "위도": "latitude", "경도": "longitude"}),
-    ("fire_water_facilities", "소방용수시설",
-     {"소재지도로명주소": "road_address", "경도": "longitude", "위도": "latitude"}),
-    ("national_owned_properties", "국유부동산",
-     {"주소": "address", "지목(공부)": "land_category",
-      "대장면적(단위:㎡)": "registered_area_sqm", "경도": "longitude", "위도": "latitude"}),
+    (
+        "street_trash_bins",
+        "가로휴지통",
+        {"설치주소": "installation_address", "경도": "longitude", "위도": "latitude"},
+    ),
+    (
+        "subway_station_passenger_stats",
+        "지하철역",
+        {"역명": "station_name", "총승객수": "total_passengers"},
+    ),
+    (
+        "living_population_stats",
+        "생활인구",
+        {
+            "행 레이블": "row_label",
+            "평균 성인인구수": "avg_adult_population",
+            "평균 미성년자인구수": "avg_minor_population",
+            "평균 총생활인구수": "avg_total_population",
+        },
+    ),
+    ("candidate_lands", "흡연부스", {"부지_WKT": "land_wkt"}),
+    (
+        "parks",
+        "공원데이터",
+        {"시설이름": "facility_name", "경도": "longitude", "위도": "latitude"},
+    ),
+    (
+        "cigarette_litter_hotspots",
+        "담배꽁초",
+        {"지번주소": "parcel_address", "경도": "longitude", "위도": "latitude"},
+    ),
+    (
+        "smoking_area_polygons",
+        "흡연구역_폴리곤",
+        {
+            "시설종류": "facility_type",
+            "기준": "restriction_standard",
+            "게이트_WKT": "gate_wkt",
+        },
+    ),
+    (
+        "smoking_areas",
+        "흡연구역.csv",
+        {
+            "서울특별시 용산구 설치 위치": "installation_location",
+            "경도": "longitude",
+            "위도": "latitude",
+        },
+    ),
+    (
+        "commercial_shops",
+        "상가",
+        {
+            "도로명주소": "road_address",
+            "상권업종대분류명": "business_category",
+            "경도": "longitude",
+            "위도": "latitude",
+        },
+    ),
+    (
+        "cctv_locations",
+        "CCTV",
+        {"구분": "location_description", "위도": "latitude", "경도": "longitude"},
+    ),
+    (
+        "public_wifi_locations",
+        "와이파이",
+        {"구분": "location_description", "위도": "latitude", "경도": "longitude"},
+    ),
+    (
+        "public_parking_lots",
+        "공영주차장",
+        {
+            "주차장명": "parking_lot_name",
+            "소재지도로명주소": "road_address",
+            "소재지지번주소": "parcel_address",
+            "위도": "latitude",
+            "경도": "longitude",
+        },
+    ),
+    (
+        "public_toilets",
+        "공중화장실",
+        {"구분": "location_description", "위도": "latitude", "경도": "longitude"},
+    ),
+    (
+        "cultural_event_locations",
+        "문화행사",
+        {"장소명": "place_name", "위도": "latitude", "경도": "longitude"},
+    ),
+    (
+        "fire_water_facilities",
+        "소방용수시설",
+        {"소재지도로명주소": "road_address", "경도": "longitude", "위도": "latitude"},
+    ),
+    (
+        "national_owned_properties",
+        "국유부동산",
+        {
+            "주소": "address",
+            "지목(공부)": "land_category",
+            "대장면적(단위:㎡)": "registered_area_sqm",
+            "경도": "longitude",
+            "위도": "latitude",
+        },
+    ),
 ]
 
 for table, keyword, colmap in jobs:
@@ -94,29 +167,43 @@ for table, keyword, colmap in jobs:
 
 # ── geom 채우기 ─────────────────────────────────────
 point_tables = [
-    "bus_stop_passenger_stats", "street_trash_bins", "parks",
-    "cigarette_litter_hotspots", "smoking_areas", "commercial_shops",
-    "cctv_locations", "public_wifi_locations", "public_toilets",
-    "fire_water_facilities", "cultural_event_locations",
-    "public_parking_lots", "national_owned_properties",
+    "bus_stop_passenger_stats",
+    "street_trash_bins",
+    "parks",
+    "cigarette_litter_hotspots",
+    "smoking_areas",
+    "commercial_shops",
+    "cctv_locations",
+    "public_wifi_locations",
+    "public_toilets",
+    "fire_water_facilities",
+    "cultural_event_locations",
+    "public_parking_lots",
+    "national_owned_properties",
 ]
 
 with engine.begin() as conn:
     for t in point_tables:
-        conn.execute(text(f"""
+        conn.execute(
+            text(f"""
             UPDATE {t}
             SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
             WHERE geom IS NULL AND longitude IS NOT NULL AND latitude IS NOT NULL
-        """))
-    conn.execute(text("""
+        """)
+        )
+    conn.execute(
+        text("""
         UPDATE candidate_lands
         SET geom = ST_SetSRID(ST_GeomFromText(land_wkt), 4326)
         WHERE geom IS NULL AND land_wkt IS NOT NULL
-    """))
-    conn.execute(text("""
+    """)
+    )
+    conn.execute(
+        text("""
         UPDATE smoking_area_polygons
         SET geom = ST_SetSRID(ST_GeomFromText(gate_wkt), 4326)
         WHERE geom IS NULL AND gate_wkt IS NOT NULL
-    """))
+    """)
+    )
 
 print("geom 업데이트 완료")

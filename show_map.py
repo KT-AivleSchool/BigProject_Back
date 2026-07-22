@@ -4,11 +4,13 @@ from shapely import wkt as shapely_wkt
 
 DB_USER = "postgres"
 DB_PASS = "9816"
-DB_HOST = "127.0.0.1"   # localhost 말고 이걸로 (IPv4 고정)
+DB_HOST = "127.0.0.1"  # localhost 말고 이걸로 (IPv4 고정)
 DB_PORT = "5432"
 DB_NAME = "postgres"
 
-conn = psycopg2.connect(host=DB_HOST, port=DB_PORT, dbname=DB_NAME, user=DB_USER, password=DB_PASS)
+conn = psycopg2.connect(
+    host=DB_HOST, port=DB_PORT, dbname=DB_NAME, user=DB_USER, password=DB_PASS
+)
 cur = conn.cursor()
 
 # 용산구 중심 좌표로 지도 시작
@@ -25,7 +27,9 @@ layers = [
 
 for table, name_col, color in layers:
     fg = folium.FeatureGroup(name=table)
-    cur.execute(f"SELECT {name_col}, latitude, longitude FROM {table} WHERE latitude IS NOT NULL AND longitude IS NOT NULL")
+    cur.execute(
+        f"SELECT {name_col}, latitude, longitude FROM {table} WHERE latitude IS NOT NULL AND longitude IS NOT NULL"
+    )
     rows = cur.fetchall()
     for name, lat, lon in rows:
         folium.CircleMarker(
@@ -64,7 +68,7 @@ for table, wkt_col, color, layer_name in polygon_layers:
                 fill_opacity=0.3,
             ).add_to(fg)
             success += 1
-        except Exception as e:
+        except Exception:
             failed += 1
     fg.add_to(m)
     print(f"{table}: {success}개 폴리곤 추가 (실패 {failed}개)")
