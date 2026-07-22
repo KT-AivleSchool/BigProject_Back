@@ -22,3 +22,6 @@ BigProject_Planning/
 
 # Local Dev Tests
 tests/test_geocoder.py
+
+# Dynamic Uploads & Media Files
+uploads/
