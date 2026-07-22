@@ -5,7 +5,9 @@ from fastapi import APIRouter, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 
 from app.core.sim_ai.document_loader import statute_document_loader
-from app.core.sim_ai.vector_db import vector_db
+from app.core.sim_ai.vector_db import RagVectorStorage
+
+vector_db = RagVectorStorage()
 
 router = APIRouter()
 
