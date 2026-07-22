@@ -17,10 +17,14 @@ class StatuteDocumentLoader:
         )
 
     def extract_text_from_pdf(self, file_bytes: bytes) -> str:
+        """sort=True: 텍스트 블록을 좌표(위→아래, 왼→오른쪽) 기준으로 정렬해 읽기 순서를 복원한다.
+        기본값은 PDF 내부 저장 순서라, 조판에 따라 조문 첫 줄이 앞 조문 꼬리에 붙는 현상이 발생한다
+        (실제 사례: 용산구 조례 PDF에서 '제1조(목적)' 다음 줄이 문장 중간부터 시작 → 파싱 전량 오정렬).
+        """
         doc = fitz.open(stream=file_bytes, filetype="pdf")
         text_content = []
         for page in doc:
-            text_content.append(page.get_text())
+            text_content.append(page.get_text("text", sort=True))
         doc.close()
         return "\n".join(text_content)
 

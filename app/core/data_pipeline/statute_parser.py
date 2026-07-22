@@ -18,11 +18,15 @@ CLAUSE_SPLIT_THRESHOLD = 500
 CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮"
 CLAUSE_NO = {c: str(i + 1) for i, c in enumerate(CIRCLED)}
 
-CHAPTER_RE = re.compile(r"^제(\d+)장\s+(.+?)\s*$", re.M)
-ARTICLE_START_RE = re.compile(r"^제\d+조(?:의\d+)?[\s(]", re.M)  # A1: finditer용
+# A6: 줄머리 선행 공백 허용. PDF 조판에 따라 조문이 들여쓰기된 문서가 있고,
+#     `^제\d+조`로만 잡으면 그런 문서는 매치 0건 → 청크 0개가 된다
+#     (실제 사례: 서울시교육청 교육환경평가서 규칙 — 조문 12개 전부 앞에 공백 1칸).
+#     부칙(^부 칙)도 같은 이유로 놓쳐, 부칙 조문이 본문 조문으로 섞여 들어갔다.
+CHAPTER_RE = re.compile(r"^[ \t]*제(\d+)장\s+(.+?)\s*$", re.M)
+ARTICLE_START_RE = re.compile(r"^[ \t]*제\d+조(?:의\d+)?[\s(]", re.M)  # A1: finditer용
 ARTICLE_HEAD_RE = re.compile(r"^제(\d+조(?:의\d+)?)(?:\(([^)]+)\))?\s*")
-ANNEX_RE = re.compile(r"(?=^\[?별표\s*\d*\]?)", re.M)
-ADDENDA_RE = re.compile(r"^부\s?칙", re.M)
+ANNEX_RE = re.compile(r"(?=^[ \t]*\[?별표\s*\d*\]?)", re.M)
+ADDENDA_RE = re.compile(r"^[ \t]*부\s?칙", re.M)
 CLAUSE_RE = re.compile(f"(?=[{CIRCLED}])")
 AMEND_TAG_RE = re.compile(r"\s*<(신설|개정|전문개정|일부개정)[^>]*>")  # A2
 DELETED_RE = re.compile(r"^삭제\s*(?:<[^>]*>)?\s*$")  # A3
@@ -215,6 +219,8 @@ def parse_statute(
 
 
 def length_report(chunks: List[StatuteChunk]) -> str:
+    if not chunks:
+        return "⚠️ 청크 0개 — 조문을 하나도 못 찾았습니다. 조판(들여쓰기·단 구성) 확인 필요"
     lens = sorted(len(c.text) for c in chunks)
     over = [n for n in lens if n > 1000]
     lines = [
