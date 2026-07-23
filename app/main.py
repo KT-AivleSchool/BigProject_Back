@@ -1,9 +1,47 @@
+import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 
+# DB & Redis 커넥션 인프라 수거 객체
+from app.db.session import engine
+from app.api.deps import redis_pool
+
 # 라우터 Import (v1 하위 라우터 연동)
 from app.api.v1 import auth, lands, ahp, simulations, audit, upload
+
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    [FastAPI Lifespan 생명주기 관리자]
+    서버 구동(Startup) 시 DB/Redis 커넥션 풀 웜업 및 상태 체크
+    서버 종료(Shutdown) 시 SQLAlchemy 엔진 및 Redis 풀의 비동기 커넥션을 안전하게 해제합니다.
+    """
+    logger.info("🚀 [Startup] OmniSite Backend Server starting up...")
+    logger.info(
+        f"🔗 [DB Engine] SQLAlchemy async engine initialized ({settings.PROJECT_NAME})"
+    )
+    logger.info("⚡ [Redis Pool] Redis connection pool initialized.")
+
+    yield
+
+    logger.info("🛑 [Shutdown] Server shutting down... Cleaning up connection pools.")
+    try:
+        await engine.dispose()
+        logger.info("✅ [DB Engine] SQLAlchemy async engine disposed successfully.")
+    except Exception as e:
+        logger.error(f"❌ [DB Engine Error] Engine dispose failed: {e}")
+
+    try:
+        await redis_pool.disconnect()
+        logger.info("✅ [Redis Pool] Redis connection pool disconnected successfully.")
+    except Exception as e:
+        logger.error(f"❌ [Redis Pool Error] Redis disconnect failed: {e}")
+
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -11,6 +49,7 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # CORS 미들웨어 설정 (프론트엔드 Next.js 개발 서버 연동 허용)
