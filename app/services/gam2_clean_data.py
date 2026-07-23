@@ -650,6 +650,10 @@ def clean_domain(domain_dir: str, csv_preview: bool = False, prune: bool = True)
     # whitelist 요약(생산된 것)
     wl_summary = {k: len(v) for k, v in wl.items()}
 
+    # 산출물 배열을 dataset_id 기준 정렬 (처리순 → id순).
+    # 소비 측에서 위치 인덱스로 접근할 때의 오정렬을 막기 위해 정렬해 저장.
+    report.sort(key=lambda r: r.get("dataset_id", ""))
+
     out_report = os.path.join(
         STEP2_OUTPUT_DIR, f"{prefix + '_' if prefix else ''}clean_report.json"
     )
