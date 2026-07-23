@@ -6,8 +6,12 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# 유사도 임계치 (데이터팀에서 3-small 적재 후 무관 질의 분포를 측정해 최적값으로 조정 예정)
-SIMILARITY_THRESHOLD = 0.25
+# 유사도 임계치 — 3-small 적재분(시드 6종·222청크)에서 실측한 값.
+#   관련 질의-문서 쌍 최저 0.3602 / 무관 쌍 최고 0.4416 (0.36~0.44 구간 중첩).
+#   0.36 = 관련을 하나도 잃지 않는 최댓값(관련 25/25 유지, 무관 통과 20→8건).
+#   조례 인용은 누락(근거 없이 토론 진행)이 오탐보다 치명적이라 재현율 우선.
+#   시드 코퍼스가 크게 바뀌면 재측정 필요.
+SIMILARITY_THRESHOLD = 0.36
 
 
 # [동현님 담당] pgvector Vector DB 연결 및 RAG 문서 적재/조회 모듈
