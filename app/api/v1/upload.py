@@ -1,3 +1,4 @@
+import logging
 import os
 import urllib.parse
 from typing import List
@@ -6,6 +7,8 @@ from pydantic import BaseModel, Field
 
 from app.core.sim_ai.document_loader import statute_document_loader
 from app.core.sim_ai.vector_db import RagVectorStorage
+
+logger = logging.getLogger("uvicorn.error")
 
 vector_db = RagVectorStorage()
 
@@ -91,8 +94,10 @@ async def upload_regulation(files: List[UploadFile] = File(...)):
                 ]
                 await vector_db.add_statute_chunks(chunks, metadatas=metadatas)
         except Exception as e:
-            # 텍스트 파싱 실패 시 경고 로그만 남기고 파일 저장은 유지
-            print(f"[Regulation RAG Warning] {filename} 텍스트 추출/임베딩 실패: {e}")
+            # 텍스트 파싱 실패 시 경고 로그만 남기고 파일 저장은 유지 (PR #111 피드백 반영)
+            logger.warning(
+                f"[Regulation RAG Warning] {filename} 텍스트 추출/임베딩 실패: {e}"
+            )
 
         saved_files.append(filename)
 
