@@ -114,26 +114,17 @@ async def run_debate_and_publish(
             # 2. LangGraph 초기화 및 상태 세팅
             graph = build_discussion_graph()
 
-            # [NEW] 토론 시작 전 공통 RAG(Common RAG) 1회 선검색
+            # 토론 시작 전 공통 RAG(Common RAG) 1회 선검색
             query = f"{facility_type} 설치 기준 허가 규제 갈등 중재 혜택"
             try:
                 retrieved_docs = await vector_db.retrieve_similar_statutes(
-                    query, top_k=5, facility_type=facility_type
+                    query, top_k=5
                 )
-                if not retrieved_docs:
-                    common_rag = (
-                        "현재 해당 지역에 적용할 수 있는 조례나 법령 정보가 없습니다."
-                    )
-                else:
-                    common_rag = "\n".join(retrieved_docs)
-            except Exception as e:
-                print(f"[RAG Error] 조례 검색 실패: {e}")
-                common_rag = (
-                    "현재 해당 지역에 적용할 수 있는 조례나 법령 정보가 없습니다."
-                )
+                common_rag = "\n".join(retrieved_docs)
+            except Exception:
+                common_rag = "조례 정보 없음"
 
             timestamp = datetime.datetime.now().isoformat()
-
             import random
 
             initial_state = {
@@ -159,49 +150,87 @@ async def run_debate_and_publish(
                 "next_speaker": "pro",
             }
 
-            # 내부 상태 누적용 변수
             current_state = dict(initial_state)
 
-            # 3. 그래프 비동기 스트리밍 (astream) — OpenAI Quota 초과 시 에러 이벤트 즉시 송출
-            try:
-                async for output in graph.astream(initial_state):
-                    for node_name, node_state in output.items():
+            # 3. 그래프 비동기 스트리밍 (astream_events)
+            async for event in graph.astream_events(
+                initial_state, config={"recursion_limit": 50}, version="v1"
+            ):
+                kind = event["event"]
+
+                # [NEW] 실시간 한 글자(Token) 스트리밍
+                if kind == "on_chat_model_stream":
+                    chunk = event["data"]["chunk"].content
+                    if chunk:
+                        langgraph_node = event.get("metadata", {}).get(
+                            "langgraph_node", "알 수 없음"
+                        )
+                        if langgraph_node in ["pro", "con", "gov", "gov_wrapup"]:
+                            sender_map = {
+                                "pro": "찬성",
+                                "con": "반대",
+                                "gov": "정부",
+                                "gov_wrapup": "정부",
+                            }
+                            sender = sender_map.get(langgraph_node, "참여자")
+
+                            await pubsub_manager.publish_debate_message(
+                                parcel_id, sender, chunk, is_finished=False
+                            )
+
+                # 노드 작업이 완전히 끝났을 때 상태(State) 누적 및 DB 저장
+                elif kind == "on_chain_end":
+                    node_name = event["name"]
+
+                    if node_name in [
+                        "pro",
+                        "con",
+                        "gov",
+                        "gov_wrapup",
+                        "evaluator",
+                        "reporter",
+                        "supervisor",
+                    ]:
+                        node_state = event["data"].get("output")
+                        if not node_state or not isinstance(node_state, dict):
+                            continue
+
                         # 상태 업데이트 누적
                         if "messages" in node_state:
-                            current_state["messages"].extend(node_state["messages"])
+                            appended_messages = node_state["messages"]
+                            current_state["messages"].extend(appended_messages)
+
+                            # evaluator(시스템)의 턴 종료 시 전체 메시지를 한 번에 쏴줌 (evaluator는 스트리밍 안 함)
+                            if node_name == "evaluator":
+                                if len(appended_messages) > 0:
+                                    msg = appended_messages[-1]
+                                    parts = msg.split(":", 1)
+                                    sender = (
+                                        parts[0].strip()
+                                        if len(parts) == 2
+                                        else "시스템"
+                                    )
+                                    text = parts[1].strip() if len(parts) == 2 else msg
+
+                                    await pubsub_manager.publish_debate_message(
+                                        parcel_id,
+                                        sender,
+                                        text + "\n\n",
+                                        is_finished=False,
+                                    )
+                            # 페르소나 발언 종료 시 줄바꿈 추가 (선택사항)
+                            elif node_name in ["pro", "con", "gov", "gov_wrapup"]:
+                                await pubsub_manager.publish_debate_message(
+                                    parcel_id, "", "\n\n", is_finished=False
+                                )
+
                         if "final_scenarios" in node_state:
                             current_state["final_scenarios"] = node_state[
                                 "final_scenarios"
                             ]
 
-                        if node_name in [
-                            "pro",
-                            "con",
-                            "gov",
-                            "gov_wrapup",
-                            "evaluator",
-                            "reporter",
-                        ]:
-                            if (
-                                "messages" in node_state
-                                and len(node_state["messages"]) > 0
-                            ):
-                                msg = node_state["messages"][-1]
-
-                                parts = msg.split(":", 1)
-                                if len(parts) == 2:
-                                    sender = parts[0].strip()
-                                    text = parts[1].strip()
-                                else:
-                                    sender = "참여자"
-                                    text = msg
-
-                                await pubsub_manager.publish_debate_message(
-                                    parcel_id, sender, text, is_finished=False
-                                )
-
+                        # reporter 노드가 끝나면 최종 DB 저장 및 마무리 전송
                         if node_name == "reporter":
-                            # 단일 시나리오 객체일 경우 리스트로 래핑
                             final_scenarios_obj = current_state.get(
                                 "final_scenarios", {}
                             )
@@ -215,7 +244,7 @@ async def run_debate_and_publish(
                                     "scenarios", []
                                 )
 
-                            # CSS 점수 계산 (평균 점수(0.0~1.0)를 0~10점 척도로 환산)
+                            # CSS 점수 계산 (평가 점수(0.0~1.0)를 0~10점 척도로 환산)
                             avg_acc = current_state.get("eval_score", 0.0)
                             css_score = round(avg_acc * 10, 2)
                             if css_score == 0.0:
@@ -225,7 +254,6 @@ async def run_debate_and_publish(
                             debate_logs = []
                             sys_msg = "[시스템 면책 고지] 본 모의 심의 토론 내용은 AI 페르소나 엔진에 의해 생성된 가상의 시나리오이며, 실제 인물이나 단체, 사실관계와는 전혀 무관합니다."
                             debate_logs.append({"sender": "시스템", "text": sys_msg})
-                            raw_text_lines = [sys_msg]
 
                             for msg in current_state.get("messages", []):
                                 parts = msg.split(":", 1)
@@ -233,8 +261,8 @@ async def run_debate_and_publish(
                                     s, t = parts[0].strip(), parts[1].strip()
                                 else:
                                     s, t = "참여자", msg
+
                                 debate_logs.append({"sender": s, "text": t})
-                                raw_text_lines.append(msg)
 
                             result_json = {
                                 "candidate_jibun": current_state.get("candidate_jibun"),
@@ -245,7 +273,6 @@ async def run_debate_and_publish(
                                 "ahp_weights": current_state.get("ahp_weights"),
                                 "timestamp": current_state.get("timestamp"),
                                 "debate_logs": debate_logs,
-                                "raw_text": "\n\n".join(raw_text_lines),
                                 "scenarios": final_scenarios_list,
                                 "conflict_sensitivity_score": css_score,
                                 "conflict_factors": current_state.get(
@@ -267,36 +294,103 @@ async def run_debate_and_publish(
                                 await db.rollback()
                                 print(f"=== DB 저장 실패: {e} ===")
 
+                            # Redis에도 최종 JSON 데이터 10분(600초) 임시 저장 (캐싱 및 GUI 검증용)
+                            try:
+                                cache_key = f"simulation:result:{parcel_id}"
+                                await redis.setex(
+                                    cache_key,
+                                    600,
+                                    json.dumps(result_json, ensure_ascii=False),
+                                )
+                                print(
+                                    f"=== Redis 캐시 저장 성공 (Key: {cache_key}) ==="
+                                )
+                            except Exception as cache_err:
+                                print(f"=== Redis 캐시 저장 실패: {cache_err} ===")
+
+                            # --- 최종 출력용 평문(Text) 포맷 구성 ---
+                            conflict_factors = current_state.get("ahp_weights", {})
+                            factors_list = []
+                            for k, v in conflict_factors.items():
+                                if isinstance(v, (int, float)):
+                                    factors_list.append(f"  • {k}: {v * 100:.1f}%")
+                                else:
+                                    factors_list.append(f"  • {k}: {v}")
+                            factors_str = (
+                                "\n".join(factors_list)
+                                if factors_list
+                                else "  • 주요 갈등 인자 정보 없음"
+                            )
+
+                            scenario_type = final_scenarios_obj.get(
+                                "scenario", "알 수 없음"
+                            )
+                            title = final_scenarios_obj.get(
+                                "scenario_description"
+                            ) or final_scenarios_obj.get("title", "설명 없음")
+                            acc_score = final_scenarios_obj.get(
+                                "final_acceptance_score", 0.0
+                            )
+                            try:
+                                acc_val = float(acc_score)
+                                acc_str = (
+                                    f"{acc_val * 100:.1f}%"
+                                    if acc_val <= 1.0
+                                    else f"{acc_val}%"
+                                )
+                            except Exception:
+                                acc_str = str(acc_score)
+
+                            summary = final_scenarios_obj.get("summary", "")
+                            reason = final_scenarios_obj.get("reason", "")
+                            risk_index = final_scenarios_obj.get(
+                                "conflict_risk_index", 0.0
+                            )
+                            risk_reason = final_scenarios_obj.get("risk_reason", "")
+
+                            final_text = (
+                                f"🎉 모의 심의 토론이 최종 종료되었습니다.\n\n"
+                                f"📌 [최종 시나리오 결과: {scenario_type} - {title}]\n"
+                                f"• 갈등 민감도 지수(CSS): {css_score} / 10.0\n"
+                                f"• 최종 수용도 점수: {acc_str}\n"
+                                f"• 갈등 위험 지수: {risk_index}점 ({risk_reason})\n\n"
+                                f"📊 [주요 갈등 인자 및 가중치 (Conflict Factors)]\n"
+                                f"{factors_str}\n\n"
+                                f"📝 [시나리오 요약]\n"
+                                f"{summary}\n\n"
+                                f"💡 [도출 사유]\n"
+                                f"{reason}\n\n"
+                            )
+
                             await pubsub_manager.publish_debate_message(
                                 parcel_id,
                                 "시스템",
-                                f"모의 심의 토론이 최종 종료되었습니다. 도출된 최종 단일 시나리오:\n\n{json.dumps(final_scenarios_list, ensure_ascii=False, indent=2)}",
+                                final_text,
                                 is_finished=True,
                             )
-            except Exception as graph_err:
-                err_msg = str(graph_err)
-                is_quota = "quota" in err_msg.lower() or "429" in err_msg
-                error_code = "OPENAI_QUOTA_EXCEEDED" if is_quota else "AI_ENGINE_ERROR"
 
-                print(f"[AI Simulation Error] {error_code}: {err_msg}")
-                await pubsub_manager.publish_debate_message(
-                    parcel_id,
-                    "시스템 오류",
-                    json.dumps(
-                        {
-                            "error_code": error_code,
-                            "message": (
-                                "OpenAI API Quota가 초과되었습니다. API 키 잔액을 충전하고 다시 시도해 주세요."
-                                if is_quota
-                                else f"AI 토론 엔진 오류가 발생했습니다: {err_msg}"
-                            ),
-                            "is_finished": True,
-                        },
-                        ensure_ascii=False,
-                    ),
-                )
-        except Exception as e:
-            print(f"[Fatal Simulation Error] {e}")
+        except Exception as quota_err:
+            err_msg = str(quota_err)
+            is_quota = "insufficient_quota" in err_msg or "429" in err_msg
+            error_code = "OPENAI_QUOTA_EXCEEDED" if is_quota else "AI_ENGINE_ERROR"
+            print(f"[Stream Error] {error_code}: {err_msg}")
+
+            # 에러 메시지 발행 및 스트림 강제 종료
+            await redis.publish(
+                f"debate:{parcel_id}",
+                json.dumps(
+                    {
+                        "error_code": error_code,
+                        "message": (
+                            "OpenAI API Quota가 초과되었습니다. API 키 잔액을 충전하고 다시 시도해 주세요."
+                            if is_quota
+                            else f"AI 토론 엔진 오류가 발생했습니다: {err_msg}"
+                        ),
+                        "is_finished": True,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
 
 
 @router.post("/stream", dependencies=[Depends(rate_limiter)])
@@ -313,7 +407,7 @@ async def stream_ai_discussion(
         else "감리 데이터가 제공되지 않았습니다."
     )
 
-    # 1. 백그라운드 태스크로 시뮬레이션 태스크 실행 (비동기로 루프를 돌며 Redis에 Publish)
+    # 1. 백그라운드 태스크로 모의 심의 테스트 실행 (비동기로 루프를 돌며 Redis에 Publish)
     asyncio.create_task(
         run_debate_and_publish(
             parcel_id=parcel_id,
@@ -323,7 +417,7 @@ async def stream_ai_discussion(
         )
     )
 
-    # 2. SSE 클라이언트는 동일 채널을 Subscribe하여 실시간 대사 응답
+    # 2. SSE 클라이언트는 동일 채널을 Subscribe하여 실시간 청크 응답
     pubsub_manager = RedisPubSubManager(redis)
 
     async def event_generator():

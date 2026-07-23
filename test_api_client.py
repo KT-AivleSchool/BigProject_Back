@@ -23,28 +23,47 @@ def main():
         with requests.post(url, json=payload, stream=True) as response:
             response.raise_for_status()
 
+            current_sender = None
+
             for line in response.iter_lines():
                 if line:
                     decoded_line = line.decode("utf-8")
-                    # SSE 규격(data: ...)에 맞춰서 출력
+
+                    if decoded_line.startswith("event: "):
+                        continue
+
                     if decoded_line.startswith("data: "):
                         data_content = decoded_line[6:]
                         try:
                             msg_json = json.loads(data_content)
-                            sender = msg_json.get("sender", "알 수 없음")
+
+                            # 에러 응답 처리
+                            if "error_code" in msg_json:
+                                print(f"\n[시스템 오류] {msg_json.get('message')}")
+                                continue
+
+                            sender = msg_json.get("sender") or ""
                             text = msg_json.get("text", "")
 
-                            print(f"\n[{sender}]")
-                            print(text)
+                            # 줄바꿈만 들어오는 개행 메시지는 이름 출력 없이 텍스트만 출력
+                            if not text.strip():
+                                sys.stdout.write(text)
+                                sys.stdout.flush()
+                                continue
+
+                            # 화자가 변경되었을 때만 화자 태그 출력
+                            if sender and current_sender != sender:
+                                print(f"\n[{sender}]")
+                                current_sender = sender
+
+                            # 실시간 토큰(글자)을 줄바꿈 없이 이어서 출력
+                            sys.stdout.write(text)
+                            sys.stdout.flush()
 
                         except json.JSONDecodeError:
                             print(data_content)
-                    elif decoded_line.startswith("event: "):
-                        pass  # event: message 줄은 무시하고 깔끔하게 출력
-                    else:
-                        print(decoded_line)
 
-            print("-" * 50)
+            print("\n" + "-" * 50)
             print("✅ 실시간 스트리밍이 종료되었습니다.\n")
 
     except requests.exceptions.ConnectionError:
