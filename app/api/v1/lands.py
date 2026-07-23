@@ -8,6 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.api.deps import get_db
+from app.core.cache import cache
 from app.services.gis_service import gis_service
 from app.schemas.lands import (
     UploadResponse,
@@ -70,7 +71,8 @@ def commit_hitl_correction(correction: HitlCoordinateCorrection):
 
 
 @router.get("/details/{parcel_id}", response_model=LandDetailResponse)
-def get_land_details(parcel_id: int):
+@cache(expire=600, prefix="cache:lands")
+async def get_land_details(parcel_id: int):
     """
     특정 필지 상세 조회 API 규격
     """
@@ -236,6 +238,7 @@ async def audit_csv_dataset(files: List[UploadFile] = File(...)):
 
 
 @router.get("/screen-candidate")
+@cache(expire=300, prefix="cache:lands")
 async def screen_candidate_lands(
     district_id: int, exclusion_meters: float = 10.0, db: AsyncSession = Depends(get_db)
 ):
@@ -263,6 +266,7 @@ async def screen_candidate_lands(
 
 
 @router.get("/district-boundary/{district_id}")
+@cache(expire=600, prefix="cache:lands")
 async def get_district_boundary(
     district_id: int, tolerance: float = 0.0005, db: AsyncSession = Depends(get_db)
 ):

@@ -4,6 +4,7 @@ from typing import List
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 
+from app.core.cache import cache, invalidate_cache_prefix
 from app.core.sim_ai.document_loader import statute_document_loader
 from app.core.sim_ai.vector_db import RagVectorStorage
 
@@ -22,6 +23,7 @@ class RegulationItem(BaseModel):
 
 
 @router.get("/regulations", response_model=List[RegulationItem])
+@cache(expire=300, prefix="cache:regulations")
 async def list_regulations():
     """
     [장천명 풀스택] 조례 PDF 및 법규 문서 목록 조회 API
@@ -96,6 +98,9 @@ async def upload_regulation(files: List[UploadFile] = File(...)):
 
         saved_files.append(filename)
 
+    # 신규 조례 업로드 완료 시 목록 캐시 파기
+    await invalidate_cache_prefix("cache:regulations")
+
     return {
         "status": "success",
         "message": f"{len(saved_files)}개 조례 파일이 성공적으로 적재되었습니다.",
@@ -124,6 +129,9 @@ async def delete_regulation(filename: str):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"파일 삭제 처리 중 오류가 발생했습니다: {str(e)}",
         )
+
+    # 조례 삭제 완료 시 목록 캐시 파기
+    await invalidate_cache_prefix("cache:regulations")
 
     return {
         "status": "success",
