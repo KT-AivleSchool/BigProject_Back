@@ -21,6 +21,58 @@ from app.core.security_limiter import rate_limiter
 router = APIRouter()
 
 
+def _extract_dynamic_meta_from_audit(audit_data: dict) -> dict:
+    """dummy_audit.json 및 실제 감리 AI 산출물 JSON에서 지번, 시설종류, 동적 AHP 가중치(갈등인자)를 자동 추출"""
+    if not audit_data:
+        return {}
+
+    facility_inf = audit_data.get("facility_inference", {})
+    facility = facility_inf.get("facility")
+    region = facility_inf.get("region")
+    source_input = facility_inf.get("source_input")
+
+    jibun = (
+        f"서울특별시 {region} (감리 대상 부지)"
+        if region
+        else (source_input or "서울특별시 용산구 (감리 대상 부지)")
+    )
+
+    # Dynamic AHP Weight Extraction from results[].roles
+    raw_weights = {}
+    results = audit_data.get("results", [])
+    for res in results:
+        summary = res.get("summary", "")
+        roles = res.get("roles", [])
+        for r in roles:
+            role_type = r.get("role")
+            weight = r.get("weight")
+            if (
+                role_type in ["positive_factor", "negative_factor"]
+                and weight is not None
+            ):
+                # 팩터 간략 명칭 추출
+                factor_name = (
+                    summary.split("로")[0].strip()
+                    if "로" in summary
+                    else summary[:15].strip()
+                )
+                raw_weights[factor_name] = abs(float(weight))
+
+    # 가중치 합이 1.0이 되도록 정규화
+    total_w = sum(raw_weights.values())
+    ahp_weights = {}
+    if total_w > 0:
+        for k, v in raw_weights.items():
+            ahp_weights[k] = round(v / total_w, 2)
+
+    return {
+        "facility_type": facility,
+        "jibun": jibun,
+        "ahp_weights": ahp_weights,
+    }
+
+
+# audit 데이터 중 필요한 데이터들만 정제하는 함수
 def _parse_audit_data(audit_data: dict) -> str:
     if not audit_data:
         return "프론트엔드 감리 데이터 없음"
@@ -62,41 +114,46 @@ async def run_debate_and_publish(
     facility_type: str,
     audit_context: str,
     redis: aioredis.Redis,
+    audit_data: dict = None,
 ):
     pubsub_manager = RedisPubSubManager(redis)
     async with AsyncSessionLocal() as db:
         try:
+            audit_meta = (
+                _extract_dynamic_meta_from_audit(audit_data) if audit_data else {}
+            )
+            if audit_meta.get("facility_type"):
+                facility_type = audit_meta["facility_type"]
+
             try:
                 # DB에서 parcel_id로 GIS 데이터를 조회합니다.
                 result = await db.execute(select(Parcel).where(Parcel.id == parcel_id))
                 parcel = result.scalar()
 
-                if not parcel:
-                    await pubsub_manager.publish_debate_message(
-                        parcel_id,
-                        "시스템",
-                        "해당 필지(Parcel)를 찾을 수 없습니다.",
-                        is_finished=True,
-                    )
-                    return
-
-                gis_data = {
-                    "lat": parcel.lat,
-                    "lng": parcel.lng,
-                    "jibun": parcel.jibun,
-                    "intensity_level": parcel.intensity_level,
-                    "ahp_weights": parcel.ahp_weights or {},
-                }
+                if parcel:
+                    gis_data = {
+                        "lat": parcel.lat,
+                        "lng": parcel.lng,
+                        "jibun": parcel.jibun,
+                        "intensity_level": parcel.intensity_level,
+                        "ahp_weights": parcel.ahp_weights
+                        or audit_meta.get("ahp_weights", {}),
+                    }
+                else:
+                    raise ValueError("Parcel DB record not found")
             except Exception as e:
                 print(
-                    f"[Fallback] DB 연결 실패({e}). 로컬 모의 GIS 데이터로 대체합니다."
+                    f"[Dynamic Audit Parse] DB 미발견/연결 오류({e}). Audit JSON 동적 실데이터로 구성합니다."
                 )
                 gis_data = {
                     "lat": 37.534,
                     "lng": 126.994,
-                    "jibun": "서울특별시 용산구 이태원동 123-45 (테스트용)",
+                    "jibun": audit_meta.get(
+                        "jibun", "서울특별시 용산구 이태원동 123-45 (테스트용)"
+                    ),
                     "intensity_level": "높음",
-                    "ahp_weights": {
+                    "ahp_weights": audit_meta.get("ahp_weights")
+                    or {
                         "보행혼잡도": 0.4,
                         "소음민감도": 0.3,
                         "상권활성화": 0.3,
@@ -115,14 +172,36 @@ async def run_debate_and_publish(
             graph = build_discussion_graph()
 
             # 토론 시작 전 공통 RAG(Common RAG) 1회 선검색
-            query = f"{facility_type} 설치 기준 허가 규제 갈등 중재 혜택"
+            # [A-2] 시설 종류는 질의 문자열에 섞지 않고 메타데이터 필터로만 넘긴다.
+            #   prefix를 붙이면 질의 임베딩이 시설명 쪽으로 끌려가 의미 검색이 왜곡된다
+            #   (조례 본문에 시설명 토큰이 없으므로 유사도만 떨어뜨림).
+            query = "설치 기준 허가 규제 갈등 중재 혜택"
             try:
                 retrieved_docs = await vector_db.retrieve_similar_statutes(
-                    query, top_k=5
+                    query, top_k=5, facility_type=facility_type
                 )
-                common_rag = "\n".join(retrieved_docs)
-            except Exception:
-                common_rag = "조례 정보 없음"
+                # [C-7] 0건(정상)과 검색 장애를 문구로 구분한다.
+                # common_rag는 조례데이터 rag
+                if not retrieved_docs:
+                    common_rag = (
+                        "현재 해당 지역에 적용할 수 있는 조례나 법령 정보가 없습니다."
+                    )
+                else:
+                    common_rag = "\n".join(retrieved_docs)
+            except Exception as e:
+                print(f"[RAG Error] 조례 검색 실패: {e}")
+                common_rag = "조례 검색 중 오류가 발생했습니다."
+
+            # ===== [검증용 백엔드 터미널 로그] =====
+            print("\n" + "=" * 60)
+            print("🔍 [AI 토론 엔진 - 데이터 주입 검증 로그]")
+            print("-" * 60)
+            print("1️⃣ [PGVector RAG 검색 조례 문서]:")
+            print(common_rag if common_rag else " (검색 결과 없음)")
+            print("-" * 60)
+            print("2️⃣ [Audit 감리 정제 팩터 (audit_context)]:")
+            print(audit_context if audit_context else " (감리 데이터 없음)")
+            print("=" * 60 + "\n")
 
             timestamp = datetime.datetime.now().isoformat()
             import random
@@ -414,6 +493,7 @@ async def stream_ai_discussion(
             facility_type=facility_type,
             audit_context=audit_context,
             redis=redis,
+            audit_data=request.audit_data,
         )
     )
 
