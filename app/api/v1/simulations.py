@@ -521,6 +521,7 @@ async def get_simulation_results(parcel_id: int, db: AsyncSession = Depends(get_
 
 
 @router.get("/results/{parcel_id}/pdf")
+@router.get("/report/{parcel_id}")
 async def download_feasibility_report_pdf(
     parcel_id: int, db: AsyncSession = Depends(get_db)
 ):
@@ -543,6 +544,30 @@ async def download_feasibility_report_pdf(
         )
 
     res_json = sim_data.result_json or {}
+    if not res_json:
+        raise HTTPException(
+            status_code=404,
+            detail="[SIMULATION_NOT_FOUND] 시뮬레이션 결과 데이터가 존재하지 않습니다.",
+        )
+
+    candidate_lat = res_json.get("candidate_lat")
+    candidate_lng = res_json.get("candidate_lng")
+    if (
+        candidate_lat is None
+        or candidate_lng is None
+        or (candidate_lat == 0.0 and candidate_lng == 0.0)
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="[GEOCODING_FAILED] 시뮬레이션 대상의 유효한 위경도 좌표가 존재하지 않습니다.",
+        )
+
+    css_score = res_json.get("conflict_sensitivity_score")
+    if css_score is None:
+        raise HTTPException(
+            status_code=503,
+            detail="[AI_SCORE_UNAVAILABLE] 갈등 민감도 지수(CSS) 연산에 실패했거나 아직 완료되지 않았습니다.",
+        )
 
     # 2. PDF 조립용 컨텍스트 정보 포맷팅
     # 시나리오 추출 로직 (DB에 저장된 scenarios 배열에서 첫 번째 항목 가져오기)
@@ -555,10 +580,10 @@ async def download_feasibility_report_pdf(
 
     report_data = {
         "candidate_jibun": res_json.get("candidate_jibun", "알 수 없음"),
-        "candidate_lat": res_json.get("candidate_lat", 0.0),
-        "candidate_lng": res_json.get("candidate_lng", 0.0),
+        "candidate_lat": candidate_lat,
+        "candidate_lng": candidate_lng,
         "facility_type": res_json.get("facility_type", "지정되지 않음"),
-        "conflict_sensitivity_score": res_json.get("conflict_sensitivity_score", 7.8),
+        "conflict_sensitivity_score": css_score,
         "ahp_weights": res_json.get("ahp_weights", {}),
         "scenario": scenario_obj,
         "debate_logs": res_json.get("debate_logs", []),
