@@ -66,6 +66,8 @@ def main():
     ap.add_argument("--alpha", type=float, default=0.3)
     ap.add_argument("--auto-radius", action="store_true",
                     help="mini 제안값 자동 사용(HITL 생략, 테스트용)")
+    ap.add_argument("--no-diag", action="store_true",
+                    help="표본 대표성·alpha 민감도 진단 생략")
     args = ap.parse_args()
 
     loader, report = make_loader(args.domain)
@@ -102,9 +104,20 @@ def main():
             if i["kind"] == "admin":
                 continue
             cur = radius_conf[i["id"]]["radius_m"]
-            v = input(f"     [{i['id']}] R({cur}m)= ").strip()
-            if v:
-                radius_conf[i["id"]]["radius_m"] = int(v)
+            while True:                       # 잘못된 입력에 파이프라인이 죽지 않게 재입력
+                v = input(f"     [{i['id']}] R({cur}m)= ").strip()
+                if not v:                     # 엔터 = 제안값 승인
+                    break
+                try:
+                    r = int(v)
+                except ValueError:
+                    print(f"        숫자만 입력하세요 (엔터=승인). 입력값: {v[:40]}")
+                    continue
+                if not (1 <= r <= 5000):
+                    print("        1~5000m 범위로 입력하세요.")
+                    continue
+                radius_conf[i["id"]]["radius_m"] = r
+                break
         radius_conf["_confirmed"] = True
     radius_m = {k: v.get("radius_m") for k, v in radius_conf.items() if not k.startswith("_")}
 
@@ -142,6 +155,18 @@ def main():
     w_c = W.critic_weights(norm, sparse_ids=sparse)
     boot = W.critic_bootstrap(norm, sparse_ids=sparse, B=1000)
     w_f = W.synthesize(w_h, w_c, alpha=args.alpha, sparse_ids=sparse)
+
+    # [진단] 표본 대표성 · alpha 민감도  (--no-diag 로 생략 가능)
+    if not args.no_diag:
+        # 후보의 계층(법정동) — 주소에서 추출. 없으면 층화 검사는 생략된다.
+        strata = None
+        addr_col = next((col for col in c.columns if "소재지" in str(col)), None)
+        if addr_col:
+            strata = c[addr_col].astype(str).str.extract(r"구\s+(\S+?)\s")[0]
+            if strata.isna().mean() > 0.5:
+                strata = None
+        W.diagnose_sample_bias(mat, inds, sparse, strata=strata)
+        W.diagnose_alpha(w_h, w_c, sparse)
 
     print("\n" + "="*70)
     print(f"[가중치] alpha={args.alpha}  (사람 {1-args.alpha:.0%} / 데이터 {args.alpha:.0%})")

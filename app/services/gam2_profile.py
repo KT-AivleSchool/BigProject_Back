@@ -396,10 +396,10 @@ def _assign_id(filename: str, manifest: dict) -> str:
         for key in sorted(manifest, key=len, reverse=True):  # 부분문자열(긴 키 우선)
             if unicodedata.normalize("NFC", key) in fn:
                 return manifest[key]
-<<<<<<< HEAD
+
     # manifest 없이 단독 호출 시: 파일명(확장자 뗀 것) 자체를 ID 로.
     # (폴더 단위 profile_folder 는 가나다순 seq 를 쓰므로 여기로 안 온다)
-    return stem
+    return stem.split("_")[0]  # 폴백: 'A1_...' → 'A1'
 
 
 # 지역 접두어·출처기관·접미어는 '이름 정리용 불용어'다(지역 하드코딩 아님).
@@ -407,10 +407,6 @@ _GEO_PREFIX = ["서울특별시", "서울시", "전국", "경기도", "인천광
 _STOP_TAIL = ["표준데이터", "표준 데이터", "위치정보", "기본정보", "세대현황",
               "현황", "정보", "데이터", "서울", "마스터"]
 
-
-=======
-    return stem.split("_")[0]  # 폴백: 'A1_...' → 'A1'
->>>>>>> b39792236327604b68ea723bdaad6505bd555c18
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -474,20 +470,11 @@ def profile_folder(folder: str, max_rows: int = PROFILE_MAX_ROWS) -> dict:
     profiles: dict[str, dict] = {}
     for seq, path in enumerate(data_paths, 1):
         fname = os.path.basename(path)
-<<<<<<< HEAD
         # manifest 있으면 그 매핑, 없으면 가나다순 2자리 번호
         did = _assign_id(fname, manifest) if manifest else f"{seq:02d}"
         try:
             prof = profile_file(path, dataset_id=did, max_rows=max_rows)
         except Exception as e:                        # noqa: BLE001
-=======
-        if fname == MANIFEST_NAME or fname.startswith("._"):  # 매핑파일·macOS 파편 제외
-            continue
-        did = _assign_id(fname, manifest)
-        try:
-            p = profile_file(path, dataset_id=did, max_rows=max_rows)
-        except Exception as e:  # noqa: BLE001
->>>>>>> b39792236327604b68ea723bdaad6505bd555c18
             print(f"[profile] 건너뜀 {fname}: {e}")
             continue
         if did in profiles:
