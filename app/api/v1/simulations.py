@@ -31,7 +31,11 @@ def _extract_dynamic_meta_from_audit(audit_data: dict) -> dict:
     region = facility_inf.get("region")
     source_input = facility_inf.get("source_input")
 
-    jibun = f"서울특별시 {region} (감리 대상 부지)" if region else (source_input or "서울특별시 용산구 (감리 대상 부지)")
+    jibun = (
+        f"서울특별시 {region} (감리 대상 부지)"
+        if region
+        else (source_input or "서울특별시 용산구 (감리 대상 부지)")
+    )
 
     # Dynamic AHP Weight Extraction from results[].roles
     raw_weights = {}
@@ -42,9 +46,16 @@ def _extract_dynamic_meta_from_audit(audit_data: dict) -> dict:
         for r in roles:
             role_type = r.get("role")
             weight = r.get("weight")
-            if role_type in ["positive_factor", "negative_factor"] and weight is not None:
+            if (
+                role_type in ["positive_factor", "negative_factor"]
+                and weight is not None
+            ):
                 # 팩터 간략 명칭 추출
-                factor_name = summary.split("로")[0].strip() if "로" in summary else summary[:15].strip()
+                factor_name = (
+                    summary.split("로")[0].strip()
+                    if "로" in summary
+                    else summary[:15].strip()
+                )
                 raw_weights[factor_name] = abs(float(weight))
 
     # 가중치 합이 1.0이 되도록 정규화
@@ -108,7 +119,9 @@ async def run_debate_and_publish(
     pubsub_manager = RedisPubSubManager(redis)
     async with AsyncSessionLocal() as db:
         try:
-            audit_meta = _extract_dynamic_meta_from_audit(audit_data) if audit_data else {}
+            audit_meta = (
+                _extract_dynamic_meta_from_audit(audit_data) if audit_data else {}
+            )
             if audit_meta.get("facility_type"):
                 facility_type = audit_meta["facility_type"]
 
@@ -123,7 +136,8 @@ async def run_debate_and_publish(
                         "lng": parcel.lng,
                         "jibun": parcel.jibun,
                         "intensity_level": parcel.intensity_level,
-                        "ahp_weights": parcel.ahp_weights or audit_meta.get("ahp_weights", {}),
+                        "ahp_weights": parcel.ahp_weights
+                        or audit_meta.get("ahp_weights", {}),
                     }
                 else:
                     raise ValueError("Parcel DB record not found")
@@ -134,9 +148,12 @@ async def run_debate_and_publish(
                 gis_data = {
                     "lat": 37.534,
                     "lng": 126.994,
-                    "jibun": audit_meta.get("jibun", "서울특별시 용산구 이태원동 123-45 (테스트용)"),
+                    "jibun": audit_meta.get(
+                        "jibun", "서울특별시 용산구 이태원동 123-45 (테스트용)"
+                    ),
                     "intensity_level": "높음",
-                    "ahp_weights": audit_meta.get("ahp_weights") or {
+                    "ahp_weights": audit_meta.get("ahp_weights")
+                    or {
                         "보행혼잡도": 0.4,
                         "소음민감도": 0.3,
                         "상권활성화": 0.3,
