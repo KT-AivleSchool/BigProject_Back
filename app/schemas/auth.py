@@ -1,18 +1,63 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
+import re
+
 
 class UserRegister(BaseModel):
     email: EmailStr = Field(..., description="사용자 이메일 주소 (ID 역할)")
-    password: str = Field(..., min_length=6, description="비밀번호 (최소 6자 이상)")
+    password: str = Field(..., description="비밀번호 (영문, 숫자, 특수문자 조합)")
     username: str = Field(..., description="실무자 이름")
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_complexity(cls, v: str) -> str:
+        # 1. 공백 포함 여부 선제 차단 (PR #114 리뷰 피드백 반영)
+        if bool(re.search(r"\s", v)):
+            raise ValueError("비밀번호에는 공백을 포함할 수 없습니다.")
+
+        # 2. 허가되지 않은 특수문자/문자 배제 (화이트리스트 검증)
+        allowed_pattern = r"^[a-zA-Z0-9!@#$%^&*(),.?\":{}|<>\-_]+$"
+        if not bool(re.match(allowed_pattern, v)):
+            raise ValueError(
+                '비밀번호에 허가되지 않은 문자가 포함되어 있습니다. (허용 특수문자: !@#$%^&*(),.?":{}|<>-_)'
+            )
+
+        has_eng = bool(re.search(r"[a-zA-Z]", v))
+        has_num = bool(re.search(r"\d", v))
+        # 명시적인 특수문자 범위 지정 (공백/한글 우회 차단)
+        has_spec = bool(re.search(r"[!@#$%^&*(),.?\":{}|<>\-_]", v))
+
+        types_count = sum([has_eng, has_num, has_spec])
+
+        # 3종류 조합인 경우 최소 8자리 이상
+        if types_count >= 3:
+            if len(v) < 8:
+                raise ValueError(
+                    "영문, 숫자, 특수문자를 모두 포함하는 경우 최소 8자리 이상이어야 합니다."
+                )
+        # 2종류 조합인 경우 최소 10자리 이상
+        elif types_count == 2:
+            if len(v) < 10:
+                raise ValueError(
+                    "영문, 숫자, 특수문자 중 2종류를 조합하는 경우 최소 10자리 이상이어야 합니다."
+                )
+        else:
+            raise ValueError(
+                "비밀번호는 영문, 숫자, 특수문자 중 최소 2종류 이상을 조합해야 합니다."
+            )
+
+        return v
+
 
 class UserLogin(BaseModel):
     email: EmailStr = Field(..., description="사용자 이메일 주소")
     password: str = Field(..., description="비밀번호")
 
+
 class TokenResponse(BaseModel):
     access_token: str = Field(..., description="JWT Access Token")
     token_type: str = Field("bearer", description="토큰 타입")
     expires_in_minutes: int = Field(..., description="토큰 만료 시간")
+
 
 class UserResponse(BaseModel):
     id: int = Field(..., description="DB 고유 식별 ID")
