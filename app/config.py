@@ -76,6 +76,9 @@ DOMAIN_ROOT = DATA_ROOT
 REGION_DATA_DIR = DATA_ROOT / "region_data"
 DATA_DIR = str(REGION_DATA_DIR)  # (구 이름 호환)
 
+# 국유·공유 재산 후보지 (도메인 무관 공용 — 위치선정 후보 풀)
+NATIONAL_PROPERTY_CSV = str(REGION_DATA_DIR / "국유부동산_위경도_v2.csv")
+
 # 경계 폴리곤 SHP (센서스경계, 국가데이터처) — 세 파일은 같은 기준일 세트로 유지할 것.
 #   spatial_join_admin 이 좌표에 지역을 붙이는 핵심 입력이다.
 #   ADM_DONG : ADM_CD(행정동 8자리)·ADM_NM(행정동명 '이촌1동')
@@ -91,11 +94,14 @@ SIDO_SHP = str(REGION_DATA_DIR / "BND_SIDO_PG.shp")
 # 시트 '행정동코드': 통계청행정동코드 · 행자부행정동코드 · 시도명 · 시군구명 · 행정동명
 ADM_CODE_MAP = str(REGION_DATA_DIR / "행정동코드_매핑정보_20241218.xlsx")
 
-# 감리 AI 산출물 폴더(감리 결과 JSON)
+# 감리(STEP 1) AI 산출물 폴더(감리 결과 JSON)
 STEP1_OUTPUT_DIR = os.environ.get("OMNISITE_STEP1_DIR", str(DATA_ROOT / "step1_output"))
 
 # 정제(STEP 2) 산출물 — 정제 데이터 gpkg/csv + clean_report.json. 없으면 코드가 생성.
 STEP2_OUTPUT_DIR = os.environ.get("OMNISITE_STEP2_DIR", str(DATA_ROOT / "step2_output"))
+
+# 가중치 모델(STEP 3) 산출물 — weight_set.json (감리·정제 → 최종 가중치)   ← 추가
+STEP3_OUTPUT_DIR = os.environ.get("OMNISITE_STEP3_DIR", str(DATA_ROOT / "step3_output"))
 
 # 캐시 폴더(배제반경 등 재사용 캐시). 결과물과 분리 관리.
 SEARCH_CACHE_DIR = os.environ.get("OMNISITE_CACHE_DIR", str(DATA_ROOT / "search_cache"))
