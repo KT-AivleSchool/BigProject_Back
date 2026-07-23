@@ -10,9 +10,14 @@ class UserRegister(BaseModel):
     @field_validator("password")
     @classmethod
     def validate_password_complexity(cls, v: str) -> str:
+        # 공백 포함 여부 선제 차단 (PR #114 리뷰 피드백 반영)
+        if bool(re.search(r"\s", v)):
+            raise ValueError("비밀번호에는 공백을 포함할 수 없습니다.")
+
         has_eng = bool(re.search(r"[a-zA-Z]", v))
         has_num = bool(re.search(r"\d", v))
-        has_spec = bool(re.search(r"[^a-zA-Z0-9]", v))
+        # 명시적인 특수문자 범위 지정 (공백/한글 우회 차단)
+        has_spec = bool(re.search(r"[!@#$%^&*(),.?\":{}|<>]", v))
 
         types_count = sum([has_eng, has_num, has_spec])
 
