@@ -1,7 +1,15 @@
 import io
 import fitz  # PyMuPDF
-import docx  # python-docx
-import olefile  # HWP5
+
+try:
+    import docx  # python-docx
+except ImportError:
+    docx = None
+
+try:
+    import olefile  # HWP5
+except ImportError:
+    olefile = None
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from typing import List
@@ -25,6 +33,8 @@ class StatuteDocumentLoader:
         return "\n".join(text_content)
 
     def extract_text_from_docx(self, file_bytes: bytes) -> str:
+        if not docx:
+            raise ValueError("docx 파싱 패키지(python-docx)가 설치되어 있지 않습니다.")
         doc = docx.Document(io.BytesIO(file_bytes))
         return "\n".join([para.text for para in doc.paragraphs])
 
@@ -33,6 +43,8 @@ class StatuteDocumentLoader:
         HWP5 파일의 구조를 olefile로 해독하여 텍스트를 추출합니다.
         가장 안정적인 방식인 PrvText(미리보기 텍스트) 스트림을 우선 추출합니다.
         """
+        if not olefile:
+            raise ValueError("hwp 파싱 패키지(olefile)가 설치되어 있지 않습니다.")
         try:
             with olefile.OleFileIO(file_bytes) as f:
                 if f.exists("PrvText"):
@@ -44,7 +56,7 @@ class StatuteDocumentLoader:
                     raise ValueError(
                         "해당 HWP 파일에는 텍스트 정보(PrvText)가 포함되어 있지 않아 단순 추출이 불가능합니다."
                     )
-        except olefile.OleError as e:
+        except Exception as e:
             raise ValueError(f"올바른 HWP 파일 형식이 아닙니다: {str(e)}")
 
     def process_document(self, file_bytes: bytes, extension: str) -> List[str]:
