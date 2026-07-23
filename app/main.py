@@ -11,7 +11,8 @@ from app.api.deps import redis_pool
 # 라우터 Import (v1 하위 라우터 연동)
 from app.api.v1 import auth, lands, ahp, simulations, audit, upload
 
-logger = logging.getLogger(__name__)
+# Uvicorn 콘솔 로거 인스턴스 획득 (터미널에 INFO 로그가 바로 노출되도록 설정)
+logger = logging.getLogger("uvicorn.error")
 
 
 @asynccontextmanager
