@@ -112,8 +112,8 @@ apt-get install -y \
 향후 Alembic 오토마이그레이션(`alembic revision --autogenerate`)을 도입할 경우, `alembic/env.py` 파일 **최상단**에 아래 두 줄을 반드시 추가해야 합니다:
 
 ```python
-import geoalchemy2          # PostGIS Geometry 컬럼 Alembic 인식을 위한 선행 임포트 (필수)
-import geoalchemy2.types    # 커스텀 공간 타입 서브클래스 완전 등록
+import geoalchemy2  # PostGIS Geometry 컬럼 Alembic 인식을 위한 선행 임포트 (필수)
+import geoalchemy2.types  # 커스텀 공간 타입 서브클래스 완전 등록
 ```
 
 > 이 두 줄이 없으면 `alembic revision --autogenerate` 실행 시 Geometry 컬럼을 인식하지 못하여 마이그레이션 스크립트가 비정상 생성됩니다.
