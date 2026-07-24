@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>입지 타당성 및 갈등 시뮬레이션 보고서</title>
+    <style>
+        @font-face {
+            font-family: 'NanumGothic';
+            src: url('file://{{ font_path }}') format('truetype');
+        }
+        @page {
+            size: A4;
+            margin: 2cm;
+            @bottom-right {
+                content: "페이지 " counter(page) " / " counter(pages);
+                font-family: 'NanumGothic', sans-serif;
+                font-size: 10pt;
+                color: #666;
+            }
+        }
+        body {
+            font-family: 'NanumGothic', sans-serif;
+            color: #333;
+            line-height: 1.6;
+            font-size: 11pt;
+            margin: 0;
+            padding: 0;
+        }
+        .header {
+            text-align: center;
+            border-bottom: 2px solid #2563eb;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            color: #1e3a8a;
+            font-size: 24pt;
+            margin: 0;
+        }
+        .header p {
+            color: #64748b;
+            font-size: 12pt;
+            margin-top: 10px;
+        }
+        h2 {
+            color: #1d4ed8;
+            font-size: 16pt;
+            border-left: 5px solid #3b82f6;
+            padding-left: 10px;
+            margin-top: 30px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+            margin-bottom: 20px;
+        }
+        th, td {
+            border: 1px solid #cbd5e1;
+            padding: 10px;
+            text-align: left;
+        }
+        th {
+            background-color: #f1f5f9;
+            color: #334155;
+            font-weight: bold;
+            width: 30%;
+        }
+        .score-box {
+            background-color: #eff6ff;
+            border: 1px solid #bfdbfe;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            margin: 20px 0;
+        }
+        .score-box h3 {
+            margin: 0;
+            color: #1e40af;
+            font-size: 14pt;
+        }
+        .score-value {
+            font-size: 28pt;
+            font-weight: bold;
+            color: #b91c1c;
+            margin-top: 10px;
+        }
+        .scenario-box {
+            background-color: #f8fafc;
+            border: 1px solid #e2e8f0;
+            padding: 15px;
+            border-radius: 6px;
+        }
+        .debate-log {
+            margin-top: 10px;
+        }
+        .log-entry {
+            margin-bottom: 15px;
+            padding: 10px;
+            border-radius: 8px;
+        }
+        .log-entry.찬성 {
+            background-color: #f0fdf4;
+            border-left: 4px solid #22c55e;
+        }
+        .log-entry.반대 {
+            background-color: #fef2f2;
+            border-left: 4px solid #ef4444;
+        }
+        .log-entry.정부, .log-entry.시스템 {
+            background-color: #f8fafc;
+            border-left: 4px solid #64748b;
+        }
+        .sender {
+            font-weight: bold;
+            margin-bottom: 5px;
+            color: #0f172a;
+        }
+        .page-break {
+            page-break-before: always;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>입지 타당성 및 갈등 시뮬레이션 보고서</h1>
+        <p>OmniSite AI 기반 입지-주민 갈등 선제적 분석 시스템</p>
+    </div>
+
+    <h2>1. 분석 대상 요약</h2>
+    <table>
+        <tr>
+            <th>대상 주소 (지번)</th>
+            <td>{{ candidate_jibun }}</td>
+        </tr>
+        <tr>
+            <th>건립 예정 시설</th>
+            <td>{{ facility_type }}</td>
+        </tr>
+        <tr>
+            <th>위경도 좌표</th>
+            <td>위도: {{ candidate_lat }}, 경도: {{ candidate_lng }}</td>
+        </tr>
+    </table>
+
+    <h2>2. 갈등 민감도 종합 평가</h2>
+    <div class="score-box">
+        <h3>갈등 민감도 지수 (Conflict Sensitivity Score)</h3>
+        <div class="score-value">{{ conflict_sensitivity_score }} / 100</div>
+        <p style="margin-top:10px; color:#475569; font-size:10pt;">
+            * 점수가 높을수록 해당 입지에서의 주민 수용성이 낮고 갈등 발생 확률이 높음을 의미합니다.
+        </p>
+    </div>
+
+    <h2>3. AHP 평가 지표 가중치</h2>
+    <table>
+        <thead>
+            <tr>
+                <th style="width: 50%;">평가 지표 (요인)</th>
+                <th style="width: 50%;">산출 가중치 (%)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for key, val in ahp_weights.items() %}
+            <tr>
+                <td>{{ key }}</td>
+                <td>{{ (val * 100)|round(1) }}%</td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="2" style="text-align:center;">가중치 데이터가 없습니다.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="page-break"></div>
+
+    <h2>4. AI 모의 심의 시나리오 요약</h2>
+    <div class="scenario-box">
+        {% if scenario is mapping %}
+            <p><strong>시나리오명:</strong> {{ scenario.get('title', scenario.get('scenario_name', '기본 시나리오')) }}</p>
+            <p><strong>주요 갈등 요인:</strong> {{ scenario.get('description', scenario.get('conflict_points', '설명 없음')) }}</p>
+        {% elif scenario is string %}
+            <p>{{ scenario }}</p>
+        {% else %}
+            <p>시나리오 세부 정보가 생성되지 않았습니다.</p>
+        {% endif %}
+    </div>
+
+    <h2>5. 모의 심의 토론 회의록 (Debate Logs)</h2>
+    <div class="debate-log">
+        {% for log in debate_logs %}
+        <div class="log-entry {{ log.sender }}">
+            <div class="sender">[{{ log.sender }}]</div>
+            <div>{{ log.text }}</div>
+        </div>
+        {% else %}
+        <div style="color: #64748b;">토론 기록이 존재하지 않습니다.</div>
+        {% endfor %}
+    </div>
+
+</body>
+</html>
