@@ -175,7 +175,7 @@ async def run_debate_and_publish(
             # [A-2] 시설 종류는 질의 문자열에 섞지 않고 메타데이터 필터로만 넘긴다.
             #   prefix를 붙이면 질의 임베딩이 시설명 쪽으로 끌려가 의미 검색이 왜곡된다
             #   (조례 본문에 시설명 토큰이 없으므로 유사도만 떨어뜨림).
-            query = "설치 기준 허가 규제 갈등 중재 혜택"
+            query = f"{facility_type} 금연구역 지정 흡연시설 설치 위치 거리 제한 조건"
             try:
                 retrieved_docs = await vector_db.retrieve_similar_statutes(
                     query, top_k=5, facility_type=facility_type
