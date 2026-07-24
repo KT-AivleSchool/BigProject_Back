@@ -20,7 +20,7 @@ DSN = os.getenv(
     "DATABASE_URL",
     "host=localhost port=5432 dbname=omnisite user=postgres password=본인비번",
 )
-BASE = r"c:/Users/User/Projects/BigProject_Back/app/data/04.최종_데이터"
+BASE = "./Datasets"
 
 
 def rd(fname):
@@ -51,56 +51,37 @@ cur = conn.cursor()
 # ─────────────────────────────────────────────────────────────────
 POINT_SPEC = [
     (
-        "01_버스정류소_유동인구_v2.csv",
+        "4_indicators/01.버스정류소_유동인구.csv",
         "bus_stop_passenger_stats",
         [("정류소명", "stop_name"), ("월평균승객수", "monthly_avg_passengers")],
     ),
     (
-        "02. 용산구_가로휴지통.csv",
+        "4_indicators/02. 용산구_가로휴지통.csv",
         "street_trash_bins",
         [("설치주소", "installation_address")],
     ),
-    ("06. 용산구_공원데이터.xlsx", "parks", [("시설이름", "facility_name")]),
     (
-        "07_담배꽁초_상습_무단투기_v3.csv",
+        "4_indicators/06. 용산구_공원데이터.xlsx",
+        "parks",
+        [("시설이름", "facility_name")],
+    ),
+    (
+        "4_indicators/07. 담배꽁초_상습_무단투기.csv",
         "cigarette_litter_hotspots",
         [("지번주소", "parcel_address")],
     ),
     (
-        "09. 서울특별시_용산구_흡연구역.csv",
+        "3_restrictions/서울특별시_용산구_흡연구역.csv",
         "smoking_areas",
         [("서울특별시 용산구 설치 위치", "installation_location")],
     ),
     (
-        "10. 소상공인시장진흥공단_상가.csv",
+        "4_indicators/10. 소상공인시장진흥공단_상가.csv",
         "commercial_shops",
         [("도로명주소", "road_address"), ("상권업종대분류명", "business_category")],
     ),
-    ("용산구_CCTV.csv", "cctv_locations", [("구분", "location_description")]),
     (
-        "용산구_공공와이파이.csv",
-        "public_wifi_locations",
-        [("구분", "location_description")],
-    ),
-    ("용산구_공중화장실.csv", "public_toilets", [("구분", "location_description")]),
-    (
-        "용산구_소방용수시설_v2.csv",
-        "fire_water_facilities",
-        [("소재지도로명주소", "road_address")],
-    ),
-    ("용산구_문화행사.csv", "cultural_event_locations", [("장소명", "place_name")]),
-    (
-        "용산구_공영주차장.csv",
-        "public_parking_lots",
-        [
-            ("주차장명", "parking_lot_name"),
-            ("소재지도로명주소", "road_address"),
-            ("소재지지번주소", "parcel_address"),
-        ],
-    ),
-    # ★ 신규 17번
-    (
-        "국유부동산_위경도_v2.csv",
+        "2_cadastral/11. 국유부동산정보.csv",
         "national_properties",
         [
             ("소재지(지번)", "parcel_address"),
@@ -147,7 +128,7 @@ for fname, table, mapping in POINT_SPEC:
 # ─────────────────────────────────────────────────────────────────
 print("\n=== 폴리곤 데이터 적재 ===")
 
-c = rd("05.용산구_부지면적_좌표(흡연부스 후보).csv")
+c = rd("4_indicators/05.용산구_부지면적_좌표(흡연부스 후보).csv")
 rows = [(w, w) for w in c["부지_WKT"]]
 execute_values(
     cur,
@@ -158,7 +139,7 @@ execute_values(
 )
 print(f"  candidate_lands                {len(rows):6d}  (invalid 22건 MakeValid 처리)")
 
-g = rd("08.용산구_전체_흡연구역_폴리곤.csv")
+g = rd("3_restrictions/용산구_전체_흡연구역_폴리곤.csv")
 rows = [
     (r["시설종류"], r["기준"], r["게이트_WKT"], r["게이트_WKT"])
     for _, r in g.iterrows()
@@ -177,7 +158,7 @@ print(f"  smoking_area_polygons          {len(rows):6d}")
 # ─────────────────────────────────────────────────────────────────
 print("\n=== 집계 데이터 적재 ===")
 
-s = rd("03. 지하철역_유동인구.csv")
+s = rd("4_indicators/03. 지하철역_유동인구.csv")
 rows = [
     (str(r["역명"]).strip(), int(pd.to_numeric(r["총승객수"], errors="coerce") or 0))
     for _, r in s.iterrows()
@@ -191,7 +172,7 @@ execute_values(
 )
 print(f"  subway_station_passenger_stats {len(rows):6d}")
 
-p = rd("04. 생활인구.csv")
+p = rd("4_indicators/04. 생활인구.csv")
 rows = []
 for _, r in p.iterrows():
     label = str(r["행 레이블"]).strip()

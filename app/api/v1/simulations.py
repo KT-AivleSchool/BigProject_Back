@@ -2,16 +2,17 @@ import json
 import datetime
 import asyncio
 import redis.asyncio as aioredis
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from app.schemas.simulations import SimulationResultResponse, StreamRequest
+from app.schemas.simulations import SimulationResultResponse
 from app.core.sim_ai.graph import build_discussion_graph, vector_db
 from app.api.deps import get_db, get_redis
 from app.db.models.simulation import Parcel, ConflictSimulation
+from app.db.models.precedent import VerifiedPrecedent
 from app.services.pdf_service import pdf_builder
 from app.db.session import AsyncSessionLocal
 from app.utils.redis_pubsub import RedisPubSubManager
@@ -472,19 +473,15 @@ async def run_debate_and_publish(
             )
 
 
-@router.post("/stream", dependencies=[Depends(rate_limiter)])
+@router.get("/stream", dependencies=[Depends(rate_limiter)])
 async def stream_ai_discussion(
-    request: StreamRequest, redis: aioredis.Redis = Depends(get_redis)
+    parcel_id: int = Query(..., description="시뮬레이션할 적격 후보지 필지 ID"),
+    facility_type: str = Query("시설", description="건립할 시설의 종류"),
+    redis: aioredis.Redis = Depends(get_redis),
 ):
-    parcel_id = request.parcel_id
-    facility_type = request.facility_type
-
-    # 전달받은 JSON 데이터를 파싱하여 텍스트로 정제
-    audit_context = (
-        _parse_audit_data(request.audit_data)
-        if request.audit_data
-        else "감리 데이터가 제공되지 않았습니다."
-    )
+    # GET 요청(EventSource)에서는 대용량 audit_data를 URL로 넘기기 어려우므로 생략합니다.
+    # 서버에 저장된 최신 감리 결과가 있다면 추후 읽어오도록 개선 가능합니다.
+    audit_context = "감리 데이터가 제공되지 않았습니다."
 
     # 1. 백그라운드 태스크로 모의 심의 테스트 실행 (비동기로 루프를 돌며 Redis에 Publish)
     asyncio.create_task(
@@ -493,7 +490,7 @@ async def stream_ai_discussion(
             facility_type=facility_type,
             audit_context=audit_context,
             redis=redis,
-            audit_data=request.audit_data,
+            audit_data=None,
         )
     )
 
@@ -521,7 +518,7 @@ async def get_simulation_results(parcel_id: int, db: AsyncSession = Depends(get_
         .where(ConflictSimulation.parcel_id == parcel_id)
         .order_by(ConflictSimulation.id.desc())
     )
-    sim_data = result.scalar_first()
+    sim_data = result.scalars().first()
 
     # DB에 적재된 이력이 없을 경우 404 예외 처리
     if not sim_data:
@@ -615,7 +612,7 @@ async def download_feasibility_report_pdf(
         .where(ConflictSimulation.parcel_id == parcel_id)
         .order_by(ConflictSimulation.id.desc())
     )
-    sim_data = result.scalar_first()
+    sim_data = result.scalars().first()
 
     if not sim_data:
         raise HTTPException(
@@ -684,3 +681,36 @@ async def download_feasibility_report_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+@router.get("/history")
+async def get_simulation_history(db: AsyncSession = Depends(get_db)):
+    """
+    [장천명 풀스택] 대시보드용 시뮬레이션 이력 목록 조회 API
+    ConflictSimulation(이력), Parcel(주소), VerifiedPrecedent(검증상태)를 조인하여 반환합니다.
+    """
+    stmt = (
+        select(ConflictSimulation, Parcel.jibun, VerifiedPrecedent.id)
+        .outerjoin(Parcel, ConflictSimulation.parcel_id == Parcel.id)
+        .outerjoin(
+            VerifiedPrecedent, ConflictSimulation.id == VerifiedPrecedent.parcel_id
+        )
+        .order_by(ConflictSimulation.created_at.desc())
+    )
+    result = await db.execute(stmt)
+    rows = result.all()
+
+    history_list = []
+    for sim, jibun, vp_id in rows:
+        history_list.append(
+            {
+                "id": sim.id,
+                "date": sim.created_at.strftime("%Y-%m-%d"),
+                "region": jibun or "알 수 없는 지역",
+                "infra": sim.facility_type,
+                "pnuCount": 1,
+                "status": "행정 종결",
+                "auditState": "검증 완료" if vp_id is not None else "대기 중",
+            }
+        )
+    return history_list
