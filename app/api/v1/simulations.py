@@ -15,7 +15,7 @@ from app.db.models.simulation import Parcel, ConflictSimulation
 from app.services.pdf_service import pdf_builder
 from app.db.session import AsyncSessionLocal
 from app.utils.redis_pubsub import RedisPubSubManager
-from app.core.security_limiter import rate_limiter
+from app.utils.security_limiter import rate_limiter
 
 # API 라우터 인스턴스 초기화
 router = APIRouter()

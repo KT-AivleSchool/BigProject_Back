@@ -8,7 +8,7 @@ from app.config import settings
 from app.db.base import User
 from app.utils.auth_utils import create_access_token
 from app.schemas.auth import UserRegister, UserLogin, TokenResponse, UserResponse
-from app.core.security_limiter import LoginLockoutManager
+from app.utils.security_limiter import LoginLockoutManager
 import redis.asyncio as aioredis
 import bcrypt
 
