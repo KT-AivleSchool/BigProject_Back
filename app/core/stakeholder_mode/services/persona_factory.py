@@ -1,4 +1,4 @@
-# [이해관계자 페르소나 모드] PersonaConfig 생성 팩토리 서비스
+# [이해관계자 페르소나 모드] Phase 2 확장 PersonaConfig 생성 팩토리 서비스
 from typing import List
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -9,7 +9,7 @@ from app.core.stakeholder_mode.schemas.stakeholder import (
     OrdinanceContext,
     StakeholderCandidate
 )
-from app.core.stakeholder_mode.schemas.persona import PersonaConfig
+from app.core.stakeholder_mode.schemas.persona import PersonaConfig, Priority
 
 
 async def create_persona_configs(
@@ -20,9 +20,9 @@ async def create_persona_configs(
     model_name: str = "gpt-4o-mini"
 ) -> List[PersonaConfig]:
     """
-    [PersonaConfig 팩토리 서비스]
-    사용자가 최종 선택/수정한 StakeholderCandidate 목록을 순회하며
-    LLM을 통해 관심사, 우려사항, 초기 입장, 수용 조건 및 근거 ID가 매핑된 PersonaConfig 객체들을 생성합니다.
+    [Phase 2 확장 PersonaConfig 팩토리 서비스]
+    사용자가 선택/수정한 이해관계자 목록을 바탕으로 중요도 등급(A~D), 참여 유형, 관심사별 가중치(priorities)
+    및 절대 수용 불가 조건(non_negotiable_conditions)이 설정된 PersonaConfig 객체들을 생성합니다.
     """
     # 1. LLM 클라이언트 인스턴스 초기화
     llm = ChatOpenAI(
@@ -45,18 +45,23 @@ async def create_persona_configs(
         persona_id = f"PERSONA-{index:03d}"
         
         system_prompt = f"""당신은 AI 페르소나 설계 전문가입니다.
-주어진 이해관계자 정보({candidate.name}, 유형: {candidate.stakeholder_type})와 토론 주제를 바탕으로, 해당 이해관계자의 가상 페르소나 설정 객체(PersonaConfig)를 구체적으로 작성하세요.
+주어진 이해관계자 정보({candidate.name}, 유형: {candidate.stakeholder_type})와 토론 주제를 바탕으로, 해당 이해관계자의 상세 페르소나 설정 객체(PersonaConfig)를 작성하세요.
 
-- persona_id: '{persona_id}'로 지정하세요.
-- display_name: '{candidate.name}'로 지정하세요.
-- stakeholder_type: '{candidate.stakeholder_type}'로 지정하세요.
-- relationship_to_topic: '{candidate.relationship_to_topic}'를 포함하여 자세히 명시하세요.
-- interests: 관심사 2~4개
-- concerns: 우려사항 2~4개
+[작성 가이드라인]
+- persona_id: '{persona_id}'
+- display_name: '{candidate.name}'
+- stakeholder_type: '{candidate.stakeholder_type}'
+- relationship_to_topic: '{candidate.relationship_to_topic}'를 포함하여 명시하세요.
+- importance_grade: 안건에서의 중요도 등급 ('A': 핵심, 'B': 주요, 'C': 참고, 'D': 단순관찰 중 하나)
+- participation_type: 참여 유형 ('essential': 필수, 'optional': 선택, 'reference': 참고 중 하나)
+- priorities: 핵심 우선순위 평가 기준 및 가중치 목록 (Priority: criterion, weight [합계 약 1.0])
+- interests: 주요 관심사 2~4개
+- concerns: 주요 우려사항 2~4개
 - initial_position: 초기 입장 ('support', 'conditional_support', 'opposition', 'conditional_opposition' 중 하나)
 - acceptable_conditions: 수용 가능한 조건 1~3개
-- evidence_ids: 제공된 근거 ID 목록 중 관련 ID 선택 {evidence_ids}
-- ordinance_chunk_ids: 제공된 조례 청크 ID 목록 중 관련 ID 선택 {ordinance_ids}"""
+- non_negotiable_conditions: 절대 타협/수용 불가능한 배제 조건 1~2개
+- evidence_ids: 제공된 근거 ID 목록 중 선택 {evidence_ids}
+- ordinance_chunk_ids: 제공된 조례 청크 ID 목록 중 선택 {ordinance_ids}"""
 
         user_prompt = f"주제: {topic}\n이해관계자 추천 사유: {candidate.recommendation_reason}\n\nPersonaConfig를 생성해 주세요."
 

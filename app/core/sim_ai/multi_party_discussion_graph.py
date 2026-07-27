@@ -10,12 +10,11 @@ from app.core.sim_ai.multi_party_discussion_prompts import (
     RESIDENT_ROLE_PROMPT,
     MERCHANT_ROLE_PROMPT,
     OFFICER_ROLE_PROMPT,
-    EVALUATOR_ROLE_PROMPT if 'EVALUATOR_ROLE_PROMPT' in globals() else EVALUATOR_PROMPT,
+    EVALUATOR_PROMPT,
     REPORTER_PROMPT,
     ECOLOGIST_ROLE_PROMPT,
     YOUTH_ROLE_PROMPT,
-    SAFETY_OFFICER_ROLE_PROMPT,
-    EVALUATOR_PROMPT
+    SAFETY_OFFICER_ROLE_PROMPT
 )
 from app.core.sim_ai.vector_db import RagVectorStorage
 from app.config import settings
