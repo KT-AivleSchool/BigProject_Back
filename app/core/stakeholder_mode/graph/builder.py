@@ -1,3 +1,4 @@
+# [이해관계자 페르소나 모드] LangGraph 워크플로우 빌더 및 컴파일러
 from langgraph.graph import StateGraph, START, END
 
 from app.core.stakeholder_mode.graph.state import StakeholderGraphState
@@ -13,19 +14,23 @@ from app.core.stakeholder_mode.graph.nodes import (
 
 
 def create_stakeholder_graph():
-    """이해관계자 페르소나 모드 LangGraph를 생성하고 컴파일합니다."""
+    """
+    [LangGraph 그래프 구축 및 컴파일 함수]
+    이해관계자 페르소나 모드 7단계 파이프라인 노드를 등록하고 순차적 엣지를 연결한 후 컴파일된 그래프 객체를 반환합니다.
+    """
+    # 1. StakeholderGraphState 상태 객체를 기반으로 StateGraph 파이프라인 생성
     workflow = StateGraph(StakeholderGraphState)
 
-    # 1. 노드 등록
-    workflow.add_node("receive_input", receive_input_node)
-    workflow.add_node("recommend_stakeholders", recommend_stakeholders_node)
-    workflow.add_node("review_stakeholders", review_stakeholders_node)
-    workflow.add_node("create_personas", create_personas_node)
-    workflow.add_node("render_prompts", render_prompts_node)
-    workflow.add_node("run_personas", run_personas_node)
-    workflow.add_node("aggregate_results", aggregate_results_node)
+    # 2. 7개 실행 노드 등록
+    workflow.add_node("receive_input", receive_input_node)               # 1. 입력 데이터 수신/파싱
+    workflow.add_node("recommend_stakeholders", recommend_stakeholders_node) # 2. 이해관계자 3~5개 LLM 추천
+    workflow.add_node("review_stakeholders", review_stakeholders_node)    # 3. 사용자 선택 및 수정 (HITL)
+    workflow.add_node("create_personas", create_personas_node)           # 4. PersonaConfig 객체 생성
+    workflow.add_node("render_prompts", render_prompts_node)             # 5. Jinja2 프롬프트 렌더링
+    workflow.add_node("run_personas", run_personas_node)                 # 6. 페르소나별 독립 평가 실행
+    workflow.add_node("aggregate_results", aggregate_results_node)       # 7. 평가 결과 종합 집계
 
-    # 2. 엣지 연결 (순차 파이프라인)
+    # 3. 순차적 파이프라인 엣지(Edge) 연결
     workflow.add_edge(START, "receive_input")
     workflow.add_edge("receive_input", "recommend_stakeholders")
     workflow.add_edge("recommend_stakeholders", "review_stakeholders")
@@ -35,8 +40,9 @@ def create_stakeholder_graph():
     workflow.add_edge("run_personas", "aggregate_results")
     workflow.add_edge("aggregate_results", END)
 
-    # 3. 그래프 컴파일
+    # 4. 실행 가능한 그래프로 컴파일하여 반환
     return workflow.compile()
 
 
+# 외부에서 바로 불러와 실행할 수 있는 전역 그래프 인스턴스 export
 stakeholder_graph = create_stakeholder_graph()

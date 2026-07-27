@@ -1,4 +1,4 @@
-import uuid
+# [이해관계자 페르소나 모드] PersonaConfig 생성 팩토리 서비스
 from typing import List
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -19,20 +19,28 @@ async def create_persona_configs(
     ordinance_contexts: List[OrdinanceContext],
     model_name: str = "gpt-4o-mini"
 ) -> List[PersonaConfig]:
-    """선택 및 수정된 StakeholderCandidate 목록을 받아 각각 상세 PersonaConfig로 변환합니다."""
+    """
+    [PersonaConfig 팩토리 서비스]
+    사용자가 최종 선택/수정한 StakeholderCandidate 목록을 순회하며
+    LLM을 통해 관심사, 우려사항, 초기 입장, 수용 조건 및 근거 ID가 매핑된 PersonaConfig 객체들을 생성합니다.
+    """
+    # 1. LLM 클라이언트 인스턴스 초기화
     llm = ChatOpenAI(
         api_key=settings.OPENAI_API_KEY,
         model=model_name,
         temperature=0.7
     )
     
+    # 2. PersonaConfig Pydantic 모델에 맞춘 구조화 출력 바인딩
     structured_llm = llm.with_structured_output(PersonaConfig)
     
+    # 3. 근거 ID 및 조례 ID 목록 생성
     evidence_ids = [site.candidate_id for site in candidate_sites]
     ordinance_ids = [ord_item.chunk_id for ord_item in ordinance_contexts]
 
     persona_configs: List[PersonaConfig] = []
 
+    # 4. 각 이해관계자별로 PersonaConfig 객체 비동기 생성
     for index, candidate in enumerate(selected_stakeholders, start=1):
         persona_id = f"PERSONA-{index:03d}"
         
@@ -57,7 +65,7 @@ async def create_persona_configs(
             HumanMessage(content=user_prompt)
         ])
         
-        # ID 및 기본값 보장
+        # 5. 필수 ID 및 디스플레이 이름 정규화 보장
         config.persona_id = persona_id
         config.display_name = candidate.name
         config.stakeholder_type = candidate.stakeholder_type
