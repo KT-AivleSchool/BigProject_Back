@@ -22,6 +22,7 @@ class PipelineRunRequest(BaseModel):
 
 class PipelineRunResponse(BaseModel):
     status: str = Field("success", description="파이프라인 실행 결과 상태")
+    session_id: str = Field(..., description="발급되거나 유지된 고유 세션 ID")
     domain: str = Field(..., description="실행된 도메인명")
     user_intent: str = Field(..., description="사용자 목적")
     artifacts: Dict[str, str] = Field(..., description="생성된 산출물 파일 경로 목록")
@@ -62,4 +63,18 @@ class PipelineWeightResponse(BaseModel):
     is_valid: bool = Field(..., description="합리성 판정 임계치 통과 여부")
     weights: Dict[str, float] = Field(
         ..., description="산출된 최종 요소별 정규화 가중치"
+    )
+
+
+class PipelineSessionStateResponse(BaseModel):
+    status: str = Field("success", description="처리 결과 상태")
+    session_id: str = Field(..., description="조회된 세션 ID")
+    current_step: str = Field(..., description="현재 세션의 파이프라인 단계")
+    payload: Dict[str, Any] = Field(..., description="Redis 캐시에 저장된 상태 객체")
+
+
+class PipelineHitlReviewRequest(BaseModel):
+    session_id: str = Field(..., description="확정할 파이프라인 세션 ID")
+    review_data: Dict[str, Any] = Field(
+        ..., description="사람(HITL)이 확정한 배제반경 및 역할 보정 데이터"
     )

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import uuid
 from typing import AsyncGenerator
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -14,10 +15,13 @@ from app.schemas.pipeline import (
     PipelineCleanResponse,
     PipelineWeightRequest,
     PipelineWeightResponse,
+    PipelineSessionStateResponse,
+    PipelineHitlReviewRequest,
 )
 from app.services import gam2_run_pipeline
 from app.services import gam2_clean_data
 from app.services import ahp_service
+from app.services import pipeline_session_service
 from app.utils.redis_pubsub import RedisPubSubManager
 
 logger = logging.getLogger(__name__)
@@ -33,7 +37,9 @@ async def run_gam2_pipeline(
     """
     [장천명 풀스택] GAM2(Geospatial AI Model 2) 데이터 감리 및 정제 파이프라인 전체 과정 비동기 실행 API
     - STEP 0(프로파일링) ➔ STEP 1(AI 감리/배제반경 파싱) ➔ STEP 2(상위법 검색) 파이프라인을 비동기로 실행합니다.
+    - 이슈 #157: 파이프라인 진행 상태 및 결과를 Redis 캐시(simulation:{session_id}:step_state)에 24시간 저장합니다.
     """
+    session_id = request.session_id or f"sim_{uuid.uuid4().hex[:12]}"
     try:
         # Non-blocking async wrapping to prevent blocking FastAPI event loop
         artifacts = await asyncio.to_thread(
@@ -44,8 +50,23 @@ async def run_gam2_pipeline(
             request.mock,
         )
 
+        # 이슈 #157: Redis 인메모리 세션에 파이프라인 결과 페이로드 및 상태 24시간 저장
+        payload = {
+            "domain_name": request.domain_name,
+            "user_intent": request.user_intent,
+            "artifacts": artifacts,
+        }
+        await pipeline_session_service.save_session_state(
+            redis=redis,
+            session_id=session_id,
+            step_name="STEP2_ENRICHED_COMPLETE",
+            payload=payload,
+            ttl=86400,
+        )
+
         return {
             "status": "success",
+            "session_id": session_id,
             "domain": request.domain_name,
             "user_intent": request.user_intent,
             "artifacts": artifacts,
@@ -63,6 +84,57 @@ async def run_gam2_pipeline(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"GAM2 파이프라인 실행 중 오류가 발생했습니다: {str(e)}",
         )
+
+
+@router.get("/state/{session_id}", response_model=PipelineSessionStateResponse)
+async def get_pipeline_session_state(
+    session_id: str,
+    redis: aioredis.Redis = Depends(get_redis),
+):
+    """
+    [장천명 풀스택] [이슈 #157] Redis 세션 캐시에서 파이프라인 세션 상태 조회 API
+    - 세션이 존재하지 않거나 24시간 TTL 만료 시 '존재하지 않거나 만료된 세션입니다.' (HTTP 404) 반환
+    """
+    state = await pipeline_session_service.get_session_state(redis, session_id)
+    if not state:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="존재하지 않거나 만료된 세션입니다.",
+        )
+
+    return {
+        "status": "success",
+        "session_id": session_id,
+        "current_step": state.get("current_step", "UNKNOWN"),
+        "payload": state.get("payload", {}),
+    }
+
+
+@router.post("/hitl/review", response_model=PipelineSessionStateResponse)
+async def update_pipeline_hitl_review(
+    request: PipelineHitlReviewRequest,
+    redis: aioredis.Redis = Depends(get_redis),
+):
+    """
+    [장천명 풀스택] [이슈 #157] 프론트엔드 모달에서 사용자가 확정한 HITL 보정 결과를 Redis 세션에 갱신하는 API
+    """
+    updated = await pipeline_session_service.update_session_hitl(
+        redis=redis,
+        session_id=request.session_id,
+        review_data=request.review_data,
+    )
+    if not updated:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="존재하지 않거나 만료된 세션입니다.",
+        )
+
+    return {
+        "status": "success",
+        "session_id": request.session_id,
+        "current_step": updated.get("current_step", "WAITING_FOR_CLEANING"),
+        "payload": updated.get("payload", {}),
+    }
 
 
 @router.post("/clean", response_model=PipelineCleanResponse)
