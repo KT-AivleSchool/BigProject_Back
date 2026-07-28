@@ -3,37 +3,25 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
+from app.api.v1 import pipeline
+from app.utils.memory_pubsub import pipeline_pubsub
+import asyncio
 
-# DB & Redis 커넥션 인프라 수거 객체
-
-from app.api.deps import redis_pool
-
-# 라우터 Import (v1 하위 라우터 연동)
-from app.api.v1 import auth, lands, ahp, simulations, audit, upload
-
-# Uvicorn 콘솔 로거 인스턴스 획득 (터미널에 INFO 로그가 바로 노출되도록 설정)
 logger = logging.getLogger("uvicorn.error")
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    [FastAPI Lifespan 생명주기 관리자]
-    서버 구동(Startup) 시 DB/Redis 커넥션 풀 웜업 및 상태 체크
-    서버 종료(Shutdown) 시 SQLAlchemy 엔진 및 Redis 풀의 비동기 커넥션을 안전하게 해제합니다.
+    [FastAPI Lifespan]
+    In-Memory Pub/Sub 큐에 이벤트 루프를 바인딩하여 
+    SSE 통신이 동기/비동기 혼합 환경에서 뻗지 않도록 설정합니다.
     """
     logger.info("🚀 [Startup] OmniSite Backend Server starting up...")
-    logger.info("⚡ [Redis Pool] Redis connection pool initialized.")
-
+    pipeline_pubsub.loop = asyncio.get_running_loop()
+    
     yield
-
-    logger.info("🛑 [Shutdown] Server shutting down... Cleaning up connection pools.")
-    try:
-        await redis_pool.disconnect()
-        logger.info("✅ [Redis Pool] Redis connection pool disconnected successfully.")
-    except Exception as e:
-        logger.error(f"❌ [Redis Pool Error] Redis disconnect failed: {e}")
-
+    
+    logger.info("🛑 [Shutdown] Server shutting down...")
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -44,19 +32,20 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS 미들웨어 설정 (프론트엔드 Next.js 개발 서버 연동 허용)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 개발 단계 전체 허용, 상용 시 도메인 타이트닝 설정 가능
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 라우터 연결
+app.include_router(
+    pipeline.router,
+    prefix=settings.API_V1_STR + "/pipeline",
+    tags=["GAM2 Pipeline"],
+)
 
-
-# 루트 헬스체크 엔드포인트
 @app.get("/", tags=["Health Check"])
 def read_root():
     return {
