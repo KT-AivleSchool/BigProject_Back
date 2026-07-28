@@ -1,8 +1,17 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, Dict, Any, List
 
 
-class PipelineRunRequest(BaseModel):
+class PipelineBaseModel(BaseModel):
+    """
+    [이슈 #165 Client-Trust Policy]
+    프론트엔드 통신 유연성을 위해 추가/변형 필드가 유입되어도 422 에러로 자르지 않고 관대하게 허용
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+
+class PipelineRunRequest(PipelineBaseModel):
     domain_name: str = Field(
         ..., description="도메인 명칭 (예: '흡연', '재활용', 'EV')"
     )
@@ -20,7 +29,7 @@ class PipelineRunRequest(BaseModel):
     )
 
 
-class PipelineRunResponse(BaseModel):
+class PipelineRunResponse(PipelineBaseModel):
     status: str = Field("success", description="파이프라인 실행 결과 상태")
     session_id: str = Field(..., description="발급되거나 유지된 고유 세션 ID")
     domain: str = Field(..., description="실행된 도메인명")
@@ -31,7 +40,7 @@ class PipelineRunResponse(BaseModel):
     )
 
 
-class PipelineCleanRequest(BaseModel):
+class PipelineCleanRequest(PipelineBaseModel):
     domain_name: str = Field(
         ..., description="도메인 명칭 (예: '흡연', '재활용', 'EV')"
     )
@@ -39,7 +48,7 @@ class PipelineCleanRequest(BaseModel):
     no_prune: bool = Field(False, description="기존 산출물 보존 여부")
 
 
-class PipelineCleanResponse(BaseModel):
+class PipelineCleanResponse(PipelineBaseModel):
     status: str = Field("success", description="처리 상태")
     domain: str = Field(..., description="도메인명")
     cleaned_files: List[str] = Field(
@@ -48,13 +57,13 @@ class PipelineCleanResponse(BaseModel):
     report_file: str = Field(..., description="정제 결과 보고서 JSON 파일 경로")
 
 
-class PipelineWeightRequest(BaseModel):
+class PipelineWeightRequest(PipelineBaseModel):
     domain_name: str = Field(
         ..., description="도메인 명칭 (예: '흡연', '재활용', 'EV')"
     )
 
 
-class PipelineWeightResponse(BaseModel):
+class PipelineWeightResponse(PipelineBaseModel):
     status: str = Field("success", description="처리 상태")
     domain: str = Field(..., description="도메인명")
     consistency_ratio: float = Field(
@@ -66,15 +75,16 @@ class PipelineWeightResponse(BaseModel):
     )
 
 
-class PipelineSessionStateResponse(BaseModel):
+class PipelineSessionStateResponse(PipelineBaseModel):
     status: str = Field("success", description="처리 결과 상태")
     session_id: str = Field(..., description="조회된 세션 ID")
     current_step: str = Field(..., description="현재 세션의 파이프라인 단계")
     payload: Dict[str, Any] = Field(..., description="Redis 캐시에 저장된 상태 객체")
 
 
-class PipelineHitlReviewRequest(BaseModel):
+class PipelineHitlReviewRequest(PipelineBaseModel):
     session_id: str = Field(..., description="확정할 파이프라인 세션 ID")
     review_data: Dict[str, Any] = Field(
-        ..., description="사람(HITL)이 확정한 배제반경 및 역할 보정 데이터"
+        default_factory=dict,
+        description="사람(HITL)이 확정한 배제반경 및 역할 보정 데이터 (Client-Trust 적용)",
     )

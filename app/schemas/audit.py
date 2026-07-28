@@ -1,9 +1,17 @@
 from typing import Optional
+from pydantic import BaseModel, ConfigDict, Field
 
-from pydantic import BaseModel, Field
+
+class AuditBaseModel(BaseModel):
+    """
+    [이슈 #165 Client-Trust Policy]
+    프론트엔드 통신 유연성을 위해 추가/변형 필드가 유입되어도 422 에러로 자르지 않고 관대하게 허용
+    """
+
+    model_config = ConfigDict(extra="allow")
 
 
-class ParsedDocumentMetadata(BaseModel):
+class ParsedDocumentMetadata(AuditBaseModel):
     """PDF 공문서에서 정규식으로 추출한 메타데이터 서브 스키마 (리뷰 반영 추가)"""
 
     parsed_jibun: Optional[str] = Field(None, description="파싱된 지번 주소")
@@ -12,7 +20,7 @@ class ParsedDocumentMetadata(BaseModel):
     document_no: Optional[str] = Field(None, description="공문 문서 번호")
 
 
-class AuditVerifyResponse(BaseModel):
+class AuditVerifyResponse(AuditBaseModel):
     ocr_success: bool = Field(..., description="OCR PDF 텍스트 추출 성공 여부")
     extracted_text_snippet: str = Field(
         ..., description="추출된 텍스트 일부 스니펫 (준공 검사 요약)"
@@ -33,7 +41,7 @@ class AuditVerifyResponse(BaseModel):
     )
 
 
-class AuditSaveResponse(BaseModel):
+class AuditSaveResponse(AuditBaseModel):
     audit_id: int = Field(..., description="등록된 Audit 레코드 ID")
     is_feedback_loop_isolated: bool = Field(
         True,
