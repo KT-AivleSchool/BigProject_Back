@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 
 # DB & Redis 커넥션 인프라 수거 객체
-from app.db.session import engine
+
 from app.api.deps import redis_pool
 
 # 라우터 Import (v1 하위 라우터 연동)
@@ -23,20 +23,11 @@ async def lifespan(app: FastAPI):
     서버 종료(Shutdown) 시 SQLAlchemy 엔진 및 Redis 풀의 비동기 커넥션을 안전하게 해제합니다.
     """
     logger.info("🚀 [Startup] OmniSite Backend Server starting up...")
-    logger.info(
-        f"🔗 [DB Engine] SQLAlchemy async engine initialized ({settings.PROJECT_NAME})"
-    )
     logger.info("⚡ [Redis Pool] Redis connection pool initialized.")
 
     yield
 
     logger.info("🛑 [Shutdown] Server shutting down... Cleaning up connection pools.")
-    try:
-        await engine.dispose()
-        logger.info("✅ [DB Engine] SQLAlchemy async engine disposed successfully.")
-    except Exception as e:
-        logger.error(f"❌ [DB Engine Error] Engine dispose failed: {e}")
-
     try:
         await redis_pool.disconnect()
         logger.info("✅ [Redis Pool] Redis connection pool disconnected successfully.")
@@ -63,31 +54,6 @@ app.add_middleware(
 )
 
 # 라우터 연결
-app.include_router(
-    auth.router, prefix=settings.API_V1_STR + "/auth", tags=["Authentication"]
-)
-app.include_router(
-    lands.router, prefix=settings.API_V1_STR + "/lands", tags=["Lands & HITL"]
-)
-app.include_router(ahp.router, prefix=settings.API_V1_STR + "/ahp", tags=["AHP Engine"])
-app.include_router(
-    simulations.router,
-    prefix=settings.API_V1_STR + "/simulation",
-    tags=["AI Simulation"],
-)
-app.include_router(
-    simulations.router,
-    prefix=settings.API_V1_STR + "/simulations",
-    tags=["AI Simulation"],
-)
-app.include_router(
-    audit.router, prefix=settings.API_V1_STR + "/audit", tags=["Audit AI"]
-)
-app.include_router(
-    upload.router,
-    prefix=settings.API_V1_STR + "/upload",
-    tags=["Regulation & File Upload"],
-)
 
 
 # 루트 헬스체크 엔드포인트
