@@ -1,9 +1,11 @@
 import asyncio
 import uuid
 from typing import Any, Dict
-from fastapi import APIRouter, BackgroundTasks, HTTPException, status
+import redis.asyncio as aioredis
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sse_starlette.sse import EventSourceResponse
 
+from app.api.deps import get_redis
 from app.schemas.pipeline import (
     PipelineCleanRequest,
     PipelineCleanResponse,
@@ -15,6 +17,7 @@ from app.schemas.pipeline import (
     PipelineWeightResponse,
 )
 from app.services.pipeline_session_service import PipelineSessionService
+from app.utils.redis_pubsub import RedisPubSubManager
 from app.utils.inmemory_pubsub import pipeline_pubsub
 
 router = APIRouter()
@@ -22,7 +25,7 @@ router = APIRouter()
 
 def _execute_pipeline_sync(session_id: str, req: PipelineRunRequest) -> Dict[str, Any]:
     """
-    파이프라인 동기 연산 백그라운드 태스크
+    [이슈 #185] 파이프라인 동기 연산 백그라운드 태스크
     """
     def progress_callback(step: str, progress: int, text: str):
         payload = {
@@ -34,9 +37,7 @@ def _execute_pipeline_sync(session_id: str, req: PipelineRunRequest) -> Dict[str
         pipeline_pubsub.publish_sync(session_id, payload)
 
     progress_callback("audit", 10, "GAM2 파이프라인 데이터 프로파일링 시작")
-    time_stamp = uuid.uuid4().hex[:6]
 
-    # 세션 상태 갱신
     session_payload = {
         "domain": req.domain_name,
         "user_intent": req.user_intent,
@@ -92,7 +93,7 @@ async def run_pipeline_endpoint(
     "/state/{session_id}",
     response_model=PipelineSessionStateResponse,
     status_code=status.HTTP_200_OK,
-    summary="인메모리 세션 상태 조회",
+    summary="세션 상태 조회",
 )
 async def get_session_state_endpoint(session_id: str):
     session_data = PipelineSessionService.get_session_state(session_id)
@@ -170,9 +171,13 @@ async def calculate_weight_endpoint(req: PipelineWeightRequest):
 
 @router.get(
     "/stream/{session_id}",
-    summary="SSE 실시간 진행 상황 및 로그 스트리밍",
+    summary="[이슈 #185] Redis Pub/Sub 기반 SSE 실시간 진행 상황 및 라이브 로그 스트리밍",
 )
-async def stream_pipeline_events(session_id: str):
+async def stream_pipeline_events(
+    session_id: str,
+    redis: aioredis.Redis = Depends(get_redis)
+):
+    pubsub_manager = RedisPubSubManager(redis)
     return EventSourceResponse(
-        pipeline_pubsub.subscribe_pipeline_stream(session_id)
+        pubsub_manager.subscribe_pipeline_stream(session_id)
     )
