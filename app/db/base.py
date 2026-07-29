@@ -22,6 +22,7 @@ from app.db.models.stats import (
     CivilComplaint,
     AgeDemographics,
 )
+from app.db.models.rag_feedback import RagFeedbackLog
 
 __all__ = [
     "Base",
@@ -42,4 +43,5 @@ __all__ = [
     "PopulationStat",
     "CivilComplaint",
     "AgeDemographics",
+    "RagFeedbackLog",
 ]

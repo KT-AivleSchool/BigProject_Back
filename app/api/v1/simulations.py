@@ -172,10 +172,21 @@ async def run_debate_and_publish(
             graph = build_discussion_graph()
 
             # 토론 시작 전 공통 RAG(Common RAG) 1회 선검색
-            # [A-2] 시설 종류는 질의 문자열에 섞지 않고 메타데이터 필터로만 넘긴다.
-            #   prefix를 붙이면 질의 임베딩이 시설명 쪽으로 끌려가 의미 검색이 왜곡된다
-            #   (조례 본문에 시설명 토큰이 없으므로 유사도만 떨어뜨림).
-            query = "설치 기준 허가 규제 갈등 중재 혜택"
+            # [A-2] 시설 종류별 맞춤형 검색 키워드 매핑 (범용성 확보)
+            facility_keywords = {
+                "흡연부스": "금연구역 지정 흡연시설 간접흡연 위치 거리 제한 조건",
+                "전기차 충전소": "전기자동차 충전시설 주차장 면적 할당 화재 안전 규제",
+                "청년주택": "청년주택 공공임대 용적률 완화 역세권 지원 혜택",
+                "소각장": "폐기물 처리시설 환경오염 배출 허용 기준 주민 보상 갈등",
+            }
+            
+            # 딕셔너리에 시설이 있으면 해당 키워드 사용, 없으면 기본(범용) 키워드 사용
+            specific_keywords = facility_keywords.get(
+                facility_type, "설치 기준 허가 규제 갈등 중재 혜택 제한 조건"
+            )
+            
+            # 시설 이름과 맞춤 키워드를 결합하여 최종 쿼리 생성
+            query = f"{facility_type} {specific_keywords}"
             try:
                 retrieved_docs = await vector_db.retrieve_similar_statutes(
                     query, top_k=5, facility_type=facility_type
@@ -186,17 +197,24 @@ async def run_debate_and_publish(
                     common_rag = (
                         "현재 해당 지역에 적용할 수 있는 조례나 법령 정보가 없습니다."
                     )
+                    rag_docs_list = []
                 else:
-                    common_rag = "\n".join(retrieved_docs)
+                    rag_docs_list = retrieved_docs
+                    # [DOC_ID: N] 형식으로 컨텍스트 조립
+                    rag_texts = []
+                    for d in retrieved_docs:
+                        rag_texts.append(f"[DOC_ID: {d['doc_id']}] {d['text']}")
+                    common_rag = "\n\n".join(rag_texts)
             except Exception as e:
                 print(f"[RAG Error] 조례 검색 실패: {e}")
                 common_rag = "조례 검색 중 오류가 발생했습니다."
+                rag_docs_list = []
 
             # ===== [검증용 백엔드 터미널 로그] =====
             print("\n" + "=" * 60)
             print("🔍 [AI 토론 엔진 - 데이터 주입 검증 로그]")
             print("-" * 60)
-            print("1️⃣ [PGVector RAG 검색 조례 문서]:")
+            print("1️⃣ [XGBoost 최종 검색 조례 문서 (Top 5)]:")
             print(common_rag if common_rag else " (검색 결과 없음)")
             print("-" * 60)
             print("2️⃣ [Audit 감리 정제 팩터 (audit_context)]:")
@@ -222,6 +240,7 @@ async def run_debate_and_publish(
                 "ahp_weights": gis_data["ahp_weights"],
                 "timestamp": timestamp,
                 "common_rag": common_rag,
+                "rag_docs": rag_docs_list,  # XGBoost 학습 피드백을 위한 메타데이터 저장
                 "audit_context": audit_context,
                 "evaluations": {},
                 "final_scenarios": {},

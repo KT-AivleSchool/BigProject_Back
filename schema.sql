@@ -188,3 +188,13 @@ CREATE TABLE IF NOT EXISTS verified_precedents (
     actual_scenario VARCHAR(50) NOT NULL, -- 실제 매핑된 시나리오 유형 ('NORMAL', 'OPTIMAL', 'WORST')
     verified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 18. RAG 피드백 자동 수집 테이블 (XGBoost 학습용)
+CREATE TABLE IF NOT EXISTS rag_feedback_log (
+    id SERIAL PRIMARY KEY,
+    query_text TEXT NOT NULL,         -- 검색했던 질문/상황
+    chunk_text TEXT NOT NULL,         -- PGVector가 가져왔던 조례 원문
+    vector_score NUMERIC NOT NULL,    -- 당시의 벡터 점수
+    label INT NOT NULL,               -- LLM이 실제로 인용했으면 1, 안 했으면 0
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
