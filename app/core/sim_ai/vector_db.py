@@ -133,25 +133,31 @@ class RagVectorStorage:
 
             # [A-4] XGBoost 기반 Re-ranking (Precision 단계)
             from app.services.xgboost_rag_service import xgboost_rag_service
-            
+
             print("\n" + "=" * 60)
             print(f"🔍 [XGBoost Re-ranking 전/후 비교 로그] (Query: {query})")
             print("-" * 60)
-            print(f"▶ 1. PGVector 원본 검색 결과 (총 {len(candidate_chunks)}건 중 상위 3건 미리보기)")
+            print(
+                f"▶ 1. PGVector 원본 검색 결과 (총 {len(candidate_chunks)}건 중 상위 3건 미리보기)"
+            )
             for i, (chunk, score) in enumerate(candidate_chunks[:3]):
-                preview = chunk.replace('\n', ' ')[:50] + "..."
-                print(f"   [{i+1}] Vector 점수: {score:.4f} | {preview}")
+                preview = chunk.replace("\n", " ")[:50] + "..."
+                print(f"   [{i + 1}] Vector 점수: {score:.4f} | {preview}")
             if len(candidate_chunks) > 3:
                 print("   ... (나머지 생략)")
-            
+
             # XGBoost 모델(또는 Rule-based)로 재평가 후 최종 top_k 반환 (Dict 리스트)
-            final_docs = xgboost_rag_service.rerank_chunks(query, candidate_chunks, top_k=top_k)
+            final_docs = xgboost_rag_service.rerank_chunks(
+                query, candidate_chunks, top_k=top_k
+            )
 
             print("-" * 60)
             print(f"▶ 2. XGBoost Re-ranked 결과 (최종 상위 {len(final_docs)}건)")
             for i, doc_info in enumerate(final_docs):
-                preview = doc_info['text'].replace('\n', ' ')[:50] + "..."
-                print(f"   [{i+1}] 최종 점수: {doc_info['final_score']:.4f} (원본 Vector: {doc_info['vector_score']:.4f}) | {preview}")
+                preview = doc_info["text"].replace("\n", " ")[:50] + "..."
+                print(
+                    f"   [{i + 1}] 최종 점수: {doc_info['final_score']:.4f} (원본 Vector: {doc_info['vector_score']:.4f}) | {preview}"
+                )
             print("=" * 60 + "\n")
 
             return final_docs

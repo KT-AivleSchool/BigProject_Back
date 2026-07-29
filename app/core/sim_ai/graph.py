@@ -41,7 +41,6 @@ class AgentState(TypedDict):
     ahp_weights: dict
     timestamp: str
 
-
     common_rag: str  # 공통으로 공유되는 RAG 컨텍스트
     rag_docs: list  # [추가] 피드백 저장을 위해 유지되는 메타데이터
     audit_context: str  # 프론트엔드에서 전달받은 감리 결과 정제 텍스트
@@ -283,7 +282,7 @@ async def reporter_node(state: AgentState) -> dict:
 
     try:
         final_scenarios = _extract_json(response.content)
-        
+
         # --- [신규 기능] LLM 암묵적 피드백(Implicit Feedback) 로깅 ---
         raw_used = final_scenarios.get("used_doc_ids", [])
         # 문자열로 들어올 경우를 대비해 정수형으로 변환 가능한 것만 추출
@@ -291,26 +290,28 @@ async def reporter_node(state: AgentState) -> dict:
             used_doc_ids = [int(x) for x in raw_used if str(x).strip().isdigit()]
         else:
             used_doc_ids = []
-            
+
         print(f"🧐 [디버그] AI가 반환한 used_doc_ids: {used_doc_ids}")
-        
+
         rag_docs = state.get("rag_docs", [])
-        
+
         if rag_docs:
             async with AsyncSessionLocal() as session:
                 for doc in rag_docs:
                     doc_id = doc.get("doc_id")
                     label = 1 if doc_id in used_doc_ids else 0
-                    
+
                     feedback = RagFeedbackLog(
                         query_text=doc.get("query", "알 수 없음"),
                         chunk_text=doc.get("text", ""),
                         vector_score=doc.get("vector_score", 0.0),
-                        label=label
+                        label=label,
                     )
                     session.add(feedback)
                 await session.commit()
-                print(f"✅ RAG Implicit Feedback DB 저장 완료 (사용된 문서 ID: {used_doc_ids})")
+                print(
+                    f"✅ RAG Implicit Feedback DB 저장 완료 (사용된 문서 ID: {used_doc_ids})"
+                )
 
     except Exception as e:
         print(f"JSON Parsing or DB Logging Error: {e}")

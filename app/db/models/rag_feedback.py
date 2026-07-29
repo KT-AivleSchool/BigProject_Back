@@ -2,6 +2,7 @@ from sqlalchemy import Column, Integer, Text, Numeric, DateTime
 from sqlalchemy.sql import func
 from app.db.session import Base
 
+
 class RagFeedbackLog(Base):
     __tablename__ = "rag_feedback_log"
 

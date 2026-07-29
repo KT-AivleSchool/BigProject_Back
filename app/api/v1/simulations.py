@@ -179,12 +179,12 @@ async def run_debate_and_publish(
                 "청년주택": "청년주택 공공임대 용적률 완화 역세권 지원 혜택",
                 "소각장": "폐기물 처리시설 환경오염 배출 허용 기준 주민 보상 갈등",
             }
-            
+
             # 딕셔너리에 시설이 있으면 해당 키워드 사용, 없으면 기본(범용) 키워드 사용
             specific_keywords = facility_keywords.get(
                 facility_type, "설치 기준 허가 규제 갈등 중재 혜택 제한 조건"
             )
-            
+
             # 시설 이름과 맞춤 키워드를 결합하여 최종 쿼리 생성
             query = f"{facility_type} {specific_keywords}"
             try:
