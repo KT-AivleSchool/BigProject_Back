@@ -1,11 +1,14 @@
 import asyncio
+import json
 import uuid
 from typing import Any, Dict
+import redis
 import redis.asyncio as aioredis
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sse_starlette.sse import EventSourceResponse
 
 from app.api.deps import get_redis
+from app.config import settings
 from app.schemas.pipeline import (
     PipelineCleanRequest,
     PipelineCleanResponse,
@@ -18,23 +21,35 @@ from app.schemas.pipeline import (
 )
 from app.services.pipeline_session_service import PipelineSessionService
 from app.utils.redis_pubsub import RedisPubSubManager
-from app.utils.inmemory_pubsub import pipeline_pubsub
 
 router = APIRouter()
 
 
+def _publish_redis_sync(session_id: str, payload: dict):
+    """
+    [이슈 #185] 동기 백그라운드 태스크에서 Redis 채널로 이벤트를 발행(Publish)하는 유틸리티
+    """
+    try:
+        r = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+        channel = f"pipeline:{session_id}"
+        r.publish(channel, json.dumps(payload, ensure_ascii=False))
+        r.close()
+    except Exception:
+        pass
+
+
 def _execute_pipeline_sync(session_id: str, req: PipelineRunRequest) -> Dict[str, Any]:
     """
-    [이슈 #185] 파이프라인 동기 연산 백그라운드 태스크
+    [이슈 #185] 파이프라인 동기 연산 백그라운드 태스크 (Redis Pub/Sub 연동)
     """
-    def progress_callback(step: str, progress: int, text: str):
+    def progress_callback(step: str, progress: int, text: str, is_finished: bool = False):
         payload = {
             "step": step,
             "progress": progress,
             "text": text,
-            "is_finished": False,
+            "is_finished": is_finished,
         }
-        pipeline_pubsub.publish_sync(session_id, payload)
+        _publish_redis_sync(session_id, payload)
 
     progress_callback("audit", 10, "GAM2 파이프라인 데이터 프로파일링 시작")
 
@@ -51,13 +66,7 @@ def _execute_pipeline_sync(session_id: str, req: PipelineRunRequest) -> Dict[str
     progress_callback("audit", 50, "GPT-4o 1차 감리 및 상위법 자동 검색 완료")
     PipelineSessionService.set_session_state(session_id, "STEP1_AUDIT_COMPLETE", session_payload)
 
-    progress_callback("audit", 100, "1차 감리 완료. 사람(HITL) 검토 대기 중")
-    pipeline_pubsub.publish_sync(session_id, {
-        "step": "audit_complete",
-        "progress": 100,
-        "text": "1차 감리 완료. 검토를 진행해 주세요.",
-        "is_finished": True
-    })
+    progress_callback("audit", 100, "1차 감리 완료. 사람(HITL) 검토 대기 중", is_finished=True)
 
     return session_payload
 
