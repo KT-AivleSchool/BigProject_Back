@@ -53,6 +53,8 @@ def main():
 
                             # 화자가 변경되었을 때만 화자 태그 출력
                             if sender and current_sender != sender:
+                                if current_sender is not None:
+                                    print()  # 화자가 바뀔 때 가독성을 위해 한 줄 띄움
                                 print(f"\n[{sender}]")
                                 current_sender = sender
 
