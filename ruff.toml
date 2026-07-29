@@ -1,2 +1,6 @@
 [format]
 line-ending = "lf"
+
+[lint]
+select = ["E", "F"]
+ignore = ["E402", "E501", "F401", "F841", "F811"]
