@@ -24,6 +24,14 @@ import sys
 import time
 import traceback
 
+# 프로젝트 루트를 sys.path 에 추가 → `python app\services\...` 로 직접 실행해도
+#   `app.xxx` 절대 임포트가 된다. (`python -m app.services.…` 는 원래 되지만
+#   실행 방식마다 다르게 동작하면 매번 걸린다 — STEP3·4 스크립트와 동일한 보정)
+import os as _os, sys as _sys
+_ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(__file__), "..", ".."))
+if _ROOT not in _sys.path:
+    _sys.path.insert(0, _ROOT)
+
 import app.services.gam2_audit_judgment_test as A
 
 # tqdm 은 선택 의존 — 없으면 간단한 텍스트 진행 표시로 폴백(파이프라인은 그대로 동작).

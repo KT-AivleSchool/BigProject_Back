@@ -76,16 +76,27 @@ DOMAIN_ROOT = DATA_ROOT
 REGION_DATA_DIR = DATA_ROOT / "region_data"
 DATA_DIR = str(REGION_DATA_DIR)  # (구 이름 호환)
 
-# 국유·공유 재산 후보지 (도메인 무관 공용 — 위치선정 후보 풀)
+# 국유·공유 재산 — 후보 필지에 '국유 지분' 정보를 붙이는 데 쓴다(점수 아님, 실행축).
+#   ⚠️ 이 파일은 **지오코딩 산출물**이다. 원본(k-pis.go.kr)에는 좌표가 없다.
+#      출처: https://www.k-pis.go.kr/selectBasSerList.do
+#   ⚠️ 지역별 데이터이므로 **사용자 업로드 → 온디맨드 지오코딩**으로 전환 예정.
+#      전환 시 이 상수는 폴백(기본 샘플)로만 남는다. → GEOCODE_CACHE_DIR 참조
 NATIONAL_PROPERTY_CSV = str(REGION_DATA_DIR / "국유부동산_위경도_v2.csv")
 
 # 경계 폴리곤 SHP (센서스경계, 국가데이터처) — 세 파일은 같은 기준일 세트로 유지할 것.
 #   spatial_join_admin 이 좌표에 지역을 붙이는 핵심 입력이다.
-#   ADM_DONG : ADM_CD(행정동 8자리)·ADM_NM(행정동명 '이촌1동')
-#   SIGUNGU  : SIGUNGU_CD(5자리 '11030')·SIGUNGU_NM(자치구명 '용산구')
+#   ADM_DONG : ADM_CD(행정동 8자리, **통계청 행정구역분류코드**)·ADM_NM('이촌1동')
+#   SIGUNGU  : SIGUNGU_CD(5자리 '11030', **통계청**)·SIGUNGU_NM('용산구')
 #              ★ 자치구명이 행정동 경계에는 없어서 반드시 함께 필요.
 #                (없으면 자치구 필터가 0행이 된다)
 #   SIDO     : 현재 미사용. 광역 단위 확장 대비 보관.
+#
+#   ⚠️ 통계청 코드는 행자부 코드와 **다르다.** 같은 접두가 다른 구를 가리킨다:
+#        11170  행자부=용산구  통계청=구로구
+#        11140  행자부=중구    통계청=마포구
+#        11110  행자부=종로구  통계청=노원구      (전국 57개 접두가 겹침)
+#      생활인구 등 **통계표와 조인하려면 반드시 ADMIN_CROSSWALK_PATH 를 경유**할 것.
+#      뒤 3자리 매칭은 우연히 맞는 경우가 섞여 있어 쓰면 안 된다(용산 실측 12/16).
 ADM_DONG_SHP = str(REGION_DATA_DIR / "BND_ADM_DONG_PG.shp")
 SIGUNGU_SHP = str(REGION_DATA_DIR / "BND_SIGUNGU_PG.shp")
 SIDO_SHP = str(REGION_DATA_DIR / "BND_SIDO_PG.shp")
@@ -103,9 +114,20 @@ STEP2_OUTPUT_DIR = os.environ.get("OMNISITE_STEP2_DIR", str(DATA_ROOT / "step2_o
 # 가중치 모델(STEP 3) 산출물 — weight_set.json (감리·정제 → 최종 가중치)   ← 추가
 STEP3_OUTPUT_DIR = os.environ.get("OMNISITE_STEP3_DIR", str(DATA_ROOT / "step3_output"))
 
+# 위치선정(STEP 4) 산출물 — Top-N·점수면·배제구역. 표출은 DISPLAY_CRS(4326).
+STEP4_OUTPUT_DIR = os.environ.get("OMNISITE_STEP4_DIR", str(DATA_ROOT / "step4_output"))
+
 # 캐시 폴더(배제반경 등 재사용 캐시). 결과물과 분리 관리.
 SEARCH_CACHE_DIR = os.environ.get("OMNISITE_CACHE_DIR", str(DATA_ROOT / "search_cache"))
 EXCLUSION_CACHE_PATH = os.path.join(SEARCH_CACHE_DIR, "exclusion_radius_cache.json")
+# 지목 판정 캐시(시설별). 지목 부호는 법정 표준이라 지적도가 갱신돼도 유지된다.
+JIMOK_CACHE_PATH = os.path.join(SEARCH_CACHE_DIR, "jimok_role_cache.json")
+# 시설 물리 파라미터 캐시(시설별) — 설치폭·서비스반경·최소이격.
+FACILITY_PARAM_CACHE_PATH = os.path.join(SEARCH_CACHE_DIR, "facility_params_cache.json")
+# 지오코딩 결과 캐시 — 공유지/국유지 CSV 는 주소만 있어 Vworld 호출이 필요하다.
+#   호출당 GEOCODE_SLEEP_SEC(0.3초) 대기가 걸려 2,486건이면 약 12분이다.
+#   같은 지역을 다시 돌릴 때 재호출하지 않도록 주소 단위로 캐시한다.
+GEOCODE_CACHE_DIR = os.path.join(SEARCH_CACHE_DIR, "geocode")
 
 # 조례 폴더 — 기본은 각 도메인의 law/ (domain_paths). 아래는 도메인 미설정 시 폴백.
 # 추후 DB/프론트 전환 시 load_ordinance() 에서 이 부분만 대체.
@@ -177,6 +199,21 @@ def domain_prefix(domain_dir: str) -> str:
     """'EV_데이터셋/' → 'EV'. 접미사 '_데이터셋' 제거해 산출물 프리픽스로."""
     base = os.path.basename(os.path.normpath(str(domain_dir)))
     return base.replace("_데이터셋", "")
+
+
+# 후보 필지 gpkg (make_parcel_candidates.py 산출물) — STEP3·4 공통 입력.
+#   ⚠️ region_data 가 아니라 step3_output 에 둔다. region_data 는 **원본·참조 데이터
+#     전용**이며, 생성물이 섞이면 DB 적재 대상을 가릴 때 헷갈린다.
+#   ⚠️ 도메인 프리픽스 필수 — 후보 집합은 **지목 판정(시설별)에 의존**한다.
+#     프리픽스가 없으면 흡연으로 만든 후보를 재활용 도메인이 그대로 쓴다(조용한 오염).
+CANDIDATE_GPKG_NAME = "후보_지적도필지.gpkg"
+
+
+def candidate_gpkg_path(domain: str) -> str:
+    """도메인별 후보 gpkg 경로. 예: step3_output/흡연_후보_지적도필지.gpkg"""
+    p = domain_prefix(domain)
+    return os.path.join(STEP3_OUTPUT_DIR,
+                        f"{p + '_' if p else ''}{CANDIDATE_GPKG_NAME}")
 
 
 def resolve_domain_dir(domain: str) -> str:

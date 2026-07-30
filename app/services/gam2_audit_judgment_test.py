@@ -27,6 +27,14 @@ import os
 import re
 from dataclasses import dataclass
 
+# 프로젝트 루트를 sys.path 에 추가 → `python app\services\...` 로 직접 실행해도
+#   `app.xxx` 절대 임포트가 된다. (`python -m app.services.…` 는 원래 되지만
+#   실행 방식마다 다르게 동작하면 매번 걸린다 — STEP3·4 스크립트와 동일한 보정)
+import os as _os, sys as _sys
+_ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(__file__), "..", ".."))
+if _ROOT not in _sys.path:
+    _sys.path.insert(0, _ROOT)
+
 from app import config
 from app.services.gam2_audit_ops_catalog import describe_all
 from app.config import STEP1_OUTPUT_DIR, SEARCH_CACHE_DIR, EXCLUSION_CACHE_PATH
@@ -175,15 +183,19 @@ def resolve_facility(user_input: str, fixtures: dict, model: str | None = None) 
         f"규칙:\n"
         f"- facility 는 시설명만 짧게(예: '흡연부스', 'EV 충전소', '음식물 쓰레기 수거함'). "
         f"'부지 선정해줘' 같은 요청어는 빼라.\n"
-        f"- region 은 자치구/시군구 단위로(예: '용산구', '강남구'). 조례 검색에 쓰인다. "
-        f"사용자 입력에 지역이 있으면 그것을, 없으면 데이터 파일명·내용에서 추론하라.\n"
+        f"- region 은 **'<시도> <시군구>' 형식**으로(예: '서울특별시 용산구', "
+        f"'경상남도 창원시마산합포구'). 조례 검색과 행정코드 검증에 쓰인다.\n"
+        f"  시군구명은 전국에서 유일하지 않다(중구·동구·서구·남구·북구 등). "
+        f"시도를 빼면 코드 검증이 불가능해지므로 반드시 함께 적어라.\n"
+        f"  사용자 입력에 지역이 있으면 그것을, 없으면 데이터 파일명·내용에서 추론하라. "
+        f"시도를 알 수 없으면 시군구만 적어라(추측하지 마라).\n"
         f"- 근거를 쓸 때 [데이터 목록]의 실제 파일명을 확인하고 인용하라. 목록에 있는 데이터를 "
         f"'없다'고 하지 마라(예: 담배꽁초·금연구역 파일이 있으면 그것을 근거로 들라).\n"
         f"- 사용자 입력의 시설과 데이터 목록이 안 맞으면(예: 입력은 흡연부스인데 데이터는 전부 EV 관련) "
         f"mismatch=true 로 표시하고 이유를 적어라.\n"
         f"- 사용자 입력이 비었으면 데이터 목록만으로 추론하라.\n"
         f"JSON 하나만 출력(설명 금지):\n"
-        f'{{"facility": "<시설명>", "region": "<자치구>", "근거": "<판단 근거>", '
+        f'{{"facility": "<시설명>", "region": "<시도 시군구>", "근거": "<판단 근거>", '
         f'"mismatch": <true|false>, "mismatch_reason": "<불일치 시 이유, 없으면 빈 문자열>"}}'
     )
     resp = client.chat.completions.create(
@@ -450,7 +462,7 @@ class MockLLM(LLMClient):
         u = json.loads(user)
         did = (
             u["dataset"].get("dataset_id") or ""
-        )  # 프로파일 dataset_id 사용(manifest 기반)
+        )  # 프로파일 dataset_id 사용(파일명 가나다순 01,02…)
         ref = self._SCENARIO.get(did, {"roles": [], "coord": "stat_join"})
         roles = []
         for rn in ref["roles"]:
@@ -619,7 +631,8 @@ def run_harness(llm: LLMClient, fixtures: dict, domain: dict, progress=None):
                 "_raw": raw[:200],
             }
         pred.setdefault("dataset_id", did)
-        pred = enrich_hitl_flags(pred)  # 배제반경 null 등 → hitl_flags 자동 생성(코드)
+        pred = enrich_hitl_flags(  # 배제반경 null·지역코드 등 → hitl_flags 자동 생성(코드)
+            pred, region=(domain or {}).get("region", ""), fixtures=fixtures)
         raw_preds[did] = pred
         out.append(review_one(pred, did))
         if progress:
@@ -761,7 +774,8 @@ def _norm(s: str) -> str:
     return unicodedata.normalize("NFC", s or "")
 
 
-def enrich_hitl_flags(pred: dict) -> dict:
+def enrich_hitl_flags(pred: dict, region: str = "",
+                      fixtures: dict | None = None) -> dict:
     """LLM 판정을 받은 뒤, 사람 검토가 필요한 항목을 코드가 결정론적으로 hitl_flags에 채운다.
     (LLM 판정 실수와 무관하게 항상 보장 — '판정=LLM, 확정=코드' 원칙)
     배제 confirmed 는 LLM 이 emit 한 값을 신뢰하지 않고 코드가 조례로 재판정한다:
@@ -849,7 +863,7 @@ def enrich_hitl_flags(pred: dict) -> dict:
             }
         )
     pred["hitl_flags"] = flags
-    return pred
+    return _enrich_code_prefix(pred, region, fixtures)
 
 
 def search_exclusion_radius(
@@ -1079,8 +1093,36 @@ def apply_intent_answer(result: dict, choice: int, weight: float | None = None) 
         result["roles"] = []
 
 
-ADM_CODE_SHEET = "행정동코드"  # 시트명(행자부행정동코드↔시군구명)
-_ADM_CODE_CACHE: dict | None = None  # {코드접두: 시군구명} 세션 캐시
+ADM_CODE_SHEET = "행정동코드"  # (폴백) 엑셀 시트명
+_ADM_CODE_CACHE: dict | None = None  # {체계: {코드접두: (시도명, 시군구명)}} 세션 캐시
+
+# 시도 표기 흔들림 흡수 — 크로스워크는 '서울특별시', 엑셀은 '서울', 사용자는 '서울시'.
+_SIDO_ALIAS = {
+    "서울": "서울특별시", "서울시": "서울특별시",
+    "부산": "부산광역시", "대구": "대구광역시", "인천": "인천광역시",
+    "광주": "광주광역시", "대전": "대전광역시", "울산": "울산광역시",
+    "세종": "세종특별자치시", "세종시": "세종특별자치시",
+    "경기": "경기도", "강원": "강원특별자치도", "충북": "충청북도",
+    "충남": "충청남도", "전북": "전북특별자치도", "전남": "전라남도",
+    "경북": "경상북도", "경남": "경상남도", "제주": "제주특별자치도",
+}
+
+
+def _norm_sido(name: str) -> str:
+    """'서울' · '서울시' · '서울특별시' 를 한 형태로."""
+    n = (name or "").strip()
+    return _SIDO_ALIAS.get(n, n)
+
+
+def split_region(region: str) -> tuple:
+    """'서울특별시 용산구' -> ('서울특별시','용산구') · '용산구' -> ('','용산구').
+    시도가 없으면 빈 문자열. 지역명은 코드에 박지 않고 문자열에서만 읽는다."""
+    toks = [t for t in str(region or "").replace("\u3000", " ").split() if t]
+    if not toks:
+        return "", ""
+    if len(toks) == 1:
+        return "", toks[0]
+    return _norm_sido(toks[0]), toks[-1]
 
 
 def _load_admin_code_map() -> dict:
@@ -1091,13 +1133,43 @@ def _load_admin_code_map() -> dict:
     global _ADM_CODE_CACHE
     if _ADM_CODE_CACHE is not None:
         return _ADM_CODE_CACHE
-    _ADM_CODE_CACHE = {}
+    _ADM_CODE_CACHE = {"행자부": {}, "통계청": {}}
+    import pandas as pd
+
+    def _put(sys_name, code, sido, gu):
+        if not isinstance(code, str):
+            return
+        code = code.strip()
+        if not (code and sido and gu):
+            return
+        _ADM_CODE_CACHE[sys_name][code] = (sido, gu)
+        if len(code) >= 5:
+            _ADM_CODE_CACHE[sys_name][code[:5]] = (sido, gu)
+
+    # 1) 크로스워크(전국) 우선
+    cw = getattr(config, "ADMIN_CROSSWALK_PATH", "")
+    if cw and os.path.isfile(cw):
+        try:
+            df = pd.read_csv(cw, dtype=str)
+            for _, r in df.iterrows():
+                sido, gu = _norm_sido(r.get("시도명")), r.get("시군구명")
+                _put("행자부", r.get("행정동코드"), sido, gu)
+                _put("행자부", r.get("행정동코드8"), sido, gu)
+                _put("통계청", r.get("행정구역코드"), sido, gu)
+            return _ADM_CODE_CACHE
+        except Exception as e:
+            print(f"  [경고] 크로스워크 로드 실패({e}) — 엑셀 폴백을 시도합니다")
+
+    # 2) 엑셀 폴백 (서울 한정)
     path = getattr(config, "ADM_CODE_MAP", "")
     if not path or not os.path.isfile(path):
+        print("  [경고] 행정동 코드표 없음 — 코드 검증 없이 HITL 확인만 수행")
         return _ADM_CODE_CACHE
+    # 폴백이 조용히 발동하면 '전국 3,555동'인 줄 알면서 실제로는 서울 424동만
+    # 보게 된다. 서울 밖 도메인에서는 전부 unknown 이 되어 HITL 만 늘어난다.
+    print(f"  ⚠ 크로스워크 없음({cw or '경로 미설정'}) — 엑셀 폴백 사용(서울 한정).\n"
+          f"    전국 대응하려면 make_admin_crosswalk.py 로 크로스워크를 만드세요.")
     try:
-        import pandas as pd
-
         df = pd.read_excel(path, sheet_name=ADM_CODE_SHEET, dtype=str, skiprows=1)
         df.columns = [
             "통계청행정동코드",
@@ -1106,14 +1178,10 @@ def _load_admin_code_map() -> dict:
             "시군구명",
             "행정동명",
         ][: len(df.columns)]
-        for code, gu in zip(df["행자부행정동코드"], df["시군구명"]):
-            if not isinstance(code, str) or not isinstance(gu, str):
-                continue
-            code, gu = code.strip(), gu.strip()
-            if not code or not gu:
-                continue
-            _ADM_CODE_CACHE[code] = gu  # 8자리(행정동)
-            _ADM_CODE_CACHE[code[:5]] = gu  # 5자리(자치구)
+        for _, r in df.iterrows():
+            sido, gu = _norm_sido(r.get("시도명")), r.get("시군구명")
+            _put("행자부", r.get("행자부행정동코드"), sido, gu)
+            _put("통계청", r.get("통계청행정동코드"), sido, gu)
     except Exception as e:
         print(
             f"  [경고] 행정동 코드표 로드 실패({e}) — 코드 검증 없이 HITL 확인만 수행"
@@ -1122,25 +1190,238 @@ def _load_admin_code_map() -> dict:
 
 
 def verify_code_prefix(prefix: str, region: str) -> tuple:
-    """코드 접두가 대상 지역인지 대조. 반환: (판정, 실제지역명|None)
-      판정: 'ok'(일치) | 'mismatch'(다른 지역) | 'unknown'(매핑에 없음/표 없음)
+    """코드 접두가 대상 지역인지 대조. 반환: (판정, 설명문자열|None)
+
+      'ok'        모든 코드 체계에서 대상 지역
+      'ambiguous' 체계에 따라 다른 지역 — **자동 확정 금지**, 사람이 판단
+      'mismatch'  어떤 체계로도 대상 지역이 아님
+      'unknown'   표에 없음
+
     감리 AI 가 추측한 행정코드를 **데이터로 검증**하는 유일한 수단이다.
     (실제 사고: 용산구인데 11440(마포구)을 써서 데이터 전체가 다른 구였다)
+
+    ⚠ 'ambiguous' 가 필요한 이유 — 11170 은 행자부로 용산구, 통계청으로 구로구다.
+      체계를 모른 채 하나로 합쳐 보면 '검증 통과'가 오답이 된다.
     """
     m = _load_admin_code_map()
-    if not m or not prefix:
+    pf = str(prefix or "").strip()
+    if not m or not pf:
         return "unknown", None
-    got = m.get(str(prefix).strip())
-    if got is None:
+    _, want_gu = split_region(region)
+    want_sido, _ = split_region(region)
+
+    hits = {}  # 체계 -> (시도, 시군구)
+    for sys_name, table in m.items():
+        got = table.get(pf)
+        if got:
+            hits[sys_name] = got
+    if not hits:
         return "unknown", None
-    return ("ok" if got == region else "mismatch"), got
+
+    def _same(v):
+        sido, gu = v
+        if gu != want_gu:
+            return False
+        return (not want_sido) or (sido == want_sido)
+
+    oks = {k: v for k, v in hits.items() if _same(v)}
+    desc = " · ".join(f"{k}={v[0]} {v[1]}" for k, v in hits.items())
+    if len(oks) == len(hits):
+        return "ok", desc
+    if oks:
+        return "ambiguous", desc
+    return "mismatch", desc
 
 
-def suggest_code_prefix(region: str) -> str | None:
-    """대상 지역명으로 올바른 자치구 코드 접두를 찾아준다(HITL 기본값 제시용)."""
-    m = _load_admin_code_map()
-    cands = sorted({c for c, g in m.items() if g == region and len(c) == 5})
+def suggest_code_prefix(region: str, system: str = "행자부") -> str | None:
+    """대상 지역명 -> 자치구 5자리 접두. 후보가 정확히 1개일 때만 돌려준다.
+
+    시군구명은 전국에서 유일하지 않다(중구 6 · 동구 6 · 서구 5 · 남구 4 · 북구 4 …).
+    region 에 시도가 함께 오면 252종 전부 유일해진다 → 자동 확정이 가능해진다.
+    """
+    m = _load_admin_code_map().get(system, {})
+    want_sido, want_gu = split_region(region)
+    if not want_gu:
+        return None
+    cands = sorted({
+        c for c, (sido, gu) in m.items()
+        if len(c) == 5 and gu == want_gu and ((not want_sido) or sido == want_sido)
+    })
     return cands[0] if len(cands) == 1 else None
+
+
+def region_is_unique(region: str) -> bool:
+    """대상 지역이 전국에서 하나로 특정되는가.
+
+    시군구명만으로는 유일하지 않다 — 중구 6 · 동구 6 · 서구 5 · 남구 4 · 북구 4 ·
+    고성군 2 · 강서구 2 (전국 230종 중 7종). 시도가 함께 오면 252종 전부 유일해진다.
+    유일하지 않으면 코드 검증이 '어느 중구인지' 를 못 가리므로 자동 확정하지 않는다.
+    """
+    m = _load_admin_code_map()
+    w_sido, w_gu = split_region(region)
+    if not w_gu:
+        return False
+    found = set()
+    for table in m.values():
+        for sido, gu in table.values():
+            if gu == w_gu and ((not w_sido) or sido == w_sido):
+                found.add((sido, gu))
+    return len(found) == 1
+
+
+_FIXTURE_CACHE: dict | None = None
+
+
+def _code_samples(dataset_id: str, col: str, n: int = 8,
+                  fixtures: dict | None = None) -> list:
+    """프로파일 sample_rows 에서 해당 컬럼의 값 표본을 꺼낸다. 실패하면 빈 리스트.
+    감리 결과 JSON 에는 표본이 없으므로 fixture(profiles.json)를 읽는다.
+    fixtures 를 직접 받으면(감리 중) 다시 로드하지 않는다."""
+    global _FIXTURE_CACHE
+    if fixtures is not None:
+        _FIXTURE_CACHE = _FIXTURE_CACHE or fixtures
+        f = fixtures.get(dataset_id) or {}
+        return [row.get(col) for row in (f.get("sample_rows") or [])
+                if row.get(col) not in (None, "")][:n]
+    if _FIXTURE_CACHE is None:
+        try:
+            _FIXTURE_CACHE = build_fixtures()
+        except Exception as e:
+            print(f"  [경고] fixture 로드 실패({e}) — 코드 체계 판정 생략")
+            _FIXTURE_CACHE = {}
+    f = _FIXTURE_CACHE.get(dataset_id) or {}
+    out = []
+    for row in f.get("sample_rows") or []:
+        v = row.get(col)
+        if v not in (None, ""):
+            out.append(v)
+    return out[:n]
+
+
+def detect_code_system(values) -> tuple:
+    """코드 표본이 어느 체계인지 **데이터로** 가린다. 반환 (체계|None, 설명)
+
+    행자부/통계청은 같은 접두를 다른 구에 쓴다(11170 = 용산구 / 구로구).
+    접두만 보면 영원히 못 가리지만, 실제 값은 체계마다 코드표 적중률이 갈린다.
+      실측(용산): 생활인구 값 -> 행자부 16/16 · 통계청 7/16
+                  경계 SHP 값 -> 행자부  0/16 · 통계청 16/16
+
+    표본 전체를 설명하는 체계가 **정확히 하나**일 때만 결정한다.
+    새 임계값을 만들지 않으며, 애매하면 None 을 돌려 사람에게 넘긴다(fail safe).
+    """
+    m = _load_admin_code_map()
+    vals = [str(v).strip() for v in (values or []) if str(v).strip()]
+    vals = [v for v in vals if v.isdigit() and len(v) >= 5]
+    if not vals or not any(m.values()):
+        return None, "코드 표본 없음"
+    score = {k: sum(1 for v in vals if v in t or v[:8] in t) for k, t in m.items()}
+    desc = " · ".join(f"{k} {v}/{len(vals)}" for k, v in score.items())
+    full = [k for k, v in score.items() if v == len(vals)]
+    return (full[0] if len(full) == 1 else None), desc
+
+
+def resolve_code_prefix(prefix: str, region: str, samples=None) -> dict:
+    """지역 코드 접두 판정을 **한 곳에서** 내린다. 감리·HITL·프런트가 같은 답을 본다.
+
+    반환(그대로 audit_result.json 의 params.prefix_check 에 실린다):
+      status        "auto_confirmed" | "needs_review"   ← 프런트가 볼 값
+      verdict       ok | ambiguous | mismatch | unknown
+      system        데이터 표본으로 판정된 코드 체계(가릴 수 있었을 때만)
+      resolved      이 접두가 실제로 가리키는 '시도 시군구'
+      region_unique 대상 지역이 전국에서 유일한가
+      suggestion    대상 지역의 자치구 코드(있으면)
+      reason        사람이 읽을 판단 근거
+    """
+    pf = str(prefix or "").strip()
+    verdict, detail = verify_code_prefix(pf, region)
+    uniq = region_is_unique(region)
+    m = _load_admin_code_map()
+    out = {
+        "status": "needs_review", "verdict": verdict, "prefix": pf,
+        "region": region, "region_unique": bool(uniq),
+        "system": None, "resolved": None, "detail": detail,
+        "suggestion": suggest_code_prefix(region), "reason": "",
+    }
+    if not any(m.values()):
+        out["reason"] = "행정동 코드표 없음 — 검증 불가"
+        return out
+
+    def _fill(got):
+        out["resolved"] = f"{got[0]} {got[1]}" if got else None
+
+    if verdict == "ok":
+        _fill(next((t.get(pf) for t in m.values() if t.get(pf)), None))
+        if uniq:
+            out["status"] = "auto_confirmed"
+            out["reason"] = "코드표 대조 — 이 접두를 아는 모든 체계가 대상 지역"
+        else:
+            out["reason"] = f"'{region}' 이 전국에서 유일하지 않음 (시도를 함께 적으면 자동 확정)"
+        return out
+
+    if verdict == "ambiguous":
+        sysname, sdesc = detect_code_system(samples)
+        out["system"] = sysname
+        out["detail"] = f"{detail} / 표본판정: {sdesc}"
+        if not sysname:
+            out["reason"] = "코드 체계를 데이터 표본으로 가릴 수 없음"
+            return out
+        got = m[sysname].get(pf)
+        _fill(got)
+        w_sido, w_gu = split_region(region)
+        same = bool(got) and got[1] == w_gu and ((not w_sido) or got[0] == w_sido)
+        if same and uniq:
+            out["status"] = "auto_confirmed"
+            out["reason"] = f"데이터 표본이 {sysname} 체계로 판정됨"
+        elif same:
+            out["reason"] = f"'{region}' 이 전국에서 유일하지 않음 (시도를 함께 적으면 자동 확정)"
+        else:
+            out["reason"] = f"{sysname} 체계에서 이 접두는 대상 지역이 아님"
+        return out
+
+    out["reason"] = ("대상 지역이 아님" if verdict == "mismatch"
+                     else "코드표에 없는 접두")
+    return out
+
+
+def _enrich_code_prefix(pred: dict, region: str, fixtures: dict | None) -> dict:
+    """filter_by_code_prefix 판정을 감리 단계에서 미리 내려 결과에 남긴다.
+
+    왜 감리 단계인가 — HITL 실행 중에만 판정하면 `audit_result.json` 만 읽는
+    프런트가 '이 항목이 통과인지 확인 대상인지' 알 수 없다.
+    """
+    flags = pred.setdefault("hitl_flags", [])
+    did = pred.get("dataset_id", "")
+    for i, op in enumerate(pred.get("cleaning_ops") or []):
+        if op.get("op_id") != "filter_by_code_prefix":
+            continue
+        prm = op.setdefault("params", {})
+        chk = resolve_code_prefix(
+            prm.get("prefix", ""), region,
+            _code_samples(did, prm.get("col"), fixtures=fixtures))
+        chk["col"] = prm.get("col")
+        prm["prefix_check"] = chk
+        if chk["status"] == "auto_confirmed":
+            prm["prefix_confirmed"] = True
+            prm["prefix_confirmed_by"] = (
+                "code_table" + (f":{chk['system']}" if chk["system"] else ""))
+            continue
+        prm.setdefault("prefix_confirmed", False)
+        if not any(f.get("type") == "code_prefix_unverified"
+                   and f.get("op_index") == i for f in flags):
+            flags.append({
+                "type": "code_prefix_unverified", "op_index": i,
+                "col": chk["col"], "prefix": chk["prefix"],
+                "verdict": chk["verdict"], "reason": chk["reason"],
+                "detail": chk["detail"], "suggestion": chk["suggestion"],
+                # message 는 요약 출력이 쓰는 공통 필드다(다른 flag 와 동일 규약).
+                "message": (f"'{chk['col']}' 접두 '{chk['prefix']}' — "
+                            f"{chk['reason']}"
+                            + (f" ({chk['detail']})" if chk.get("detail") else "")
+                            + (f" · 제안 '{chk['suggestion']}'"
+                               if chk.get("suggestion") else "")),
+                "confirmed": False,
+            })
+    return pred
 
 
 def review_hitl(in_path: str | None = None, out_path: str | None = None) -> str:
@@ -1265,23 +1546,26 @@ def review_hitl(in_path: str | None = None, out_path: str | None = None) -> str:
         for r, op in code_jobs:
             prm = op.setdefault("params", {})
             cur = prm.get("prefix", "")
-            verdict, actual = verify_code_prefix(cur, region)
-            hint = suggest_code_prefix(region)
+            # 감리 단계에서 이미 판정했으면 그대로 쓴다 — CLI 와 프런트가 같은 답을 본다.
+            chk = prm.get("prefix_check") or resolve_code_prefix(
+                cur, region, _code_samples(r.get("dataset_id"), prm.get("col")))
+            hint = chk.get("suggestion")
             print(f"\n[{r.get('dataset_id')}] {r.get('summary', '')[:60]}")
             print(f"  컬럼 '{prm.get('col')}' 이 '{cur}' 로 시작하는 행만 남깁니다.")
-            if verdict == "ok":
-                print(f"  ✅ 코드표 대조: '{cur}' = {actual} — 대상 지역과 일치")
-            elif verdict == "mismatch":
-                print(
-                    f"  ❌ 코드표 대조: '{cur}' 는 **{actual}** 입니다. 대상은 '{region}' 입니다!"
-                )
-                if hint:
-                    print(f"     → '{region}' 의 코드는 '{hint}' 입니다.")
-            else:
-                print("  ⚠ 코드표에서 확인 불가 — 사람이 직접 판단해야 합니다.")
-                if hint:
-                    print(f"     참고: '{region}' 의 자치구 코드는 '{hint}' 입니다.")
-            default = hint if (verdict == "mismatch" and hint) else cur
+            print(f"  코드표: {chk.get('detail') or '(대조 불가)'}")
+            if chk.get("status") == "auto_confirmed":
+                prm["prefix_confirmed"] = True
+                prm["prefix_confirmed_by"] = ("code_table"
+                    + (f":{chk['system']}" if chk.get("system") else ""))
+                print(f"  ✅ {chk.get('resolved') or region} — {chk.get('reason')}")
+                print("     → 코드표로 확정 (사람 확인 생략)")
+                continue
+            print(f"  ⚠ 확인 필요 [{chk.get('verdict')}] — {chk.get('reason')}")
+            if chk.get("resolved"):
+                print(f"     이 접두는 실제로 '{chk['resolved']}' 입니다.")
+            if hint:
+                print(f"     참고: '{region}' 의 자치구 코드는 '{hint}' 입니다.")
+            default = hint if (chk.get("verdict") == "mismatch" and hint) else cur
             print(f"  ▶ 이 코드가 '{region}' 이 맞습니까?")
             ans = input(
                 f"  [Enter='{default}' 적용] · 다른 코드 입력 · s=건너뜀: "
@@ -1357,7 +1641,7 @@ def save_results(
             "생성모델": model,
             "생성시각": datetime.now().isoformat(timespec="seconds"),
             "필드설명": {
-                "dataset_id": "데이터셋 식별자 (01, 02 … — data/_manifest.json 의 매핑값)",
+                "dataset_id": "데이터셋 식별자 (01, 02 … — data/ 파일명 가나다순 자동 부여)",
                 "summary": "이 데이터가 대상 시설 입지에서 어떤 역할인지 한 줄 요약 (사람 HITL 확인용)",
                 "roles": "입지 판단에서의 의미 role 리스트(공존 가능). 아래 role_types 참조",
                 "coord_status": "좌표 상태. 다음 단계(지오코딩)가 이 값으로 처리 분기. 아래 coord_types 참조",
@@ -1522,7 +1806,7 @@ def build_fixtures(profiles_path: str | None = None) -> dict:
         if not os.path.isdir(data_dir):
             raise FileNotFoundError(
                 f"데이터 폴더도 없음: {data_dir}\n"
-                f"  → <도메인>/data/ 에 원본(csv·xlsx·shp)과 _manifest.json 을 넣으세요."
+                f"  → <도메인>/data/ 에 원본(csv·xlsx·shp·json)을 넣으세요."
             )
         print(f"[자동 프로파일링] {data_dir} 를 읽어 fixture 를 생성합니다...")
         profiles = profile_folder(data_dir)

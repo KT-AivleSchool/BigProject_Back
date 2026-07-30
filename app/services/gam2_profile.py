@@ -17,10 +17,10 @@ OmniSite 감리 AI — 데이터 프로파일러 (profile)
   has_coord_col, has_addr_col, addr_cols, coord_cols, dup_estimate,
   sample_rows, sampled(bool, 표본 추정 여부)
 
-dataset_id 결정 우선순위
-  1) 폴더의 _manifest.json (파일명↔ID 매핑) — 원본명 그대로 써도 ID 부여 (권장)
-  2) 파일명 프리픽스(첫 '_' 앞) — 'A1_...' → 'A1'
-  → REFERENCE(A1·B2…) 채점이 매칭되려면 둘 중 하나로 ID 가 A1·B2… 여야 함.
+dataset_id 결정
+  폴더의 데이터 파일을 '파일명 가나다순'으로 정렬해 '01','02'… 두 자리 번호를 부여한다.
+  (OS 나열 순서에 의존하지 않도록 정렬을 고정. 별도 매핑 파일은 쓰지 않는다.)
+  ⚠ 파일을 추가/삭제하면 뒤 번호가 밀린다 → 재프로파일 → 재감리가 원칙.
 
 사용
   from app.services.gam2_profile import profile_folder
@@ -42,7 +42,7 @@ from app.config import CSV_ENCODINGS, COORD_COL_CANDIDATES
 
 # ── 프로파일 파라미터 (추후 config 로 이동 가능) ──
 PROFILE_MAX_ROWS = 50000  # 대용량 파일은 이만큼만 표본으로 읽어 프로파일
-MANIFEST_NAME = "_manifest.json"  # 폴더 내 파일명↔dataset_id 매핑(선택)
+_SKIP_PREFIXES = ("_", ".")  # '_'·'.' 로 시작하는 파일은 데이터가 아님(부속·숨김·macOS 잔재)
 ADDR_COL_KEYWORDS = ("주소", "소재지", "상세위치", "설치위치")  # 실주소 텍스트 컬럼
 ADDR_COL_EXCLUDE = ("홈페이지", "이메일", "전자우편", "url", "코드")  # 오탐 제외
 DATA_EXTENSIONS = (".csv", ".xlsx", ".xls", ".shp", ".json")
@@ -371,35 +371,14 @@ def _sample_rows(df, n: int = 2) -> list[dict]:
 
 
 # ══════════════════════════════════════════════════════════════════
-# 3. dataset_id 결정 (manifest 우선, 없으면 파일명 프리픽스)
+# 3. dataset_id 결정 (폴더 단위: 가나다순 번호 / 단독 호출: 파일명 프리픽스)
 # ══════════════════════════════════════════════════════════════════
-def _load_manifest(folder: str) -> dict:
-    path = os.path.join(folder, MANIFEST_NAME)
-    if not os.path.isfile(path):
-        return {}
-    try:
-        m = json.load(open(path, encoding="utf-8"))
-        return m.get("map", m) if isinstance(m, dict) else {}
-    except (OSError, json.JSONDecodeError) as e:
-        print(f"[profile] ⚠ manifest 읽기 실패({e}) — 파일명 프리픽스로 폴백")
-        return {}
-
-
-def _assign_id(filename: str, manifest: dict) -> str:
+def _assign_id(filename: str) -> str:
+    """단일 파일을 profile_file 로 직접 부를 때만 쓰는 폴백 ID.
+    폴더 단위(profile_folder)는 가나다순 seq 번호를 쓰므로 여기로 오지 않는다."""
     fn = unicodedata.normalize("NFC", filename)  # macOS zip NFD → NFC
     stem = os.path.splitext(fn)[0]
-    if manifest:
-        if fn in manifest:  # 정확한 파일명 키
-            return manifest[fn]
-        if stem in manifest:  # 확장자 뗀 키
-            return manifest[stem]
-        for key in sorted(manifest, key=len, reverse=True):  # 부분문자열(긴 키 우선)
-            if unicodedata.normalize("NFC", key) in fn:
-                return manifest[key]
-
-    # manifest 없이 단독 호출 시: 파일명(확장자 뗀 것) 자체를 ID 로.
-    # (폴더 단위 profile_folder 는 가나다순 seq 를 쓰므로 여기로 안 온다)
-    return stem.split("_")[0]  # 폴백: 'A1_...' → 'A1'
+    return stem.split("_")[0]  # 'A1_...' → 'A1'
 
 
 # 지역 접두어·출처기관·접미어는 '이름 정리용 불용어'다(지역 하드코딩 아님).
@@ -430,7 +409,7 @@ def profile_file(
     coord_cols = _detect_coord_cols(columns)
     addr_cols = _detect_addr_cols(columns)
     return dict(
-        dataset_id=dataset_id or _assign_id(os.path.basename(path), {}),
+        dataset_id=dataset_id or _assign_id(os.path.basename(path)),
         filename=unicodedata.normalize("NFC", os.path.basename(path)),
         extension=ext.lstrip("."),
         columns=columns,
@@ -447,31 +426,28 @@ def profile_file(
 
 
 def profile_folder(folder: str, max_rows: int = PROFILE_MAX_ROWS) -> dict:
-    """데이터셋 폴더 → {dataset_id: profile}. _manifest.json 있으면 ID 매핑에 사용.
-    txt/md(조례)·_manifest.json 은 제외. 실패 파일은 건너뛰고 경고."""
+    """데이터셋 폴더 → {dataset_id: profile}.
+    dataset_id 는 파일명 가나다순 '01','02'… (별도 매핑 파일 없음).
+    txt/md(조례)·'_'·'.' 로 시작하는 부속 파일은 제외. 실패 파일은 건너뛰고 경고."""
     if not os.path.isdir(folder):
         raise FileNotFoundError(f"데이터셋 폴더 없음: {folder}")
-    manifest = _load_manifest(folder)
     paths = []
     for ext in DATA_EXTENSIONS:
         paths += glob.glob(os.path.join(folder, f"*{ext}"))
     # 데이터 파일만, 파일명 가나다순으로 확정(실행 간 번호 안정성 — OS 나열 순서 의존 X)
     data_paths = sorted(
         pp for pp in set(paths)
-        if os.path.basename(pp) != MANIFEST_NAME
-        and not os.path.basename(pp).startswith("._"))
+        if not os.path.basename(pp).startswith(_SKIP_PREFIXES))
 
-    if not manifest:
-        print("[profile] manifest 없음 — 파일명 가나다순으로 01,02… 자동 부여")
-        print("           ⚠ 파일을 추가/삭제하면 뒤 번호가 밀립니다. "
-              "이미 감리·정제를 돌렸다면 step1_output 의 reviewed.json·캐시와 "
-              "번호가 어긋날 수 있으니, 그 경우 재감리하거나 _manifest.json 으로 번호를 고정하세요.")
+    print("[profile] dataset_id — 파일명 가나다순으로 01,02… 부여")
+    print("           ⚠ 파일을 추가/삭제하면 뒤 번호가 밀립니다. "
+          "이미 감리·정제를 돌렸다면 step1_output 의 reviewed.json·캐시와 "
+          "번호가 어긋나므로 재프로파일 → 재감리하세요.")
 
     profiles: dict[str, dict] = {}
     for seq, path in enumerate(data_paths, 1):
         fname = os.path.basename(path)
-        # manifest 있으면 그 매핑, 없으면 가나다순 2자리 번호
-        did = _assign_id(fname, manifest) if manifest else f"{seq:02d}"
+        did = f"{seq:02d}"  # 가나다순 2자리 번호
         try:
             prof = profile_file(path, dataset_id=did, max_rows=max_rows)
         except Exception as e:                        # noqa: BLE001

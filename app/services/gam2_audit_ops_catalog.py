@@ -33,6 +33,7 @@ v3 유지 (버그 수정)
 
 from __future__ import annotations
 
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -46,11 +47,26 @@ from app.config import (
     VWORLD_ENDPOINT,
     ADM_DONG_SHP,
     SIGUNGU_SHP,
-    ADM_CODE_MAP,
     DISPLAY_CRS,
     GEOCODE_SLEEP_SEC,
     REVERSE_GEOCODE_SLEEP_SEC,
 )
+
+# 행정동 코드 크로스워크(전국). config 에 없으면 region_data 에서 찾는다.
+try:
+    from app.config import ADMIN_CROSSWALK_PATH
+except Exception:
+    try:
+        from app.config import REGION_DATA_DIR as _RD
+    except Exception:
+        _RD = "."
+    ADMIN_CROSSWALK_PATH = os.path.join(str(_RD), "행정동_크로스워크.csv")
+
+# 엑셀 코드표는 **선택 의존**이다 — 없어도 임포트가 깨지지 않아야 한다.
+try:
+    from app.config import ADM_CODE_MAP
+except Exception:
+    ADM_CODE_MAP = ""
 
 GEOCODE_RETRY = 2
 GEOCODE_TIMEOUT = 10
@@ -656,32 +672,77 @@ register_op(
 _ADM_NAMES_CACHE: dict | None = None
 
 
+_ADM_GU_SIDOS: dict = {}  # {시군구명: {시도명}} — 동명 시군구 모호성 감지용
+
+
 def _admin_names_of(region: str) -> list[str]:
-    """코드표에서 해당 자치구의 행정동명 목록. 세션 1회 로드 후 캐시."""
+    """대상 시군구의 행정동명 목록. 세션 1회 로드 후 캐시.
+
+    출처: 크로스워크(전국 3,555동) 우선 → 엑셀(서울 424동) 폴백.
+    region 은 '서울특별시 성동구' 도 '성동구' 도 받는다.
+    """
     global _ADM_NAMES_CACHE
     if _ADM_NAMES_CACHE is None:
         _ADM_NAMES_CACHE = {}
-        try:
-            import pandas as _pd
+        import pandas as _pd
 
-            df = _pd.read_excel(
-                ADM_CODE_MAP, sheet_name="행정동코드", dtype=str, skiprows=1
-            )
-            df.columns = [
-                "통계청행정동코드",
-                "행자부행정동코드",
-                "시도명",
-                "시군구명",
-                "행정동명",
-            ][: len(df.columns)]
-            for gu, dong in zip(df["시군구명"], df["행정동명"]):
-                if isinstance(gu, str) and isinstance(dong, str):
-                    _ADM_NAMES_CACHE.setdefault(gu.strip(), []).append(dong.strip())
-        except Exception as e:
+        if ADMIN_CROSSWALK_PATH and os.path.isfile(ADMIN_CROSSWALK_PATH):
+            try:
+                df = _pd.read_csv(ADMIN_CROSSWALK_PATH, dtype=str)
+                for sido, gu, dong in zip(df["시도명"], df["시군구명"], df["행정동명"]):
+                    if not (isinstance(gu, str) and isinstance(dong, str)):
+                        continue
+                    gu, dong = gu.strip(), dong.strip()
+                    _ADM_NAMES_CACHE.setdefault(gu, []).append(dong)
+                    if isinstance(sido, str):
+                        sido = sido.strip()
+                        _ADM_NAMES_CACHE.setdefault(f"{sido} {gu}", []).append(dong)
+                        _ADM_GU_SIDOS.setdefault(gu, set()).add(sido)
+            except Exception as e:
+                print(f"  [경고] 크로스워크 로드 실패({e}) — 엑셀 폴백을 시도합니다")
+
+        if not _ADM_NAMES_CACHE and ADM_CODE_MAP and os.path.isfile(ADM_CODE_MAP):
+            print("  ⚠ 크로스워크 없음 — 엑셀 코드표 폴백(서울 한정)")
+            try:
+                df = _pd.read_excel(
+                    ADM_CODE_MAP, sheet_name="행정동코드", dtype=str, skiprows=1
+                )
+                df.columns = [
+                    "통계청행정동코드",
+                    "행자부행정동코드",
+                    "시도명",
+                    "시군구명",
+                    "행정동명",
+                ][: len(df.columns)]
+                for gu, dong in zip(df["시군구명"], df["행정동명"]):
+                    if isinstance(gu, str) and isinstance(dong, str):
+                        _ADM_NAMES_CACHE.setdefault(gu.strip(), []).append(dong.strip())
+            except Exception as e:
+                print(f"  [경고] 엑셀 코드표 로드 실패({e})")
+
+        if not _ADM_NAMES_CACHE:
             print(
-                f"  [경고] 행정동 코드표 로드 실패({e}) — filter_by_admin_name 사용 불가"
+                "  [경고] 행정동 코드표 없음 — filter_by_admin_name 사용 불가.\n"
+                "    make_admin_crosswalk.py 로 행정동_크로스워크.csv 를 만드세요."
             )
-    return _ADM_NAMES_CACHE.get(region, [])
+
+    key = str(region or "").strip()
+    names = _ADM_NAMES_CACHE.get(key)
+    if names is None:  # '서울 성동구' 같은 축약 표기 → 마지막 토큰으로 재시도
+        toks = key.split()
+        if toks:
+            key = toks[-1]
+            names = _ADM_NAMES_CACHE.get(key)
+    # 시군구명만으로는 전국에서 유일하지 않다(중구·동구·서구·남구·북구 …).
+    #   여러 시도의 동명이 합쳐지면 다른 지역 동까지 통과할 수 있으므로 알린다.
+    sidos = _ADM_GU_SIDOS.get(key, set())
+    if names and len(sidos) > 1:
+        print(
+            f"  ⚠ '{key}' 는 {len(sidos)}개 시도에 존재합니다({', '.join(sorted(sidos))}). "
+            f"행정동 목록이 합쳐져 다른 지역 동이 통과할 수 있습니다 "
+            f"— region 에 시도를 함께 지정하세요."
+        )
+    return names or []
 
 
 def _norm_dong(v) -> str:
@@ -704,7 +765,7 @@ def _run_filter_by_admin_name(df, p, ctx):
     왜 필요한가 — 행정동 통계표에는 '자치구' 표현이 아예 없다(값이 '왕십리제2동' 뿐).
     여기에 filter_by_value(allowed=['성동구']) 를 걸면 0행이 된다(실제 사고).
     코드 컬럼이면 filter_by_code_prefix 로 접두를 볼 수 있지만, 이름 컬럼은 그럴 수 없다.
-    → 코드표(config.ADM_CODE_MAP)의 '그 자치구 행정동 목록'과 이름을 대조한다.
+    → 코드표(행정동_크로스워크.csv)의 '그 자치구 행정동 목록'과 이름을 대조한다.
       부수 효과로 '합계'·'소계' 같은 집계 행이 자동으로 빠진다(행정동명이 아니므로).
       이걸 안 빼면 행정동별 합산 시 값이 두 배가 된다.
 
@@ -722,7 +783,7 @@ def _run_filter_by_admin_name(df, p, ctx):
                 severity="high",
                 row_id=-1,
                 raw_text=f"'{region}' 의 행정동 목록을 코드표에서 찾지 못해 필터를 건너뜀 "
-                f"(config.ADM_CODE_MAP 확인)",
+                f"(ADMIN_CROSSWALK_PATH 확인)",
             )
         ]
 
