@@ -3,6 +3,7 @@ import jwt
 
 from app.config import settings
 
+
 def create_access_token(data: dict) -> str:
     """사용자 정보를 담은 JWT Access Token을 생성합니다."""
     to_encode = data.copy()
@@ -16,9 +17,7 @@ def create_access_token(data: dict) -> str:
 
     # 토큰값 생성
     encoded_jwt = jwt.encode(
-        to_encode,
-        settings.SECRET_KEY,
-        algorithm=settings.ALGORITHM
+        to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM
     )
 
     return encoded_jwt

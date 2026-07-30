@@ -1,0 +1,640 @@
+{
+  "_schema": {
+    "설명": "STEP3 정제 실행 리포트. dataset별 정제 결과·flag·op로그.",
+    "gis_input": "위치선정 GIS 입력 대상 여부(reference_only면 false)",
+    "whitelists_생산": {}
+  },
+  "facility": "재활용정거장",
+  "region": "성동구",
+  "results": [
+    {
+      "dataset_id": "08",
+      "filename": "서울시 성동구 어린이집 정보 (표준 데이터).csv",
+      "roles": [
+        "hard_exclusion"
+      ],
+      "reference_only": false,
+      "gis_input": true,
+      "rows_before": 129,
+      "rows_after": 127,
+      "drop_ratio": 0.0155,
+      "n_ops": 2,
+      "n_flags": 0,
+      "flags": [],
+      "op_logs": [
+        {
+          "seq": 0,
+          "op_id": "spatial_join_admin",
+          "params": {
+            "coord_cols": [
+              "시설 경도(좌표값)",
+              "시설 위도(좌표값)"
+            ]
+          },
+          "rows_before": 129,
+          "rows_after": 129,
+          "n_flags": 0,
+          "elapsed_sec": 1.15
+        },
+        {
+          "seq": 1,
+          "op_id": "filter_by_value",
+          "params": {
+            "col": "SIGUNGU_NM",
+            "allowed": [
+              "성동구"
+            ]
+          },
+          "rows_before": 129,
+          "rows_after": 127,
+          "n_flags": 0,
+          "elapsed_sec": 0.0
+        }
+      ],
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\재활용_clean_08.gpkg",
+      "format": "gpkg",
+      "params_autofilled": [],
+      "whitelist_resolved": [],
+      "unknown_ops": [],
+      "status": "ok"
+    },
+    {
+      "dataset_id": "09",
+      "filename": "서울시 성동구 유치원 건물현황.csv",
+      "roles": [
+        "hard_exclusion"
+      ],
+      "reference_only": false,
+      "gis_input": true,
+      "rows_before": 32,
+      "rows_after": 32,
+      "drop_ratio": 0.0,
+      "n_ops": 3,
+      "n_flags": 0,
+      "flags": [],
+      "op_logs": [
+        {
+          "seq": 0,
+          "op_id": "run_geocode",
+          "params": {
+            "address_cols": [
+              "주소"
+            ],
+            "type_order": [
+              "road",
+              "parcel"
+            ],
+            "out_cols": [
+              "위도",
+              "경도"
+            ]
+          },
+          "rows_before": 32,
+          "rows_after": 32,
+          "n_flags": 0,
+          "elapsed_sec": 19.91
+        },
+        {
+          "seq": 1,
+          "op_id": "spatial_join_admin",
+          "params": {
+            "coord_cols": [
+              "경도",
+              "위도"
+            ],
+            "code_col": "ADM_CD",
+            "name_col": "ADM_NM"
+          },
+          "rows_before": 32,
+          "rows_after": 32,
+          "n_flags": 0,
+          "elapsed_sec": 0.59
+        },
+        {
+          "seq": 2,
+          "op_id": "filter_by_value",
+          "params": {
+            "col": "SIGUNGU_NM",
+            "allowed": [
+              "성동구"
+            ]
+          },
+          "rows_before": 32,
+          "rows_after": 32,
+          "n_flags": 0,
+          "elapsed_sec": 0.0
+        }
+      ],
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\재활용_clean_09.gpkg",
+      "format": "gpkg",
+      "params_autofilled": [],
+      "whitelist_resolved": [],
+      "unknown_ops": [],
+      "status": "ok"
+    },
+    {
+      "dataset_id": "03",
+      "filename": "서울특별시 성동구_사업장폐기물신고현황_20250912.csv",
+      "roles": [
+        "positive_factor"
+      ],
+      "reference_only": false,
+      "gis_input": true,
+      "rows_before": 52,
+      "rows_after": 52,
+      "drop_ratio": 0.0,
+      "n_ops": 2,
+      "n_flags": 16,
+      "flags": [
+        {
+          "type": "geocode_failed",
+          "severity": "high",
+          "row_id": 16,
+          "message": "주소→좌표 변환 실패",
+          "raw_text": "서울특별시 성동구 마장로39길 7 (마장동)"
+        },
+        {
+          "type": "geocode_failed",
+          "severity": "high",
+          "row_id": 19,
+          "message": "주소→좌표 변환 실패",
+          "raw_text": "서울특별시 성동구 마장로27길 13 (마장동)"
+        },
+        {
+          "type": "geocode_failed",
+          "severity": "high",
+          "row_id": 21,
+          "message": "주소→좌표 변환 실패",
+          "raw_text": "서울특별시 성동구 동일로 151 2층 (성수동2가 앰코코리아)"
+        },
+        {
+          "type": "geocode_failed",
+          "severity": "high",
+          "row_id": 23,
+          "message": "주소→좌표 변환 실패",
+          "raw_text": "서울특별시 성동구 자동차시장3길 64 (용답동)"
+        },
+        {
+          "type": "geocode_failed",
+          "severity": "high",
+          "row_id": 30,
+          "message": "주소→좌표 변환 실패",
+          "raw_text": "서울특별시 성동구 마장로39길 7  (마장동)"
+        },
+        {
+          "type": "geocode_failed",
+          "severity": "high",
+          "row_id": 31,
+          "message": "주소→좌표 변환 실패",
+          "raw_text": "서울특별시 성동구 뚝섬로 379 (성수동2가)"
+        },
+        {
+          "type": "geocode_failed",
+          "severity": "high",
+          "row_id": 50,
+          "message": "주소→좌표 변환 실패",
+          "raw_text": "서울특별시 성동구 자동차시장3길 64 (송정동)"
+        },
+        {
+          "type": "geocode_failed",
+          "severity": "high",
+          "row_id": 51,
+          "message": "주소→좌표 변환 실패",
+          "raw_text": "서울특별시 성동구 자동차시장3길 64 (용답동 중랑물재생센터)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 16,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 19,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 21,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 23,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 30,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 31,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 50,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 51,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        }
+      ],
+      "op_logs": [
+        {
+          "seq": 0,
+          "op_id": "run_geocode",
+          "params": {
+            "address_cols": [
+              "주소"
+            ],
+            "type_order": [
+              "road",
+              "parcel"
+            ],
+            "out_cols": [
+              "위도",
+              "경도"
+            ]
+          },
+          "rows_before": 52,
+          "rows_after": 52,
+          "n_flags": 8,
+          "elapsed_sec": 38.21
+        },
+        {
+          "seq": 1,
+          "op_id": "spatial_join_admin",
+          "params": {
+            "coord_cols": [
+              "경도",
+              "위도"
+            ],
+            "code_col": "ADM_CD",
+            "name_col": "ADM_NM"
+          },
+          "rows_before": 52,
+          "rows_after": 52,
+          "n_flags": 8,
+          "elapsed_sec": 0.58
+        }
+      ],
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\재활용_clean_03.gpkg",
+      "format": "gpkg",
+      "params_autofilled": [],
+      "whitelist_resolved": [],
+      "unknown_ops": [],
+      "status": "ok"
+    },
+    {
+      "dataset_id": "02",
+      "filename": "서울특별시 성동구_의류수거함 현황_20240829.csv",
+      "roles": [
+        "positive_factor"
+      ],
+      "reference_only": false,
+      "gis_input": true,
+      "rows_before": 310,
+      "rows_after": 310,
+      "drop_ratio": 0.0,
+      "n_ops": 2,
+      "n_flags": 0,
+      "flags": [],
+      "op_logs": [
+        {
+          "seq": 0,
+          "op_id": "spatial_join_admin",
+          "params": {
+            "coord_cols": [
+              "경도",
+              "위도"
+            ],
+            "code_col": "ADM_CD",
+            "name_col": "ADM_NM"
+          },
+          "rows_before": 310,
+          "rows_after": 310,
+          "n_flags": 0,
+          "elapsed_sec": 0.59
+        },
+        {
+          "seq": 1,
+          "op_id": "filter_by_value",
+          "params": {
+            "col": "SIGUNGU_NM",
+            "allowed": [
+              "성동구"
+            ]
+          },
+          "rows_before": 310,
+          "rows_after": 310,
+          "n_flags": 0,
+          "elapsed_sec": 0.0
+        }
+      ],
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\재활용_clean_02.gpkg",
+      "format": "gpkg",
+      "params_autofilled": [],
+      "whitelist_resolved": [],
+      "unknown_ops": [],
+      "status": "ok"
+    },
+    {
+      "dataset_id": "10",
+      "filename": "서울특별시_성동구_도시공원정보_20250619.csv",
+      "roles": [
+        "hard_exclusion"
+      ],
+      "reference_only": false,
+      "gis_input": true,
+      "rows_before": 49,
+      "rows_after": 49,
+      "drop_ratio": 0.0,
+      "n_ops": 2,
+      "n_flags": 0,
+      "flags": [],
+      "op_logs": [
+        {
+          "seq": 0,
+          "op_id": "spatial_join_admin",
+          "params": {
+            "coord_cols": [
+              "경도",
+              "위도"
+            ],
+            "code_col": "ADM_CD",
+            "name_col": "ADM_NM"
+          },
+          "rows_before": 49,
+          "rows_after": 49,
+          "n_flags": 0,
+          "elapsed_sec": 0.56
+        },
+        {
+          "seq": 1,
+          "op_id": "filter_by_value",
+          "params": {
+            "col": "SIGUNGU_NM",
+            "allowed": [
+              "성동구"
+            ]
+          },
+          "rows_before": 49,
+          "rows_after": 49,
+          "n_flags": 0,
+          "elapsed_sec": 0.0
+        }
+      ],
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\재활용_clean_10.gpkg",
+      "format": "gpkg",
+      "params_autofilled": [],
+      "whitelist_resolved": [],
+      "unknown_ops": [],
+      "status": "ok"
+    },
+    {
+      "dataset_id": "07",
+      "filename": "성동구_버스정류소_위치정보.xlsx",
+      "roles": [
+        "positive_factor",
+        "hard_exclusion"
+      ],
+      "reference_only": false,
+      "gis_input": true,
+      "rows_before": 449,
+      "rows_after": 449,
+      "drop_ratio": 0.0,
+      "n_ops": 2,
+      "n_flags": 0,
+      "flags": [],
+      "op_logs": [
+        {
+          "seq": 0,
+          "op_id": "spatial_join_admin",
+          "params": {
+            "coord_cols": [
+              "X좌표",
+              "Y좌표"
+            ],
+            "code_col": "ADM_CD",
+            "name_col": "ADM_NM"
+          },
+          "rows_before": 449,
+          "rows_after": 449,
+          "n_flags": 0,
+          "elapsed_sec": 0.56
+        },
+        {
+          "seq": 1,
+          "op_id": "filter_by_value",
+          "params": {
+            "col": "SIGUNGU_NM",
+            "allowed": [
+              "성동구"
+            ]
+          },
+          "rows_before": 449,
+          "rows_after": 449,
+          "n_flags": 0,
+          "elapsed_sec": 0.0
+        }
+      ],
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\재활용_clean_07.gpkg",
+      "format": "gpkg",
+      "params_autofilled": [],
+      "whitelist_resolved": [],
+      "unknown_ops": [],
+      "status": "ok"
+    },
+    {
+      "dataset_id": "06",
+      "filename": "성동구_인구 및 세대현황.xlsx",
+      "roles": [
+        "positive_factor"
+      ],
+      "reference_only": false,
+      "gis_input": true,
+      "rows_before": 18,
+      "rows_after": 17,
+      "drop_ratio": 0.0556,
+      "n_ops": 3,
+      "n_flags": 1,
+      "flags": [
+        {
+          "type": "admin_name_dropped",
+          "severity": "low",
+          "row_id": -1,
+          "message": "행정동명이 아닌 행 제외(합계·소계 등)",
+          "raw_text": "행정동 아님으로 제외: ['합계']"
+        }
+      ],
+      "op_logs": [
+        {
+          "seq": 0,
+          "op_id": "trim_whitespace",
+          "params": {
+            "cols": [
+              "행정기관"
+            ]
+          },
+          "rows_before": 18,
+          "rows_after": 18,
+          "n_flags": 0,
+          "elapsed_sec": 0.01
+        },
+        {
+          "seq": 1,
+          "op_id": "filter_by_admin_name",
+          "params": {
+            "col": "행정기관",
+            "region": "성동구",
+            "min_cover": 0.5
+          },
+          "rows_before": 18,
+          "rows_after": 17,
+          "n_flags": 1,
+          "elapsed_sec": 0.03
+        },
+        {
+          "seq": 2,
+          "op_id": "cast_numeric",
+          "params": {
+            "cols": [
+              "인 구 수_계",
+              "인 구 수_남",
+              "인 구 수_여",
+              "5세 이하",
+              "18세 이상",
+              "65세 이상",
+              "세대수",
+              "전월대비"
+            ]
+          },
+          "rows_before": 17,
+          "rows_after": 17,
+          "n_flags": 0,
+          "elapsed_sec": 0.0
+        }
+      ],
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\재활용_clean_06.parquet",
+      "format": "parquet",
+      "params_autofilled": [],
+      "whitelist_resolved": [],
+      "unknown_ops": [],
+      "status": "ok"
+    },
+    {
+      "dataset_id": "05",
+      "filename": "성동구_행정동별_생활인구.csv",
+      "roles": [
+        "positive_factor"
+      ],
+      "reference_only": false,
+      "gis_input": true,
+      "rows_before": 12240,
+      "rows_after": 12240,
+      "drop_ratio": 0.0,
+      "n_ops": 2,
+      "n_flags": 0,
+      "flags": [],
+      "op_logs": [
+        {
+          "seq": 0,
+          "op_id": "filter_by_code_prefix",
+          "params": {
+            "col": "행정동코드",
+            "prefix": "11200",
+            "prefix_confirmed": true
+          },
+          "rows_before": 12240,
+          "rows_after": 12240,
+          "n_flags": 0,
+          "elapsed_sec": 0.0
+        },
+        {
+          "seq": 1,
+          "op_id": "cast_numeric",
+          "params": {
+            "cols": [
+              "총생활인구수"
+            ]
+          },
+          "rows_before": 12240,
+          "rows_after": 12240,
+          "n_flags": 0,
+          "elapsed_sec": 0.0
+        }
+      ],
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\재활용_clean_05.parquet",
+      "format": "parquet",
+      "params_autofilled": [],
+      "whitelist_resolved": [],
+      "unknown_ops": [],
+      "status": "ok"
+    },
+    {
+      "dataset_id": "04",
+      "filename": "소상공인_상가정보_성동구_202603.csv",
+      "roles": [
+        "positive_factor"
+      ],
+      "reference_only": false,
+      "gis_input": true,
+      "rows_before": 17354,
+      "rows_after": 17354,
+      "drop_ratio": 0.0,
+      "n_ops": 2,
+      "n_flags": 0,
+      "flags": [],
+      "op_logs": [
+        {
+          "seq": 0,
+          "op_id": "spatial_join_admin",
+          "params": {
+            "coord_cols": [
+              "경도",
+              "위도"
+            ],
+            "code_col": "ADM_CD",
+            "name_col": "ADM_NM"
+          },
+          "rows_before": 17354,
+          "rows_after": 17354,
+          "n_flags": 0,
+          "elapsed_sec": 0.61
+        },
+        {
+          "seq": 1,
+          "op_id": "filter_by_value",
+          "params": {
+            "col": "SIGUNGU_NM",
+            "allowed": [
+              "성동구"
+            ]
+          },
+          "rows_before": 17354,
+          "rows_after": 17354,
+          "n_flags": 0,
+          "elapsed_sec": 0.0
+        }
+      ],
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\재활용_clean_04.gpkg",
+      "format": "gpkg",
+      "params_autofilled": [],
+      "whitelist_resolved": [],
+      "unknown_ops": [],
+      "status": "ok"
+    }
+  ]
+}

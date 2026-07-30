@@ -16,6 +16,14 @@ services:
       - omnisite_postgres_data:/var/lib/postgresql/data
     restart: always
 
+  redis:
+    image: redis:7-alpine
+    container_name: omnisite-redis-cache
+    ports:
+      - "6379:6379"
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    restart: always
+
 volumes:
   omnisite_postgres_data:
     driver: local
