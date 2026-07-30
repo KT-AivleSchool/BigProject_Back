@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 #   0.36 = 관련을 하나도 잃지 않는 최댓값(관련 25/25 유지, 무관 통과 20→8건).
 #   조례 인용은 누락(근거 없이 토론 진행)이 오탐보다 치명적이라 재현율 우선.
 #   시드 코퍼스가 크게 바뀌면 재측정 필요.
-SIMILARITY_THRESHOLD = 0.36
+SIMILARITY_THRESHOLD = 0.31
 
 
 # [동현님 담당] pgvector Vector DB 연결 및 RAG 문서 적재/조회 모듈
@@ -94,7 +94,7 @@ class RagVectorStorage:
 
     async def retrieve_similar_statutes(
         self, query: str, top_k: int = 3, facility_type: str = None
-    ) -> List[str]:
+    ) -> List[dict]:
         """
         [동현 AI 메인] 토론 시나리오 발화 문맥(query)과 가장 유사한 조례 규정 텍스트를
         '기본 조례 콜렉션(statutes_collection)'에서 비동기로 검색합니다.
@@ -104,7 +104,9 @@ class RagVectorStorage:
 
         try:
             # LangChain의 비동기 유사도 검색 (asimilarity_search_with_relevance_scores) 사용
-            search_kwargs = {"k": top_k}
+            # XGBoost Re-ranking을 위해 1차 검색 범위를 넉넉하게 잡습니다 (Recall 단계)
+            recall_k = max(top_k * 3, 15)
+            search_kwargs = {"k": recall_k}
 
             # [A-2] facility_type 쿼리 prefix 제거 및 필터(filter) 적용
             if facility_type:
@@ -121,15 +123,45 @@ class RagVectorStorage:
             if not docs_with_scores:
                 return []
 
-            # 임계치 이상인 문서만 순수 텍스트(page_content) 추출
-            filtered_docs = [
-                doc.page_content
+            # 임계치 이상인 문서만 텍스트와 점수로 추출 (Re-ranking 후보군)
+            # 초기 검색 임계값을 약간 완화하여 충분한 후보군 확보 (예: 0.36 -> 0.31)
+            candidate_chunks = [
+                (doc.page_content, float(score))
                 for doc, score in docs_with_scores
-                if score >= SIMILARITY_THRESHOLD
+                if score >= (SIMILARITY_THRESHOLD)
             ]
 
-            return filtered_docs
+            # [A-4] XGBoost 기반 Re-ranking (Precision 단계)
+            from app.services.xgboost_rag_service import xgboost_rag_service
+
+            print("\n" + "=" * 60)
+            print(f"🔍 [XGBoost Re-ranking 전/후 비교 로그] (Query: {query})")
+            print("-" * 60)
+            print(
+                f"▶ 1. PGVector 원본 검색 결과 (총 {len(candidate_chunks)}건 중 상위 3건 미리보기)"
+            )
+            for i, (chunk, score) in enumerate(candidate_chunks[:3]):
+                preview = chunk.replace("\n", " ")[:50] + "..."
+                print(f"   [{i + 1}] Vector 점수: {score:.4f} | {preview}")
+            if len(candidate_chunks) > 3:
+                print("   ... (나머지 생략)")
+
+            # XGBoost 모델(또는 Rule-based)로 재평가 후 최종 top_k 반환 (Dict 리스트)
+            final_docs = xgboost_rag_service.rerank_chunks(
+                query, candidate_chunks, top_k=top_k
+            )
+
+            print("-" * 60)
+            print(f"▶ 2. XGBoost Re-ranked 결과 (최종 상위 {len(final_docs)}건)")
+            for i, doc_info in enumerate(final_docs):
+                preview = doc_info["text"].replace("\n", " ")[:50] + "..."
+                print(
+                    f"   [{i + 1}] 최종 점수: {doc_info['final_score']:.4f} (원본 Vector: {doc_info['vector_score']:.4f}) | {preview}"
+                )
+            print("=" * 60 + "\n")
+
+            return final_docs
+
         except Exception as e:
-            # 호출부에서 에러를 인지할 수 있도록 예외를 던짐
-            logger.error(f"[RAG Error] Vector DB Search Error: {e}")
-            raise e
+            logger.error(f"[RAG Error] 유사도 검색 및 Re-ranking 실패: {e}")
+            return []

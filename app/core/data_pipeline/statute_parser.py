@@ -8,6 +8,8 @@ v1 → v2 (A등급 고도화, 실원문 제1081호 검증 반영):
   A3. 삭제 조항("제n조 삭제") 스킵
   A4. 문서 메타 자동 추출: extract_doc_meta() — [시행 …] [… 제n호 …] → 시행일·조례번호
   A5. 페이지 노이즈 제거 (법제처/국가법령정보센터 꼬리, 반복되는 조례명 줄)
+  A7. 입지 무관 조항(벌칙/과태료/보칙) 적재 제외 — 넓은 법 통짜 적재 시 검색 오염 방지
+       (유사도로는 관련/무관 점수대가 겹쳐 분리 불가 → 적재 단계에서 제거)
 """
 
 import re
@@ -38,6 +40,17 @@ NOISE_LINE_RES = [  # A5
     re.compile(r"^국가법령정보센터\s*$"),
     re.compile(r"^\d+\s*$"),  # 페이지 번호 단독 줄
 ]
+
+# A7: 입지 판단과 무관한 처벌·행정 조항 키워드. 장(章)·조(條) 제목에 걸리면 청크에서 제외.
+#     범위 넓은 법(예: 국민건강증진법)을 통짜 적재하면 담배판매·광고 벌칙 등 흡연부스 입지와
+#     무관한 조문이 검색 상위를 오염시킨다. 유사도로는 못 거른다(관련 0.36 / 무관 0.44 점수대
+#     중첩 → 임계치를 올리면 관련 조문이 먼저 죽음) → 적재 단계 제거가 유일한 근본 해법.
+EXCLUDE_CHAPTER_KEYS = ("벌칙", "보칙")  # 장(章) 제목에 포함되면 그 장의 조문 전체 제외
+EXCLUDE_ARTICLE_KEYS = (
+    "벌칙",
+    "과태료",
+    "양벌규정",
+)  # 조(條) 제목에 포함되면 해당 조 제외
 
 
 @dataclass
@@ -104,6 +117,16 @@ def _extract_amend_tags(text: str):
     tags = list(dict.fromkeys(tags))  # 중복 제거(순서 보존)
     cleaned = AMEND_TAG_RE.sub("", text)
     return cleaned, ("; ".join(tags) or None)
+
+
+# ── A7: 입지 무관 조항 제외 ──────────────────────────────────────────────────
+def _is_offtopic_article(chapter: Optional[str], art_title: Optional[str]) -> bool:
+    """벌칙/과태료/보칙 등 입지 판단과 무관한 조항이면 True → 적재에서 제외."""
+    if chapter and any(k in chapter for k in EXCLUDE_CHAPTER_KEYS):
+        return True
+    if art_title and any(k in art_title for k in EXCLUDE_ARTICLE_KEYS):
+        return True
+    return False
 
 
 def parse_statute(
@@ -175,6 +198,9 @@ def parse_statute(
             article_titles[art_no.replace("조", "")] = art_title
 
         chapter = _chapter_of(main, start)  # A1: 오프셋 직접 사용
+
+        if _is_offtopic_article(chapter, art_title):  # A7: 벌칙/과태료/보칙 제외
+            continue
 
         art_label = f"제{art_no}" + (f"({art_title})" if art_title else "")
         if "조의" in art_no:
