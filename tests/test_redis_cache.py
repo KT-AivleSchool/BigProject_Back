@@ -1,6 +1,5 @@
 import os
 import sys
-import pytest
 
 # 프로젝트 루트 경로를 sys.path에 추가 (python 직접 실행 시 ModuleNotFoundError 방지)
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
