@@ -90,7 +90,9 @@ if __name__ == "__main__":
     print("🚀 RedisCacheManager 및 @redis_cache 테스트 직접 실행 중...")
     print("==================================================")
 
-    print(f"📌 Redis 연결 상태: {'연결 가능 ⭕' if is_redis_available() else '오프라인 ⚠️'}")
+    print(
+        f"📌 Redis 연결 상태: {'연결 가능 ⭕' if is_redis_available() else '오프라인 ⚠️'}"
+    )
 
     print("\n1. 동기 캐시 덤프/조회 테스트 실행...")
     test_redis_cache_sync_manager()
