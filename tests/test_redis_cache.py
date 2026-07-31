@@ -1,4 +1,10 @@
+import os
+import sys
 import pytest
+
+# 프로젝트 루트 경로를 sys.path에 추가 (python 직접 실행 시 ModuleNotFoundError 방지)
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from app.utils.redis_cache import RedisCacheManager, redis_cache
 
 
@@ -50,3 +56,19 @@ def test_redis_cache_decorator():
 
     # Cleanup
     RedisCacheManager.delete_sync("cache:test_dec:5")
+
+
+if __name__ == "__main__":
+    print("\n==================================================")
+    print("🚀 RedisCacheManager 및 @redis_cache 테스트 직접 실행 중...")
+    print("==================================================")
+
+    print("\n1. 동기 캐시 덤프/조회 테스트 실행...")
+    test_redis_cache_sync_manager()
+    print("  ✅ 동기 캐시 저장, 조회, 삭제 100% 성공!")
+
+    print("\n2. @redis_cache 데코레이터 자동 캐싱 테스트 실행...")
+    test_redis_cache_decorator()
+    print("  ✅ 2회차 호출 시 함수 재실행 없이 Redis 캐시 리턴 100% 성공!")
+
+    print("\n🎉 모든 테스트가 깔끔하게 완료되었습니다!\n")
