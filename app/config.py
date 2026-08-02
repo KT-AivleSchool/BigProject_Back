@@ -81,7 +81,7 @@ DATA_DIR = str(REGION_DATA_DIR)  # (구 이름 호환)
 #      출처: https://www.k-pis.go.kr/selectBasSerList.do
 #   ⚠️ 지역별 데이터이므로 **사용자 업로드 → 온디맨드 지오코딩**으로 전환 예정.
 #      전환 시 이 상수는 폴백(기본 샘플)로만 남는다. → GEOCODE_CACHE_DIR 참조
-NATIONAL_PROPERTY_CSV = str(REGION_DATA_DIR / "국유부동산_위경도_v2.csv")
+NATIONAL_PROPERTY_CSV = str(REGION_DATA_DIR / "국유부동산_위경도_v2_통합.csv")
 
 # 경계 폴리곤 SHP (센서스경계, 국가데이터처) — 세 파일은 같은 기준일 세트로 유지할 것.
 #   spatial_join_admin 이 좌표에 지역을 붙이는 핵심 입력이다.

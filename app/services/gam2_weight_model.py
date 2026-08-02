@@ -280,7 +280,10 @@ def attach_layers(indicators: list, loader, admin_value_col: str = "총생활인
         if not is_geo:                                  # 좌표 없는 통계표 -> admin
             i["kind"] = "admin"
             code_col = next((c for c in g.columns if admin_code_hint in str(c)), None)
-            vcol = admin_value_col if admin_value_col in g.columns else _pick_value_cols(g)[0]
+            if code_col is None:
+                code_col = next((c for c in g.columns if any(h in str(c) for h in ["기관", "동", "ADM", "코드", "NM"])), None)
+            vcols = _pick_value_cols(g)
+            vcol = admin_value_col if admin_value_col in g.columns else (vcols[0] if vcols else g.select_dtypes('number').columns[0])
             g = g.copy(); g[vcol] = pd.to_numeric(g[vcol], errors="coerce")
             agg = g.groupby(code_col)[vcol].mean().reset_index()   # 시간대·일 평균
             i["_admin_agg"] = agg; i["_admin_code_col"] = code_col; i["_admin_valcol"] = vcol

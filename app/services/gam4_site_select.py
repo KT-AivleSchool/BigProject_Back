@@ -81,7 +81,14 @@ def make_loader(domain: str):
         f = files[did]
         if f.endswith(".gpkg"):
             return gpd.read_file(f).to_crs(W.WORK_CRS)
-        return pd.read_parquet(f)
+        df = pd.read_parquet(f)
+        if "경도" in df.columns and "위도" in df.columns:
+            df = df.dropna(subset=["경도", "위도"])
+            df = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df["경도"], df["위도"]), crs="EPSG:4326").to_crs(W.WORK_CRS)
+        elif "X좌표" in df.columns and "Y좌표" in df.columns:
+            df = df.dropna(subset=["X좌표", "Y좌표"])
+            df = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df["X좌표"], df["Y좌표"]), crs="EPSG:4326").to_crs(W.WORK_CRS)
+        return df
     return loader, doc
 
 
