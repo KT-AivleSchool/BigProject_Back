@@ -118,7 +118,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     # 기본 용산구 테스트용 후보 파일 경로 추정
-    cpath = os.path.join(STEP3_OUTPUT_DIR, f"{args.domain}_LSMD_CONT_LDREG_11170_202607.gpkg")
+    cpath = os.path.join(STEP3_OUTPUT_DIR, f"{args.domain}_후보_지적도필지.gpkg")
     if not os.path.exists(cpath):
         cpath = os.path.join(REGION_DATA_DIR, "LSMD_CONT_LDREG_11170_202607.shp")
         
