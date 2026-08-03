@@ -53,7 +53,8 @@ def main():
 
                             # 화자가 변경되었을 때만 화자 태그 출력
                             if sender and current_sender != sender:
-                                print(f"\n[{sender}]")
+                                prefix = "\n" if current_sender is None else "\n\n"
+                                print(f"{prefix}[{sender}]")
                                 current_sender = sender
 
                             # 실시간 토큰(글자)을 줄바꿈 없이 이어서 출력
