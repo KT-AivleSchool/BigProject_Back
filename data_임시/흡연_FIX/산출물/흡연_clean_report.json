@@ -4,14 +4,14 @@
     "gis_input": "위치선정 GIS 입력 대상 여부(reference_only면 false)",
     "whitelists_생산": {
       "bus_station_whitelist": 336,
-      "서울시 역사마스터 정보": 13
+      "역사명": 13
     }
   },
   "facility": "흡연부스",
-  "region": "용산구",
+  "region": "서울특별시 용산구",
   "results": [
     {
-      "dataset_id": "04",
+      "dataset_id": "01",
       "filename": "B1_서울특별시_용산구_금연구역_20260131.csv",
       "roles": [
         "hard_exclusion"
@@ -56,15 +56,148 @@
           "elapsed_sec": 0.0
         }
       ],
-      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_04.gpkg",
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_01.gpkg",
       "format": "gpkg",
       "params_autofilled": [],
       "whitelist_resolved": [],
       "unknown_ops": [],
-      "status": "ok"
+      "status": "ok",
+      "sec": 0.78
     },
     {
-      "dataset_id": "10",
+      "dataset_id": "02",
+      "filename": "BUS_STATION_BOARDING_MONTH_202605.csv",
+      "roles": [
+        "positive_factor"
+      ],
+      "reference_only": false,
+      "gis_input": true,
+      "rows_before": 1272569,
+      "rows_after": 34769,
+      "drop_ratio": 0.9727,
+      "n_ops": 2,
+      "n_flags": 1,
+      "flags": [
+        {
+          "type": "join_key_uncovered",
+          "severity": "low",
+          "row_id": -1,
+          "message": "화이트리스트 일부 키가 데이터에 없음",
+          "raw_text": "미매칭 키 22개: ['102000255', '102000256', '102000257', '102000262', '102000263', '102000272', '102000273', '102000274', '102000275', '102000276']"
+        }
+      ],
+      "op_logs": [
+        {
+          "seq": 0,
+          "op_id": "filter_by_join_key",
+          "params": {
+            "key_col": "표준버스정류장ID",
+            "whitelist": "bus_station_whitelist",
+            "normalize": "none"
+          },
+          "rows_before": 1272569,
+          "rows_after": 34769,
+          "n_flags": 1,
+          "elapsed_sec": 0.08
+        },
+        {
+          "seq": 1,
+          "op_id": "cast_numeric",
+          "params": {
+            "cols": [
+              "승차총승객수",
+              "하차총승객수"
+            ]
+          },
+          "rows_before": 34769,
+          "rows_after": 34769,
+          "n_flags": 0,
+          "elapsed_sec": 0.03
+        }
+      ],
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_02.parquet",
+      "format": "parquet",
+      "params_autofilled": [],
+      "whitelist_resolved": [
+        {
+          "from_dataset": "07",
+          "from_column": "NODE_ID",
+          "key_col": "표준버스정류장ID",
+          "normalize": "none",
+          "normalize_changed": false,
+          "matched_keys": 336,
+          "cover": 0.935,
+          "whitelist": "bus_station_whitelist"
+        }
+      ],
+      "unknown_ops": [],
+      "status": "ok",
+      "sec": 4.88
+    },
+    {
+      "dataset_id": "03",
+      "filename": "CARD_SUBWAY_MONTH_202605.csv",
+      "roles": [
+        "positive_factor"
+      ],
+      "reference_only": false,
+      "gis_input": true,
+      "rows_before": 19131,
+      "rows_after": 620,
+      "drop_ratio": 0.9676,
+      "n_ops": 2,
+      "n_flags": 0,
+      "flags": [],
+      "op_logs": [
+        {
+          "seq": 0,
+          "op_id": "filter_by_join_key",
+          "params": {
+            "key_col": "역명",
+            "whitelist": "역사명",
+            "normalize": "strip_paren"
+          },
+          "rows_before": 19131,
+          "rows_after": 620,
+          "n_flags": 0,
+          "elapsed_sec": 0.02
+        },
+        {
+          "seq": 1,
+          "op_id": "cast_numeric",
+          "params": {
+            "cols": [
+              "승차총승객수",
+              "하차총승객수"
+            ]
+          },
+          "rows_before": 620,
+          "rows_after": 620,
+          "n_flags": 0,
+          "elapsed_sec": 0.0
+        }
+      ],
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_03.parquet",
+      "format": "parquet",
+      "params_autofilled": [],
+      "whitelist_resolved": [
+        {
+          "from_dataset": "06",
+          "from_column": "역사명",
+          "key_col": "역명",
+          "normalize": "strip_paren",
+          "normalize_changed": true,
+          "matched_keys": 13,
+          "cover": 1.0,
+          "whitelist": "역사명"
+        }
+      ],
+      "unknown_ops": [],
+      "status": "ok",
+      "sec": 1.26
+    },
+    {
+      "dataset_id": "04",
       "filename": "LOCAL_PEOPLE_DONG_202605.csv",
       "roles": [
         "positive_factor"
@@ -84,7 +217,21 @@
           "params": {
             "col": "행정동코드",
             "prefix": "11170",
-            "prefix_confirmed": true
+            "prefix_check": {
+              "status": "auto_confirmed",
+              "verdict": "ambiguous",
+              "prefix": "11170",
+              "region": "서울특별시 용산구",
+              "region_unique": true,
+              "system": "행자부",
+              "resolved": "서울특별시 용산구",
+              "detail": "행자부=서울특별시 용산구 · 통계청=서울특별시 구로구 / 표본판정: 행자부 2/2 · 통계청 0/2",
+              "suggestion": "11170",
+              "reason": "데이터 표본이 행자부 체계로 판정됨",
+              "col": "행정동코드"
+            },
+            "prefix_confirmed": true,
+            "prefix_confirmed_by": "code_table:행자부"
           },
           "rows_before": 315456,
           "rows_after": 11904,
@@ -133,12 +280,13 @@
           "elapsed_sec": 0.1
         }
       ],
-      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_10.parquet",
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_04.parquet",
       "format": "parquet",
       "params_autofilled": [],
       "whitelist_resolved": [],
       "unknown_ops": [],
-      "status": "ok"
+      "status": "ok",
+      "sec": 4.41
     },
     {
       "dataset_id": "05",
@@ -149,9 +297,9 @@
       "reference_only": false,
       "gis_input": true,
       "rows_before": 9483,
-      "rows_after": 173,
-      "drop_ratio": 0.9818,
-      "n_ops": 2,
+      "rows_after": 82,
+      "drop_ratio": 0.9914,
+      "n_ops": 3,
       "n_flags": 630,
       "flags": [
         {
@@ -3948,7 +4096,7 @@
           "rows_before": 9483,
           "rows_after": 9483,
           "n_flags": 630,
-          "elapsed_sec": 0.68
+          "elapsed_sec": 0.08
         },
         {
           "seq": 1,
@@ -3963,6 +4111,21 @@
           "rows_after": 173,
           "n_flags": 0,
           "elapsed_sec": 0.0
+        },
+        {
+          "seq": 2,
+          "op_id": "filter_by_value",
+          "params": {
+            "col": "운영현황",
+            "allowed": [
+              "정상",
+              "재개"
+            ]
+          },
+          "rows_before": 173,
+          "rows_after": 82,
+          "n_flags": 0,
+          "elapsed_sec": 0.0
         }
       ],
       "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_05.gpkg",
@@ -3970,14 +4133,15 @@
       "params_autofilled": [],
       "whitelist_resolved": [],
       "unknown_ops": [],
-      "status": "ok"
+      "status": "ok",
+      "sec": 0.23
     },
     {
-      "dataset_id": "07",
+      "dataset_id": "06",
       "filename": "서울시 역사마스터 정보.csv",
       "roles": [
-        "hard_exclusion",
-        "positive_factor"
+        "positive_factor",
+        "hard_exclusion"
       ],
       "reference_only": false,
       "gis_input": true,
@@ -4002,7 +4166,7 @@
           "rows_before": 784,
           "rows_after": 784,
           "n_flags": 0,
-          "elapsed_sec": 0.63
+          "elapsed_sec": 0.08
         },
         {
           "seq": 1,
@@ -4019,15 +4183,16 @@
           "elapsed_sec": 0.0
         }
       ],
-      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_07.gpkg",
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_06.gpkg",
       "format": "gpkg",
       "params_autofilled": [],
       "whitelist_resolved": [],
       "unknown_ops": [],
-      "status": "ok"
+      "status": "ok",
+      "sec": 0.09
     },
     {
-      "dataset_id": "06",
+      "dataset_id": "07",
       "filename": "서울시버스정류소위치정보(20260602).xlsx",
       "roles": [
         "positive_factor",
@@ -4049,14 +4214,12 @@
             "coord_cols": [
               "X좌표",
               "Y좌표"
-            ],
-            "code_col": "ADM_CD",
-            "name_col": "ADM_NM"
+            ]
           },
           "rows_before": 11253,
           "rows_after": 11253,
           "n_flags": 0,
-          "elapsed_sec": 0.63
+          "elapsed_sec": 0.08
         },
         {
           "seq": 1,
@@ -4073,20 +4236,21 @@
           "elapsed_sec": 0.0
         }
       ],
-      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_06.gpkg",
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_07.gpkg",
       "format": "gpkg",
       "params_autofilled": [],
       "whitelist_resolved": [],
       "unknown_ops": [],
       "status": "ok",
+      "sec": 0.91,
       "pruned_by": {
-        "consumer": "08",
+        "consumer": "02",
         "dropped": 22,
-        "reason": "08 에 대응 데이터가 없는 키"
+        "reason": "02 에 대응 데이터가 없는 키"
       }
     },
     {
-      "dataset_id": "12",
+      "dataset_id": "08",
       "filename": "서울특별시 용산구_가로휴지통_20240630.csv",
       "roles": [
         "positive_factor"
@@ -4117,16 +4281,11 @@
         {
           "seq": 0,
           "op_id": "trim_whitespace",
-          "params": {
-            "cols": [
-              "설치주소",
-              "상세위치"
-            ]
-          },
+          "params": {},
           "rows_before": 281,
           "rows_after": 281,
           "n_flags": 0,
-          "elapsed_sec": 0.0
+          "elapsed_sec": 0.01
         },
         {
           "seq": 1,
@@ -4148,7 +4307,7 @@
           "rows_before": 281,
           "rows_after": 281,
           "n_flags": 1,
-          "elapsed_sec": 242.89
+          "elapsed_sec": 0.03
         },
         {
           "seq": 2,
@@ -4164,7 +4323,7 @@
           "rows_before": 281,
           "rows_after": 281,
           "n_flags": 1,
-          "elapsed_sec": 0.64
+          "elapsed_sec": 0.02
         },
         {
           "seq": 3,
@@ -4181,15 +4340,16 @@
           "elapsed_sec": 0.0
         }
       ],
-      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_12.gpkg",
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_08.gpkg",
       "format": "gpkg",
       "params_autofilled": [],
       "whitelist_resolved": [],
       "unknown_ops": [],
-      "status": "ok"
+      "status": "ok",
+      "sec": 0.09
     },
     {
-      "dataset_id": "01",
+      "dataset_id": "09",
       "filename": "서울특별시_용산구_담배꽁초상습무단투기지역현황_20250806.csv",
       "roles": [
         "positive_factor"
@@ -4209,8 +4369,7 @@
           "params": {
             "address_cols": [
               "도로명주소",
-              "지번주소",
-              "상세위치"
+              "지번주소"
             ],
             "type_order": [
               "road",
@@ -4224,7 +4383,7 @@
           "rows_before": 8,
           "rows_after": 8,
           "n_flags": 0,
-          "elapsed_sec": 5.35
+          "elapsed_sec": 0.0
         },
         {
           "seq": 1,
@@ -4240,7 +4399,7 @@
           "rows_before": 8,
           "rows_after": 8,
           "n_flags": 0,
-          "elapsed_sec": 0.59
+          "elapsed_sec": 0.02
         },
         {
           "seq": 2,
@@ -4257,15 +4416,16 @@
           "elapsed_sec": 0.0
         }
       ],
-      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_01.gpkg",
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_09.gpkg",
       "format": "gpkg",
       "params_autofilled": [],
       "whitelist_resolved": [],
       "unknown_ops": [],
-      "status": "ok"
+      "status": "ok",
+      "sec": 0.04
     },
     {
-      "dataset_id": "02",
+      "dataset_id": "10",
       "filename": "소상공인시장진흥공단_상가(상권)정보_서울_202603.csv",
       "roles": [
         "positive_factor"
@@ -4286,12 +4446,14 @@
             "coord_cols": [
               "경도",
               "위도"
-            ]
+            ],
+            "code_col": "ADM_CD",
+            "name_col": "ADM_NM"
           },
           "rows_before": 537489,
           "rows_after": 537489,
           "n_flags": 0,
-          "elapsed_sec": 3.59
+          "elapsed_sec": 2.95
         },
         {
           "seq": 1,
@@ -4305,18 +4467,19 @@
           "rows_before": 537489,
           "rows_after": 15722,
           "n_flags": 0,
-          "elapsed_sec": 0.07
+          "elapsed_sec": 0.06
         }
       ],
-      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_02.gpkg",
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_10.gpkg",
       "format": "gpkg",
       "params_autofilled": [],
       "whitelist_resolved": [],
       "unknown_ops": [],
-      "status": "ok"
+      "status": "ok",
+      "sec": 9.53
     },
     {
-      "dataset_id": "03",
+      "dataset_id": "11",
       "filename": "전국어린이보호구역표준데이터.csv",
       "roles": [
         "hard_exclusion"
@@ -4344,7 +4507,7 @@
           "rows_before": 14581,
           "rows_after": 14581,
           "n_flags": 0,
-          "elapsed_sec": 1.49
+          "elapsed_sec": 0.87
         },
         {
           "seq": 1,
@@ -4361,142 +4524,13 @@
           "elapsed_sec": 0.0
         }
       ],
-      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_03.gpkg",
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_11.gpkg",
       "format": "gpkg",
       "params_autofilled": [],
       "whitelist_resolved": [],
       "unknown_ops": [],
-      "status": "ok"
-    },
-    {
-      "dataset_id": "08",
-      "filename": "BUS_STATION_BOARDING_MONTH_202605.csv",
-      "roles": [
-        "positive_factor"
-      ],
-      "reference_only": false,
-      "gis_input": true,
-      "rows_before": 1272569,
-      "rows_after": 34769,
-      "drop_ratio": 0.9727,
-      "n_ops": 2,
-      "n_flags": 1,
-      "flags": [
-        {
-          "type": "join_key_uncovered",
-          "severity": "low",
-          "row_id": -1,
-          "message": "화이트리스트 일부 키가 데이터에 없음",
-          "raw_text": "미매칭 키 22개: ['102000255', '102000256', '102000257', '102000262', '102000263', '102000272', '102000273', '102000274', '102000275', '102000276']"
-        }
-      ],
-      "op_logs": [
-        {
-          "seq": 0,
-          "op_id": "filter_by_join_key",
-          "params": {
-            "key_col": "표준버스정류장ID",
-            "whitelist": "bus_station_whitelist",
-            "normalize": "none"
-          },
-          "rows_before": 1272569,
-          "rows_after": 34769,
-          "n_flags": 1,
-          "elapsed_sec": 0.08
-        },
-        {
-          "seq": 1,
-          "op_id": "cast_numeric",
-          "params": {
-            "cols": [
-              "승차총승객수",
-              "하차총승객수"
-            ]
-          },
-          "rows_before": 34769,
-          "rows_after": 34769,
-          "n_flags": 0,
-          "elapsed_sec": 0.03
-        }
-      ],
-      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_08.parquet",
-      "format": "parquet",
-      "params_autofilled": [],
-      "whitelist_resolved": [
-        {
-          "from_dataset": "06",
-          "from_column": "NODE_ID",
-          "key_col": "표준버스정류장ID",
-          "normalize": "none",
-          "normalize_changed": false,
-          "matched_keys": 336,
-          "cover": 0.935,
-          "whitelist": "bus_station_whitelist"
-        }
-      ],
-      "unknown_ops": [],
-      "status": "ok"
-    },
-    {
-      "dataset_id": "09",
-      "filename": "CARD_SUBWAY_MONTH_202605.csv",
-      "roles": [
-        "positive_factor"
-      ],
-      "reference_only": false,
-      "gis_input": true,
-      "rows_before": 19131,
-      "rows_after": 620,
-      "drop_ratio": 0.9676,
-      "n_ops": 2,
-      "n_flags": 0,
-      "flags": [],
-      "op_logs": [
-        {
-          "seq": 0,
-          "op_id": "filter_by_join_key",
-          "params": {
-            "key_col": "역명",
-            "whitelist": "서울시 역사마스터 정보",
-            "normalize": "strip_paren"
-          },
-          "rows_before": 19131,
-          "rows_after": 620,
-          "n_flags": 0,
-          "elapsed_sec": 0.02
-        },
-        {
-          "seq": 1,
-          "op_id": "cast_numeric",
-          "params": {
-            "cols": [
-              "승차총승객수",
-              "하차총승객수"
-            ]
-          },
-          "rows_before": 620,
-          "rows_after": 620,
-          "n_flags": 0,
-          "elapsed_sec": 0.0
-        }
-      ],
-      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_09.parquet",
-      "format": "parquet",
-      "params_autofilled": [],
-      "whitelist_resolved": [
-        {
-          "from_dataset": "07",
-          "from_column": "역사명",
-          "key_col": "역명",
-          "normalize": "strip_paren",
-          "normalize_changed": true,
-          "matched_keys": 13,
-          "cover": 1.0,
-          "whitelist": "서울시 역사마스터 정보"
-        }
-      ],
-      "unknown_ops": [],
-      "status": "ok"
+      "status": "ok",
+      "sec": 0.95
     }
   ]
 }

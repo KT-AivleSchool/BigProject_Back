@@ -756,8 +756,13 @@ if __name__ == "__main__":
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     flags_ = {a for a in sys.argv[1:] if a.startswith("--")}
     if not args:
-        print("사용법: python clean_data.py <도메인폴더> [--csv-preview] [--no-prune]")
+        print(
+            "사용법: python clean_data.py <도메인폴더> "
+            "[--csv-preview] [--no-prune] [--refresh-geocode]"
+        )
         sys.exit(1)
+    # 지오코딩 실패 캐시 무효화(S6). 성공분은 주소→좌표라 바뀌지 않으므로 유지한다.
+    cat.set_geocode_refresh("--refresh-geocode" in flags_)
     try:
         clean_domain(
             args[0],

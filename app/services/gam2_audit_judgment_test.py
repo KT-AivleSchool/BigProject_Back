@@ -114,16 +114,25 @@ SYSTEM_PROMPT_TEMPLATE = """너는 스마트시티 입지선정 플랫폼 OmniSi
   · "polygon" : 구역 경계 자체로 배제(면). 예: 도시공원·교육환경보호구역·침수구역.
                 구역 안이면 배제하므로 배제반경_m 은 불필요(null). 반경을 지어내지 마라.
   점 시설이면 radius, 면(구역) 데이터면 polygon 으로 판정한다.
-- hard_exclusion 이면 facility_type 에 시설 유형명을 넣는다(예: "어린이집", "학교",
-  "버스정류소", "지하철역", "도시공원"). 이 값은 배제반경 캐시의 키로 쓰이므로 일반적인
-  시설 유형명으로 적는다(파일명·데이터셋ID 말고 시설 종류).
+- hard_exclusion 이면 facility_type 에 시설 유형명을 넣는다(예: "어린이집",
+  "버스정류소", "지하철역", "도시공원"). 이 값은 **배제반경 캐시의 키이자 상위법
+  검색어**다 — 틀리면 엉뚱한 법령 조문이 근거로 붙고, 그 근거가 산출물에 남는다.
+  · 데이터셋ID·확장자·기관명·파일명 형식(날짜·지자체 접두 등)은 쓰지 마라.
+  · 시설 종류 컬럼(시설구분·구분·유형 등)에 값이 여러 개면 **그 중 하나를 고르지 마라.**
+    개별 값이 아니라 **그 컬럼 전체를 아우르는 상위 개념**을 쓴다.
+    데이터셋 주제 자체가 그 상위 개념이면 그 이름을 그대로 쓰는 것이 맞다.
+    (예: 시설구분에 '학교절대보호구역·어린이집·도시공원'이 섞인 금연구역 목록
+     → facility_type = "금연구역". "학교절대보호구역" 처럼 표본 값 하나를 집으면
+     상위법 검색이 학교 조문을 가져와 이 데이터 전체와 무관한 근거가 된다.)
+  · 스스로 검산하라 — "이 이름으로 법령을 검색하면 이 데이터 **전체**에 맞는 조문이
+    나오는가?" 한 유형에만 맞는 이름이면 상위 개념으로 한 단계 올려라.
 - hard_exclusion 의 배제반경_m 은 exclusion_type=radius 일 때만 조례 근거로 채운다.
 - **한 데이터셋의 hard_exclusion 은 1개만 낸다.** 데이터에 시설 종류 컬럼이 있어
   여러 유형(어린이집·초등학교·유치원 등)이 섞여 있어도 나누지 마라.
   배제는 현재 데이터셋 단위로 적용되므로, 유형을 나눠도 행마다 다른 반경을 적용할 수 없다
   (같은 데이터셋이 HITL 에 두 번 올라와 사람만 두 번 묻게 된다).
-  이 경우 facility_type 은 데이터 전체를 대표하는 이름(예: "어린이보호구역")으로 하고,
-  반경은 섞인 유형 중 가장 보수적인(넓은) 값을 쓴다.
+  이 경우 facility_type 은 위 [상위 개념] 규칙대로 데이터 전체를 대표하는 이름으로 하고
+  (예: "어린이보호구역"), 반경은 섞인 유형 중 가장 보수적인(넓은) 값을 쓴다.
 - 다음 데이터는 hard_exclusion 이 아니다. 배제로 판정하지 마라:
   · 조례·법령 텍스트(rag_document): 배제 규칙의 '근거 문서'일 뿐, 그 자체가 배제 대상이 아니다.
   · 행정경계·연속지적도 등 공간 기반 데이터: 후보지·범위 정보이지 배제 시설이 아니다(coord_status=spatial).
@@ -295,11 +304,21 @@ def build_prompt(
     """시스템+유저 프롬프트 조립. 카탈로그는 describe_all()로 동적 주입.
     조례는 profile에 실린 것을 우선 사용(데이터셋별 주입), 인자로도 덮어쓸 수 있음.
     fixtures 를 주면 다른 데이터셋 스키마를 함께 보여준다(조인 짝 판단용)."""
-    ordinance = (
-        ordinance_rag
-        if ordinance_rag is not None
-        else ([profile["ordinance"]] if profile.get("ordinance") else [])
-    )
+    if ordinance_rag is not None:
+        ordinance = ordinance_rag
+    elif profile.get("ordinance"):
+        # 조례 전문을 데이터셋마다 통째로 실으면 프롬프트가 급격히 커진다
+        #   (성동구 폐기물 조례 전문 적용 시 감리 66초 -> 4분 37초, 데이터셋 9개).
+        #   규제성 조문(거리·금지·열거)과 그 참조 조문만 발췌한다.
+        #   ※ 배제반경 추출(STEP2)은 전문을 쓴다 — 거긴 호출이 배제 건수뿐이다.
+        try:
+            from app.services.gam2_ordinance_select import select_articles, keywords_of
+            ordinance = [select_articles(profile["ordinance"], keywords_of(profile))]
+        except Exception as e:
+            print(f"  ⚠ 조례 발췌 생략({e}) — 전문 사용")
+            ordinance = [profile["ordinance"]]
+    else:
+        ordinance = []
     facility = domain.get("facility", "대상 시설")
     user = {
         "domain_context": domain,  # {facility, region}
@@ -309,6 +328,9 @@ def build_prompt(
             "extension": profile.get("extension"),
             "schema": profile.get("columns"),
             "sample_rows": profile.get("sample_rows", []),
+            # 저카디널리티 컬럼의 **값 분포 전체**. sample_rows(2행)로는 보이지 않는
+            #   드문 값까지 들어 있다. filter_by_value 의 allowed 는 여기서 고른다.
+            "value_dist": profile.get("value_dist", {}),
             "profile": {
                 k: profile[k]
                 for k in (
@@ -340,7 +362,9 @@ def build_prompt(
                 {
                     "role": "hard_exclusion",
                     "exclusion_type": "radius|polygon",
-                    "facility_type": "시설 유형명(캐시 키). 예: 어린이집·학교·버스정류소",
+                    "facility_type": "시설 유형명(배제반경 캐시 키 + 상위법 검색어). "
+                                     "시설 종류 컬럼에 여러 값이 섞였으면 개별 값이 "
+                                     "아니라 상위 개념. 예: 어린이집·버스정류소·금연구역",
                     "배제반경_m": "int|null(radius이고 조례에 있으면 숫자, polygon이면 null)",
                     "source": "조례 조항|null",
                     "confirmed": "bool(조례근거 있으면 true)",
@@ -392,12 +416,41 @@ def build_prompt(
             "sample_rows 도 그 지역 내용으로 보이면, 이미 그 지역 전용 데이터다 "
             "— 지역 필터를 넣지 마라(넣으면 값이 안 맞아 0행이 되기 쉽다). "
             "다만 '합계'·'소계' 같은 집계 행이 섞여 있으면 filter_by_admin_name 으로 걸러라.",
-            "allowed 값이 그 컬럼의 sample_rows 에 실제로 나타나는 형태인지 확인하라. "
+            "allowed 값은 **value_dist 에 실린 그 컬럼의 값을 그대로 골라 쓴다.** "
+            "value_dist 는 고유값이 적은 컬럼의 값 분포 전체이므로, 거기 있는 컬럼이면 "
+            "표기를 추측할 필요가 없다. value_dist 에 없는 컬럼(고유값이 많거나 자유 텍스트)일 "
+            "때만 sample_rows 를 참고하되, 앞 2행뿐이라 값 집합이 아니라는 점을 유념하라. "
+            "🔴 value_dist 는 **값의 표기를 확인하는 용도지 컬럼을 고르는 근거가 아니다.** "
+            "어느 컬럼으로 거를지는 위 (1)~(5) 우선순위가 정한다. value_dist 에 '시군구명' "
+            "같은 지역 컬럼이 보인다고 해서 좌표 기반 SIGUNGU_NM 대신 그것을 쓰지 마라 "
+            "— 주소와 좌표가 어긋난 행이 통과한다. (실측: 상권 데이터에서 좌표 기준 15,722행 "
+            "↔ 주소 기준 15,726행. 주소는 대상 자치구인데 좌표는 밖인 4건이 섞였다) "
             "(실패 사례: '행정기관' 컬럼 값은 '왕십리제2동'·'합계' 인데 allowed=['성동구'] 를 걸어 "
             "18행이 0행이 됐다. 컬럼에 없는 값으로 거르면 레이어가 통째로 사라진다) "
             "allowed 에는 '걸러내려는 기준값'만 넣는다 — 지역 필터면 대상 지역명, "
             "운영상태 필터면 남길 상태값. 그리고 데이터가 이미 대상 지역 전용이면(파일명·내용상) "
             "지역 필터 자체를 넣지 마라.",
+            "[운영상태] 시설 위치 데이터에 운영 상태 컬럼(운영현황·영업상태·폐업여부·"
+            "휴폐업·상태·폐지일자 등)이 있으면 **운영 중인 값만 남기는 filter_by_value 를 "
+            "반드시 낸다.** 폐업·폐지·휴지 시설은 그 자리에 시설이 없으므로 배제 근거도 "
+            "가점 근거도 되지 않는다. 배제 데이터면 없는 시설 주변을 배제해 후보가 부당하게 "
+            "줄고, 가점 데이터면 없는 수요를 만든다. "
+            "(실패 사례: 용산구 어린이집 180건 중 98건(54%)이 '폐지' 였는데 그대로 30m "
+            "배제에 들어가 배제 면적의 절반 이상이 존재하지 않는 시설이었다) "
+            "남길 값은 **value_dist 의 그 컬럼 값 목록을 보고 고른다.** sample_rows 로 "
+            "정하지 마라 — 앞 2행뿐이라 드문 상태값이 안 보인다. (실패 사례: 어린이집 "
+            "`운영현황` 이 정상 3,835 / 폐지 5,504 / 재개 75 / 휴지 66 인데 앞 2행이 둘 다 "
+            "'정상' 이라 allowed=['정상'] 이 나왔고, 운영 중인 시설이 조용히 배제에서 빠졌다) "
+            "value_dist 목록에서 **운영 중이 아님이 명백한 값**(폐지·폐업·폐원·휴지·휴업·"
+            "말소·취소·중단)만 제외하고 **나머지는 전부 남긴다.** 판단이 서지 않는 값은 남겨라 "
+            "— filter_by_value 는 허용목록 방식이라 **빠뜨린 값은 경고 없이 사라진다.** "
+            "폐업이 몇 건 섞이는 비용 << 운영 중인 시설을 배제에서 놓치는 비용(법적 리스크). "
+            "🔴 다만 값이 Y/N·O/X·있음/없음·유무 같은 **이진 플래그**면 이 op 를 내지 마라. "
+            "`폐업여부=Y` 와 `영업여부=Y` 는 의미가 정반대인데 값만 봐서는 구분되지 않는다. "
+            "방향을 뒤집으면 **운영 중인 시설만 지우고 폐업만 남는다** — 폐업이 섞이는 것보다 "
+            "훨씬 나쁘고, 행 수가 그럴듯해 자동 검증으로도 안 잡힌다. 이때는 필터를 넣지 말고 "
+            "요약에 '상태 컬럼이 이진 플래그라 방향을 확정할 수 없어 필터를 넣지 않았다'고 남겨라. "
+            "상태 컬럼이 없으면 이 op 를 넣지 마라 — 없는 컬럼으로 거르면 0행이 된다.",
             "emit_whitelist 로 만든 이름을 **같은 데이터셋에서** filter_by_join_key 로 "
             "소비하지 마라. 자기 값으로 자기를 거르는 것이라 아무 효과가 없다. "
             "emit_whitelist 는 '이미 지역이 좁혀진 데이터셋'이 다른 데이터셋에 키를 넘길 때만 쓴다.",
@@ -922,6 +975,7 @@ def enrich_with_search(
         extract_cited_laws,
         find_radius_in_laws,
     )
+    from app.services.gam2_ordinance_select import has_siting_provision
 
     in_path = in_path or _out_path("audit_result.json")
     out_path = out_path or _out_path("audit_result_enriched.json")
@@ -933,24 +987,43 @@ def enrich_with_search(
     cited = extract_cited_laws(rag)
     print(f"  조례 인용 상위법: {cited}")
 
-    # ── [조례 없음] 검색 스킵 → HITL 직행 ─────────────────────────────
+    # ── 검색 스킵 → HITL 직행 ─────────────────────────────────────────
     # 검색의 출발점은 '조례가 인용한 상위법'이다. 조례가 없으면 법령 API 진입로가 없고,
     # 남는 건 web_search 뿐인데 실측 결과 비용·시간만 쓰고 소득이 없었다(128s, 제안 대부분 null).
-    # 애초에 배제반경을 조례에서 정하는 시설(재활용정거장 등)은 조례가 없으면
-    # 법·웹 어디에도 근거가 없다 → 사람이 HITL 에서 직접 입력하는 것이 정확하고 싸다.
-    if not cited:
-        n_missing = sum(
-            1
-            for r in enriched["results"]
-            for f in r.get("hitl_flags", [])
-            if f.get("type") == "exclusion_radius_missing"
-        )
-        print("\n  ※ 조례(또는 인용 상위법) 없음 → 배제반경 검색을 건너뜁니다.")
+    #
+    # 🔴 2026-08-03 — 게이트가 틀린 질문을 하고 있었다.
+    #   기존: "조례가 있는가"(`not cited`)
+    #   성동구 폐기물 조례는 **있고 상위법을 11개나 인용**하는데 이격 규정만 없다.
+    #   → 게이트가 안 걸려 11개 × 배제 3건 검색으로 들어갔고 크레딧이 소진됐다.
+    #   물어야 할 것은 "조례에 **이격 규정**이 있는가" 다. → has_siting_provision (LLM 0회)
+    has_prov, prov_sig = has_siting_provision(rag)
+    if not cited or not has_prov:
+        if not cited:
+            reason = "조례(또는 인용 상위법) 없음"
+            stype = "ordinance_absent"
+        else:
+            reason = f"조례에 이격거리·설치금지 규정 없음(전문 {len(rag):,}자 · 신호 0건)"
+            stype = "ordinance_no_provision"
+
+        n_missing = 0
+        for r in enriched["results"]:
+            for f in r.get("hitl_flags", []):
+                if f.get("type") != "exclusion_radius_missing":
+                    continue
+                n_missing += 1
+                # 출처를 값마다 남긴다 — 안 한 것은 "안 했다"고 기록한다(절대원칙 4).
+                f["source_type"] = stype
+                f["근거문장"] = f"{reason} · 상위법 검색 생략"
+
+        print(f"\n  ※ {reason} → 배제반경 검색을 건너뜁니다.")
         print(f"     미확정 배제반경 {n_missing}건은 HITL 에서 직접 확인·입력하세요:")
         print("       python audit_judgment_test.py hitl <도메인폴더>")
+        # ⚠️ 상위법을 '검색했는데 없었다'가 아니라 '검색하지 않았다'. 구분해서 남긴다.
         enriched["_schema"]["상위법검색"] = (
-            "조례(인용 상위법) 없음 → 검색 생략. 배제반경은 HITL 에서 사람이 입력."
+            f"생략 — {reason}. 상위법은 **검색하지 않았다**(규정 없음을 확정한 것이 아니다). "
+            f"배제반경은 HITL 에서 사람이 입력."
         )
+        enriched["_schema"]["조례_입지규정_신호"] = prov_sig
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(enriched, f, ensure_ascii=False, indent=2)
@@ -1125,6 +1198,21 @@ def split_region(region: str) -> tuple:
     return _norm_sido(toks[0]), toks[-1]
 
 
+def _crosswalk_path() -> str:
+    """행정동 크로스워크 경로. config 에 없으면 REGION_DATA_DIR 에서 찾는다.
+
+    gam2_weight_model · gam2_audit_ops_catalog 는 이미 이 폴백을 갖고 있는데
+    여기만 없었다. config 에 ADMIN_CROSSWALK_PATH 가 정의돼 있지 않으면
+    **STEP3 는 되는데 STEP1 감리만 코드 검증이 꺼지는** 상태가 된다.
+    (2026-08-03 실측: CW="" → 11440(마포구) 이 검증 없이 HITL 기본값이 됐다)
+    """
+    p = getattr(config, "ADMIN_CROSSWALK_PATH", "")
+    if p:
+        return str(p)
+    rd = getattr(config, "REGION_DATA_DIR", "")
+    return os.path.join(str(rd), "행정동_크로스워크.csv") if rd else ""
+
+
 def _load_admin_code_map() -> dict:
     """행자부 행정동코드 ↔ 시군구명 매핑을 읽어 {코드접두: 시군구명} 으로 만든다.
     5자리(자치구)와 8자리(행정동) 접두를 모두 담아 어느 길이로 걸러도 검증된다.
@@ -1147,7 +1235,7 @@ def _load_admin_code_map() -> dict:
             _ADM_CODE_CACHE[sys_name][code[:5]] = (sido, gu)
 
     # 1) 크로스워크(전국) 우선
-    cw = getattr(config, "ADMIN_CROSSWALK_PATH", "")
+    cw = _crosswalk_path()
     if cw and os.path.isfile(cw):
         try:
             df = pd.read_csv(cw, dtype=str)
@@ -1156,14 +1244,33 @@ def _load_admin_code_map() -> dict:
                 _put("행자부", r.get("행정동코드"), sido, gu)
                 _put("행자부", r.get("행정동코드8"), sido, gu)
                 _put("통계청", r.get("행정구역코드"), sido, gu)
+            # 파일은 읽혔는데 표가 비면 **컬럼명이 다른 것**이다.
+            #   그냥 반환하면 '표 없음' 과 구분이 안 되고 verify 는 전부 unknown 이
+            #   된다 — 조용한 실패다. 실제 컬럼을 찍어 원인을 바로 보게 한다.
+            n_gu = len({gu for t in _ADM_CODE_CACHE.values() for _, gu in t.values()})
+            if n_gu == 0:
+                print(f"  🔴 크로스워크를 읽었으나 코드 0건 — 컬럼명 불일치.\n"
+                      f"    파일: {cw}\n"
+                      f"    실제 컬럼: {list(df.columns)}\n"
+                      f"    필요 컬럼: 시도명 · 시군구명 · "
+                      f"행정동코드 / 행정동코드8 / 행정구역코드")
+            else:
+                print(f"  [코드표] 크로스워크 {len(df):,}행 · 시군구 {n_gu}종 "
+                      f"— {os.path.basename(cw)}")
             return _ADM_CODE_CACHE
         except Exception as e:
-            print(f"  [경고] 크로스워크 로드 실패({e}) — 엑셀 폴백을 시도합니다")
+            print(f"  [경고] 크로스워크 로드 실패({e}) — 엑셀 폴백을 시도합니다\n"
+                  f"    파일: {cw}")
 
     # 2) 엑셀 폴백 (서울 한정)
-    path = getattr(config, "ADM_CODE_MAP", "")
+    path = str(getattr(config, "ADM_CODE_MAP", "") or "")
     if not path or not os.path.isfile(path):
-        print("  [경고] 행정동 코드표 없음 — 코드 검증 없이 HITL 확인만 수행")
+        # 어느 경로를 봤는지 알려준다. 종전에는 경로를 담은 메시지가
+        #   이 early return **뒤**에 있어서, 둘 다 없을 때 끝내 안 보였다.
+        print("  [경고] 행정동 코드표 없음 — 코드 검증 없이 HITL 확인만 수행\n"
+              f"    크로스워크 : {cw or '(config 에 ADMIN_CROSSWALK_PATH 없음)'}\n"
+              f"    엑셀 폴백  : {path or '(config 에 ADM_CODE_MAP 없음)'}\n"
+              "    → make_admin_crosswalk.py 로 행정동_크로스워크.csv 를 만드세요.")
         return _ADM_CODE_CACHE
     # 폴백이 조용히 발동하면 '전국 3,555동'인 줄 알면서 실제로는 서울 424동만
     # 보게 된다. 서울 밖 도메인에서는 전부 unknown 이 되어 HITL 만 늘어난다.
@@ -1547,8 +1654,15 @@ def review_hitl(in_path: str | None = None, out_path: str | None = None) -> str:
             prm = op.setdefault("params", {})
             cur = prm.get("prefix", "")
             # 감리 단계에서 이미 판정했으면 그대로 쓴다 — CLI 와 프런트가 같은 답을 본다.
-            chk = prm.get("prefix_check") or resolve_code_prefix(
-                cur, region, _code_samples(r.get("dataset_id"), prm.get("col")))
+            #   단 verdict=="unknown" 은 **판정이 아니라 '판정 못 함'** 이다.
+            #   코드표가 없던 실행에서 박힌 값을 그대로 쓰면, 코드표를 고쳐도
+            #   HITL 이 계속 '(대조 불가)' 를 보여준다 → STEP1 재실행이 강요된다.
+            chk = prm.get("prefix_check")
+            if not chk or chk.get("verdict") == "unknown":
+                chk = resolve_code_prefix(
+                    cur, region,
+                    _code_samples(r.get("dataset_id"), prm.get("col")))
+                prm["prefix_check"] = chk
             hint = chk.get("suggestion")
             print(f"\n[{r.get('dataset_id')}] {r.get('summary', '')[:60]}")
             print(f"  컬럼 '{prm.get('col')}' 이 '{cur}' 로 시작하는 행만 남깁니다.")
@@ -1776,6 +1890,13 @@ def load_ordinance(source: str | None = None) -> str:
     folder = source or _DOMAIN["law"] or ORDINANCE_DIR
     if not os.path.isdir(folder):
         return ""
+    # PDF·DOCX·HWPX 만 있어도 읽히도록 먼저 텍스트로 변환(옆에 .txt 캐시).
+    #   추출은 부가 기능이라 의존 패키지가 없으면 건너뛰고 진행한다.
+    try:
+        from app.services.gam2_doc_extract import ensure_text_files
+        ensure_text_files(folder)
+    except Exception as e:
+        print(f"  ⚠ 문서 텍스트 추출 생략({e})")
     parts = []
     for path in sorted(
         glob.glob(os.path.join(folder, "*.txt"))

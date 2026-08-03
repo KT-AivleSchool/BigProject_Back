@@ -31,6 +31,9 @@ data_임시/*/law/*
 !data_임시/*/law/.gitkeep
 *.zip
 
+# V4 대조 데이터 (데이터팀 전달본 · issue #198). 원본 60MB+ 라 저장소에 올리지 않는다.
+data_임시/_v4/
+
 # 공공 데이터, 캐시
 data_임시/region_data/*
 !data_임시/region_data/.gitkeep
@@ -52,3 +55,12 @@ tests/test_geocoder.py
 
 # Dynamic Uploads & Media Files
 uploads/
+
+# 일회성 검증·진단 스크립트 (로컬 전용)
+검증용/
+
+# 개인 메모
+메모장/
+
+# 로컬 에이전트 설정
+.claude/

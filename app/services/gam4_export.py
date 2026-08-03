@@ -79,6 +79,9 @@ def export_exclusion(path: str, layers: dict, crs,
                 pass
         rows.append({"dataset_id": did,
                      "type": info.get("type", ""),
+                     # 값마다 누가 정했는지 남긴다 — 지목 배수(코드)인가 감리(LLM)인가
+                     "type_source": info.get("exclusion_type_source", ""),
+                     "type_llm": info.get("exclusion_type_llm", ""),
                      "radius_m": info.get("radius"),
                      "label": f"{did} {info.get('type','')} "
                               f"{info.get('radius') or ''}m".strip(),
@@ -224,13 +227,33 @@ def build_gap_report(reviewed: dict, excl_rows: list,
                          "detail": ftype or str(f)[:80],
                          "impact": "감리 단계에서 확정되지 않은 항목"})
 
-    # ③ 배제 레이어 로드 실패 (excl_rows: (did, type, radius, n, note))
+    # ③ 배제 레이어 로드 실패 · 점/면 판정 경고 (excl_rows: load_exclusions 의 dict)
     for row in excl_rows or []:
-        did, _t, _r, n, note = row
-        if note:
+        did = row["id"]
+        if row["note"]:
             gaps.append({"kind": "배제레이어_누락", "target": f"dataset {did}",
-                         "detail": note,
+                         "detail": row["note"],
                          "impact": "이 배제 규칙이 적용되지 않았음"})
+        det = row.get("detail") or {}
+        # 일부만 기여 0 인 경우는 총면적이 0 이 아니라 가드를 통과한다 — 여기서 남긴다.
+        for w in det.get("warnings", []):
+            gaps.append({"kind": "배제_부분누락", "target": f"dataset {did}",
+                         "detail": w,
+                         "impact": "그 건들은 배제 면적에 기여하지 않음"})
+        # 임계 HITL — 실행은 막지 않고 확인 대상만 넘긴다(A2 프런트에서 뒤집는다).
+        for q in det.get("확인요청", []):
+            th = q["임계"]
+            gaps.append({
+                "kind": "배제판정_확인요청", "target": f"dataset {did} · 지목 {q['지목']}",
+                "detail": f"{q['판정']} 판정 — {q['점수']}점 · 관측 {q['관측']:.1%} · "
+                          f"배수 {q['배수']}x  ({q['사유']}) / "
+                          f"임계 배수 {th['배수']:g}x · 관측 {th['관측']:.0%} · "
+                          f"표본 {th['표본']}점",
+                "impact": ("면 판정이라 해당 필지 전체 + 인접 동일지목까지 배제됨"
+                           if q["판정"] == "면" else
+                           "배수는 임계를 넘었으나 다른 조건에 막혀 점으로 처리됨"),
+                # target 문자열을 파싱시키지 않는다 — 뒤집을 대상을 구조로 준다.
+                "review": {"dataset_id": did, **q}})
 
     # ④ 지목 판정 실패
     if jimok_rec:
@@ -260,8 +283,11 @@ def build_gap_report(reviewed: dict, excl_rows: list,
 
 
 def print_gap_report(gaps: list) -> None:
+    # 확인요청은 "반영 못 한 것" 이 아니라 "사람이 뒤집을지 봐야 하는 것" 이라 따로 센다.
+    n_ask = sum(1 for g in gaps if g["kind"] == "배제판정_확인요청")
     print("\n" + "=" * 70)
-    print(f"[갭 리포트]  반영하지 못한 항목 {len(gaps)}건")
+    print(f"[갭 리포트]  반영하지 못한 항목 {len(gaps) - n_ask}건"
+          + (f"  ·  확인 요청 {n_ask}건" if n_ask else ""))
     print("-" * 70)
     if not gaps:
         print("  없음")

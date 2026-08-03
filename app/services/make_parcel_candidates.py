@@ -64,15 +64,43 @@ JIMOK_MODEL_DEFAULT = "gpt-4o"
 WATER_JIMOK = ("천", "유", "구")
 
 
-def _find_cadastral(path: str | None) -> str:
+def _region_of(domain: str, override: str | None = None) -> str:
+    """대상 지역명. reviewed.json 의 감리 확정값을 쓴다(지적도·국유지 경로 해석에 사용)."""
+    if override:
+        return override
+    p = os.path.join(STEP1_OUTPUT_DIR,
+                     f"{domain_prefix(domain)}_audit_result_reviewed.json")
+    if os.path.isfile(p):
+        try:
+            d = json.load(open(p, encoding="utf-8"))
+            r = (d.get("facility_inference") or {}).get("region")
+            if r:
+                return r
+        except Exception as e:
+            print(f"  ⚠ reviewed.json 읽기 실패({e})")
+    return ""
+
+
+def _find_cadastral(path: str | None, region: str = "") -> str:
+    """연속지적도 SHP. **시군구코드로 고른다** — region_data 하위 지자체 폴더를 재귀 탐색.
+
+    예전에는 glob 결과의 hits[-1] 을 그냥 썼다. region_data 에 두 구 지적도가 있으면
+    **어느 구를 쓰는지 모르고 지나간다**(마포구 사건과 같은 구조).
+    """
     if path and os.path.isfile(path):
         return path
-    for d in (REGION_DATA_DIR, "."):
-        hits = sorted(glob.glob(os.path.join(d, "LSMD_CONT_LDREG_*.shp")))
-        if hits:
-            return hits[-1]                       # 파일명에 연월 → 최신본
+    try:
+        from app.services.gam2_weight_model import find_region_file
+        return find_region_file("LSMD_CONT_LDREG_*.shp", region)
+    except ImportError:
+        pass
+    hits = sorted(glob.glob(os.path.join(REGION_DATA_DIR, "**",
+                                         "LSMD_CONT_LDREG_*.shp"), recursive=True))
+    if len(hits) == 1:
+        return hits[0]
     raise FileNotFoundError(
-        f"연속지적도 SHP 없음. --cadastral 로 지정하거나 {REGION_DATA_DIR} 에 두세요.")
+        f"연속지적도 SHP 를 확정할 수 없습니다(후보 {len(hits)}개).\n  "
+        + "\n  ".join(hits) + f"\n  --cadastral 로 지정하세요.")
 
 
 def _facility_of(domain: str, override: str | None) -> str:
@@ -190,11 +218,14 @@ def main():
     ap.add_argument("--national", default=None,
                     help="국유부동산 CSV (기본: config.NATIONAL_PROPERTY_CSV)")
     ap.add_argument("--no-national", action="store_true", help="국유지분 태그 생략")
+    ap.add_argument("--region", default=None,
+                    help="대상 지역명(예 '서울특별시 성동구'). 미지정 시 reviewed.json 에서 읽는다")
     args = ap.parse_args()
 
     T0 = time.perf_counter()
-    path = _find_cadastral(args.cadastral)
-    print(f"[입력] {path}")
+    region = _region_of(args.domain, args.region)
+    path = _find_cadastral(args.cadastral, region)
+    print(f"[입력] {path}" + (f"   지역: {region}" if region else ""))
     _t = time.perf_counter()
     g = S.load_parcels(path)
     print(f"         로드 {time.perf_counter()-_t:.1f}s")
@@ -253,7 +284,17 @@ def main():
     # ── 국유지분 태그 ──────────────────────────────────────
     #   점수축이 아니라 '실행축'이다. 가중합에 섞지 않는다(설계 확정 Q-feas).
     if not args.no_national:
-        g = attach_ownership(g, args.national or NATIONAL_PROPERTY_CSV)
+        nat = args.national
+        if not nat:
+            # 국유부동산도 지자체별 파일이다. 지역 폴더에서 찾고, 없으면 config 기본값.
+            try:
+                from app.services.gam2_weight_model import find_region_file
+                nat = (find_region_file("국유부동산*.csv", region, must=False)
+                       or find_region_file("국유부동산*.xls*", region, must=False))
+            except ImportError:
+                nat = None
+            nat = nat or NATIONAL_PROPERTY_CSV
+        g = attach_ownership(g, nat)
 
     # ── 대표점 ────────────────────────────────────────────
     #   centroid 는 오목한 필지(ㄱ자·굽은 도로)에서 밖으로 나간다.

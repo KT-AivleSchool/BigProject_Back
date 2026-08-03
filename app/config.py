@@ -79,6 +79,11 @@ DATA_DIR = str(REGION_DATA_DIR)  # (구 이름 호환)
 # 국유·공유 재산 — 후보 필지에 '국유 지분' 정보를 붙이는 데 쓴다(점수 아님, 실행축).
 #   ⚠️ 이 파일은 **지오코딩 산출물**이다. 원본(k-pis.go.kr)에는 좌표가 없다.
 #      출처: https://www.k-pis.go.kr/selectBasSerList.do
+#   🔴 **이 경로는 최후 폴백이다.** 국유부동산은 지자체별 파일이라 실제 위치는
+#      region_data/<지자체>/국유부동산*.{csv,xls} 이며, make_parcel_candidates 가
+#      find_region_file() 로 시군구코드·폴더명으로 찾는다. 여기 평면 경로에는
+#      파일이 없는 것이 정상이다(2026-08-02 지역 하위폴더 도입).
+#      → 폴백까지 내려오면 attach_ownership 이 '지분 태그 생략' 경고를 남긴다.
 #   ⚠️ 지역별 데이터이므로 **사용자 업로드 → 온디맨드 지오코딩**으로 전환 예정.
 #      전환 시 이 상수는 폴백(기본 샘플)로만 남는다. → GEOCODE_CACHE_DIR 참조
 NATIONAL_PROPERTY_CSV = str(REGION_DATA_DIR / "국유부동산_위경도_v2.csv")
@@ -101,8 +106,20 @@ ADM_DONG_SHP = str(REGION_DATA_DIR / "BND_ADM_DONG_PG.shp")
 SIGUNGU_SHP = str(REGION_DATA_DIR / "BND_SIGUNGU_PG.shp")
 SIDO_SHP = str(REGION_DATA_DIR / "BND_SIDO_PG.shp")
 
-# 행자부 행정동코드 ↔ 시군구명 매핑 (감리 AI 가 추측한 지역코드를 검증)
+# 행정동 코드 크로스워크(**전국 3,555동**) — 감리 AI 가 추측한 지역코드를 검증하는 1순위 표.
+#   컬럼: 행정구역코드(통계청) · 행정동코드(행자부10) · 행정동코드8 · 행정동명 · 시도명 · 시군구명
+#   ⚠️ 여기에 선언이 없으면 `getattr(config, "ADMIN_CROSSWALK_PATH", "")` 로 읽는 쪽이
+#      **파일이 있는데도 빈 문자열을 받아** 엑셀 폴백(서울 한정)으로 내려간다.
+#      실제로 그렇게 돼서 04 생활인구가 `unknown — 코드표 없음` 으로 떴다(2026-08-03).
+ADMIN_CROSSWALK_PATH = os.environ.get(
+    "OMNISITE_ADMIN_CROSSWALK", str(REGION_DATA_DIR / "행정동_크로스워크.csv")
+)
+
+# 엑셀 폴백(**서울 424동 한정**). 크로스워크가 없을 때만 쓴다.
 # 시트 '행정동코드': 통계청행정동코드 · 행자부행정동코드 · 시도명 · 시군구명 · 행정동명
+#   🔴 **현재 저장소에 이 파일은 없다 — 실질적으로 죽은 폴백이다.**
+#      "폴백이 있으니 괜찮겠지" 로 오독하지 말 것. 크로스워크가 1순위이자 사실상 유일하다.
+#      서울 밖 도메인에서는 이 표로 내려가면 전부 unknown 이 되어 HITL 만 늘어난다.
 ADM_CODE_MAP = str(REGION_DATA_DIR / "행정동코드_매핑정보_20241218.xlsx")
 
 # 감리(STEP 1) AI 산출물 폴더(감리 결과 JSON)
@@ -133,6 +150,39 @@ GEOCODE_CACHE_DIR = os.path.join(SEARCH_CACHE_DIR, "geocode")
 # 추후 DB/프론트 전환 시 load_ordinance() 에서 이 부분만 대체.
 ORDINANCE_DIR = os.environ.get("OMNISITE_ORDINANCE_DIR", str(DATA_ROOT / "law"))
 LAW_DIR = os.environ.get("OMNISITE_LAW_DIR", str(DATA_ROOT / "law"))
+
+
+# ── 참조 데이터 존재 점검 ─────────────────────────────────────────
+#   왜 필요한가 (2026-08-03)
+#     config 가 가리키는 경로에 파일이 없으면 파이프라인은 **멈추지 않고 기능만
+#     조용히 꺼진다.** 크로스워크가 없던 실행에서 코드 검증이 통째로 비활성화됐고,
+#     그 사실은 gpt-4o 11회(142초)를 다 쓴 뒤 HITL 화면에서야 드러났다.
+#     실행 **전에** 한 번 훑으면 그 비용을 안 치른다.
+#
+#   import 시점에는 아무 일도 하지 않는다 — 부르는 쪽이 언제 점검할지 정한다.
+#   (FastAPI 기동 로그를 오염시키지 않기 위해서다)
+REFERENCE_FILES = {
+    "행정동 경계 SHP":       (ADM_DONG_SHP, True),
+    "시군구 경계 SHP":       (SIGUNGU_SHP, True),
+    "행정동 크로스워크":      (ADMIN_CROSSWALK_PATH, True),
+    "엑셀 코드표(죽은 폴백)":  (ADM_CODE_MAP, False),
+    "국유부동산(최후 폴백)":   (NATIONAL_PROPERTY_CSV, False),
+}
+
+
+def missing_reference_files(required_only: bool = False) -> list:
+    """참조 데이터 중 **실제로 없는** 파일 목록. [(설명, 경로, 필수여부), ...]
+
+    지적도(LSMD_CONT_LDREG)·지자체별 국유부동산은 여기 넣지 않는다 —
+    지역마다 파일명이 달라 find_region_file() 이 시군구코드로 찾는 대상이다.
+    """
+    out = []
+    for label, (path, required) in REFERENCE_FILES.items():
+        if required_only and not required:
+            continue
+        if not path or not os.path.isfile(str(path)):
+            out.append((label, str(path or ""), required))
+    return out
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -170,8 +220,15 @@ COORD_COL_CANDIDATES = (
 # 6. 지오코딩 호출 간격 (과호출 방지)
 # ══════════════════════════════════════════════════════════════════
 # 브이월드 API 호출 사이 대기(초). 키 등급/상황에 따라 조정.
-GEOCODE_SLEEP_SEC = 0.3  # run_geocode (주소→좌표)
+GEOCODE_SLEEP_SEC = 0.3  # 재시도 백오프 단위 (S6 이후 직렬 대기 용도로는 쓰지 않는다)
 REVERSE_GEOCODE_SLEEP_SEC = 0.2  # reverse_geocode (좌표→시군구, 폴백)
+
+# 지오코딩 병렬 호출(S6). 직렬 sleep 을 토큰버킷 + 스레드풀로 대체한다.
+#   도메인 값이 아니라 **API 사용 한도**라 코드 상수로 두는 것이 맞다(절대원칙 2 예외).
+#   🔴 Vworld 는 일일 4만 건만 공표하고 **초당 한도는 문서에 없다.** 아래 10 req/s 는
+#      근거 있는 상한이 아니라 실측 시작값이다. 차단당하면 낮춘다.
+GEOCODE_RATE_LIMIT = float(os.environ.get("OMNISITE_GEOCODE_RATE", "10"))  # req/s
+GEOCODE_MAX_WORKERS = int(os.environ.get("OMNISITE_GEOCODE_WORKERS", "6"))
 
 
 # ══════════════════════════════════════════════════════════════════

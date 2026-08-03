@@ -28,8 +28,10 @@ OmniSite 가중치 모델 (STEP 5 · 감리/정제 → 최종 가중치)
 --------------------------------------------------------------------
 """
 from __future__ import annotations
-import os, json, re
+import os, json, re, glob
+import hashlib
 import time as _time
+from datetime import datetime
 import numpy as np
 import pandas as pd
 import geopandas as gpd
@@ -45,15 +47,20 @@ try:
         from app.config import STEP3_OUTPUT_DIR as WEIGHT_OUTPUT_DIR
     except Exception:
         WEIGHT_OUTPUT_DIR = os.path.join(os.path.dirname(STEP2_OUTPUT_DIR), "step3_output")
+    # 공용 지역 데이터 루트. find_region_file() 의 기본 탐색 경로다.
+    #   예전엔 크로스워크 폴백 안에서만 `_RD` 로 잡혀서, config 에 ADMIN_CROSSWALK_PATH 가
+    #   있으면 **아예 바인딩되지 않았다** → find_region_file(root=None) 이 NameError.
+    #   모듈 스코프에서 항상 잡는다.
+    try:
+        from app.config import REGION_DATA_DIR
+    except Exception:
+        REGION_DATA_DIR = os.path.join(os.path.dirname(STEP2_OUTPUT_DIR), "region_data")
+    REGION_DATA_DIR = str(REGION_DATA_DIR)        # config 는 Path — glob 에 문자열로 넘긴다
     # 행정동 코드 크로스워크(참조 데이터). config 에 없으면 region_data 에서 찾는다.
     try:
         from app.config import ADMIN_CROSSWALK_PATH
     except Exception:
-        try:
-            from app.config import REGION_DATA_DIR as _RD
-        except Exception:
-            _RD = os.path.join(os.path.dirname(STEP2_OUTPUT_DIR), "region_data")
-        ADMIN_CROSSWALK_PATH = os.path.join(_RD, "행정동_크로스워크.csv")
+        ADMIN_CROSSWALK_PATH = os.path.join(REGION_DATA_DIR, "행정동_크로스워크.csv")
 except Exception:                                 # 단독 실행/테스트 폴백
     ADM_DONG_SHP = os.environ.get("ADM_DONG_SHP", "")
     OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
@@ -62,6 +69,7 @@ except Exception:                                 # 단독 실행/테스트 폴�
     WEIGHT_OUTPUT_DIR = os.environ.get("STEP3_OUTPUT_DIR", "./step3_output")
     ADMIN_CROSSWALK_PATH = os.environ.get("ADMIN_CROSSWALK_PATH",
                                           "./행정동_크로스워크.csv")
+    REGION_DATA_DIR = os.environ.get("REGION_DATA_DIR", "./region_data")
     SPATIAL_CRS = 5186
 
 WORK_CRS = SPATIAL_CRS                 # 미터 단위 작업 좌표계 (거리·버퍼) — config 와 통일
@@ -219,6 +227,28 @@ def _mock_radius(facility: str, indicators: list) -> dict:
 # =========================================================
 # [A] 지표 정의
 # =========================================================
+# 크기 미정(`weight: null`)일 때의 슬라이더 초기 위치.
+#   도메인 상수가 아니다 — 어떤 시설·지표에도 의미가 없는 중립점이고,
+#   [W] 에서 사람이 확정하기 전까지의 자리표시일 뿐이다.
+#   STEP1 HITL 이 방향만 확정하도록 바뀌면서(2026-07-31) 필요해졌다.
+NEUTRAL_SEED = 0.5
+
+
+def _seed_magnitude(w, did: str = "", role: str = "") -> float:
+    """role['weight'] -> seed 크기(항상 >=0).
+
+    방향은 role 이 정하고 크기는 |weight| 다. 부호가 role 과 어긋나면
+    LLM 출력 형식 오류이므로 크기만 취하되 조용히 넘기지 않고 알린다.
+    """
+    if w is None:
+        return NEUTRAL_SEED
+    w = float(w)
+    if (role == "positive_factor" and w < 0) or (role == "negative_factor" and w > 0):
+        print(f"  ⚠ [{did}] {role} 인데 weight={w:+g} — 부호가 role 과 어긋납니다. "
+              f"크기 {abs(w):g} 만 사용합니다.")
+    return abs(w)
+
+
 def define_indicators(reviewed: dict, report: dict) -> list:
     """positive/negative role 데이터셋을 지표로. WR 있으면 좌표레이어(+)통계표 병합."""
     wr_by_id = {}
@@ -233,11 +263,23 @@ def define_indicators(reviewed: dict, report: dict) -> list:
         for role in (r.get("roles") or []):
             rt = role.get("role")
             if rt == "positive_factor":
-                pos[did] = {"seed_weight": float(role.get("weight", 0.5)),
-                            "direction": "benefit", "rationale": role.get("rationale", "")}
+                new = {"seed_weight": _seed_magnitude(role.get("weight"), did, rt),
+                       "direction": "benefit", "rationale": role.get("rationale", "")}
             elif rt == "negative_factor":
-                pos[did] = {"seed_weight": abs(float(role.get("weight", -0.5))),
-                            "direction": "cost", "rationale": role.get("rationale", "")}
+                new = {"seed_weight": _seed_magnitude(role.get("weight"), did, rt),
+                       "direction": "cost", "rationale": role.get("rationale", "")}
+            else:
+                continue
+            # 같은 데이터셋에 상반된 역할이 동시에 붙으면 이전 코드는 뒤엣것으로
+            # 조용히 덮어썼다(roles 리스트 순서에 결과가 좌우됨). 즉시 중단한다.
+            prev = pos.get(did)
+            if prev and prev["direction"] != new["direction"]:
+                raise ValueError(
+                    f"[{did}] 한 데이터셋에 상반된 역할이 동시에 판정됐습니다 "
+                    f"({prev['direction']} / {new['direction']}).\n"
+                    f"  감리 결과가 모순됩니다 — reviewed.json 의 해당 dataset "
+                    f"roles 를 하나로 정리하세요.")
+            pos[did] = new
 
     consumed = {wr["from_dataset"] for wr in wr_by_id.values()}
 
@@ -248,28 +290,217 @@ def define_indicators(reviewed: dict, report: dict) -> list:
         wr = wr_by_id.get(did)
         if wr:
             geo_id = wr["from_dataset"]; val_id = did
-            geo_seed = pos.get(geo_id, {}).get("seed_weight")
+            geo_meta = pos.get(geo_id, {})
+            geo_seed = geo_meta.get("seed_weight")
+            geo_dir = geo_meta.get("direction")
             seed = np.mean([s for s in [geo_seed, meta["seed_weight"]] if s is not None])
+            # 🔴 방향 충돌 — seed_weight 는 둘을 평균하는데 direction 은 val 쪽만 쓴다.
+            #   geo 판정이 조용히 사라지므로 플래그를 남겨 [W] HITL 에서 사람이 확정한다.
+            #   여기서 규칙으로 정하지 않는 이유: 어느 쪽이 옳은지는 도메인마다 다르다.
+            conflict = None
+            if geo_dir and geo_dir != meta["direction"]:
+                conflict = {"geo_dataset": geo_id, "geo_direction": geo_dir,
+                            "val_dataset": val_id, "val_direction": meta["direction"]}
             indicators.append({
                 "id": f"{geo_id}+{val_id}", "kind": None,
                 "geo_dataset": geo_id, "val_dataset": val_id,
                 "join": {"geo_key": wr["from_column"], "val_key": wr["key_col"],
                          "normalize": wr.get("normalize", "none")},
                 "seed_weight": round(float(seed), 3),
-                "direction": meta["direction"], "rationale": meta["rationale"]})
+                "direction": meta["direction"], "rationale": meta["rationale"],
+                "direction_conflict": conflict,
+                "direction_llm": meta["direction"],
+                "direction_source": "llm", "w_human_source": "llm",
+                "adjusted_at": None})
         else:
             indicators.append({
                 "id": did, "kind": None, "geo_dataset": did, "val_dataset": None,
                 "join": None, "seed_weight": meta["seed_weight"],
-                "direction": meta["direction"], "rationale": meta["rationale"]})
+                "direction": meta["direction"], "rationale": meta["rationale"],
+                "direction_conflict": None,
+                "direction_llm": meta["direction"],
+                "direction_source": "llm", "w_human_source": "llm",
+                "adjusted_at": None})
     return indicators
 
 
 # =========================================================
 # [A2] 레이어 부착 — 각 지표에 실제 점/값 결합, kind 확정
 # =========================================================
+def as_geodataframe(df, did: str = "", verbose: bool = True):
+    """좌표 컬럼이 있으면 GeoDataFrame(WORK_CRS) 으로. **좌표계는 값으로 판정한다.**
+
+    왜 이름으로 단정하면 안 되는가 —
+      'X좌표/Y좌표' 는 한국 공공데이터에서 대개 투영좌표(TM, EPSG:5174/5186/2097)다.
+      값이 (198000, 451000) 형태인데 이를 EPSG:4326 으로 읽으면 좌표가 지구 밖으로
+      나가고, to_crs 후 공간조인이 0건이 되어 **지표가 전부 0 이 된다.**
+      예외도 경고도 없다 — 마포구 사건과 같은 실패 모드다.
+
+    판정: 경도 124~132 · 위도 33~39 (한국 범위) 이면 4326.
+          그 밖이면서 값이 크면 투영좌표로 보고 **중단**한다(추측하지 않는다).
+    """
+    from app.services.gam2_clean_data import _pick_lnglat   # 중복 정의 대신 재사용
+
+    if hasattr(df, "geometry") and "geometry" in getattr(df, "columns", []):
+        return df
+    lng, lat = _pick_lnglat(df.columns)
+    if not (lng and lat):
+        return df
+
+    x = pd.to_numeric(df[lng], errors="coerce")
+    y = pd.to_numeric(df[lat], errors="coerce")
+    ok = x.notna() & y.notna()
+    if not ok.any():
+        if verbose:
+            print(f"  ⚠ [{did}] '{lng}/{lat}' 이 있으나 유효 좌표 0건 — 통계표로 처리")
+        return df
+
+    xs, ys = x[ok], y[ok]
+    if xs.between(124, 132).mean() > 0.9 and ys.between(33, 39).mean() > 0.9:
+        crs = 4326
+    elif (xs.abs() > 1e4).mean() > 0.9:
+        raise ValueError(
+            f"[{did}] '{lng}/{lat}' 이 투영좌표로 보이나 CRS 를 알 수 없습니다 "
+            f"(중앙값 {xs.median():,.0f}, {ys.median():,.0f}).\n"
+            f"  EPSG:5174/5186/2097 등 원본 좌표계를 확인해 명시하세요.\n"
+            f"  추측해서 4326 으로 읽으면 공간조인이 조용히 0건이 됩니다.")
+    else:
+        raise ValueError(
+            f"[{did}] 좌표가 한국 범위를 벗어납니다 "
+            f"(경도 중앙 {xs.median():.3f}, 위도 중앙 {ys.median():.3f}).\n"
+            f"  컬럼 짝({lng}/{lat})이 뒤바뀌었는지 확인하세요.")
+
+    g = gpd.GeoDataFrame(df[ok].copy(), geometry=gpd.points_from_xy(xs, ys), crs=crs)
+    dropped = int((~ok).sum())
+    if verbose:
+        note = f", 좌표결측 {dropped:,}행 제외" if dropped else ""
+        print(f"  ⓘ [{did}] parquet -> geometry 복원 ({lng}/{lat}, EPSG:{crs}{note})")
+    return g.to_crs(WORK_CRS)
+
+
+def _norm_dong(s) -> pd.Series:
+    """행정동명 표기 정규화. 같은 동이 소스마다 다르게 적힌다.
+
+      '금호2·3가동' / '금호2ㆍ3가동' / '금호2,3가동' / '금호2.3가동'
+      '왕십리도선동 ' / '성수1가 1동' / '용답동(용답)'
+
+    가운뎃점·구분자·공백·괄호주석을 걷어내고 비교한다. 표기 규칙을 코드에 박는 게
+    아니라 **양쪽에 같은 정규화를 걸어** 맞추는 것이므로 도메인 무관하다.
+    """
+    return (s.astype(str)
+            .str.replace(r"\(.*?\)", "", regex=True)      # 괄호 주석
+            .str.replace(r"[·ㆍ・∙,\.\-~/]", "", regex=True)  # 구분자
+            .str.replace(r"\s+", "", regex=True)           # 공백
+            .str.strip())
+
+
+def _detect_admin_key_col(g, did: str = "", min_hit: float = 0.8) -> tuple:
+    """행정동 조인 키 컬럼을 **값**으로 판정. 반환 (컬럼명, 종류, 매칭률, 진단).
+
+    종류: "code"(행정동코드) | "name"(행정동명)
+
+    이름으로 추측하지 않는 이유 —
+      ["기관","동","ADM","코드"] 같은 키워드는 과다 매칭된다.
+      '동' 은 자'동'차등록대수·활'동'인구에 걸리고, next() 는 첫 매칭을 쓰므로
+      **컬럼 순서가 조인 키를 정하게 된다.** 결과는 나오고 행 수도 그럴듯해서
+      조용히 틀린다(마포구 사건과 같은 계열).
+
+    실측(성동구 07 인구현황): 컬럼이 '행정기관' 뿐이고 값은 '성수1가1동' 같은 **이름**이다.
+      키워드 폴백이 '기관' 으로 이걸 집으면 groupby 는 이름으로 되는데
+      build_matrix 는 경계 SHP 의 ADM_CD(숫자)로 조인하므로 **매칭 0건**이 된다.
+      → 이름 컬럼도 정식으로 지원하고, 코드 변환은 크로스워크가 한다.
+    """
+    xw = load_admin_crosswalk()
+    codes = set()
+    for c in ("행정구역코드", "행정동코드", "행정동코드8"):
+        if c in xw.columns:
+            codes |= set(xw[c].dropna().astype(str).str.strip())
+    names = (set(_norm_dong(xw["행정동명"].dropna()))
+             if "행정동명" in xw.columns else set())
+
+    hits, unmatched = {}, {}
+    for c in g.columns:
+        if c == "geometry":
+            continue
+        raw = g[c].astype(str).str.strip()
+        s = raw.str.replace(r"\.0$", "", regex=True)
+        if s.str.fullmatch(r"\d{5,10}").mean() >= 0.9:
+            ok = s.isin(codes)
+            hits[c] = ("code", float(ok.mean()))
+        elif names and raw.str.endswith(("동", "읍", "면", "가")).mean() >= 0.7:
+            nz = _norm_dong(raw)
+            ok = nz.isin(names)
+            hits[c] = ("name", float(ok.mean()))
+        else:
+            continue
+        if not ok.all():
+            unmatched[c] = sorted(set(raw[~ok]))[:8]
+
+    good = {c: v for c, v in hits.items() if v[1] >= min_hit}
+    # 코드가 이름보다 안전하다(동명이 여러 구에 있을 수 있다)
+    for want in ("code", "name"):
+        sel = {c: v for c, v in good.items() if v[0] == want}
+        if len(sel) == 1:
+            c, (kind, rate) = next(iter(sel.items()))
+            return c, kind, rate, hits
+        if len(sel) > 1:
+            raise ValueError(
+                f"[{did}] 행정동 {want} 후보가 여러 개입니다: "
+                f"{ {c: f'{v[1]:.0%}' for c, v in sel.items()} }\n"
+                f"  어느 것이 조인 키인지 확정할 수 없습니다 — 데이터를 확인하세요.")
+
+    msg = [f"[{did}] 행정동 조인 키(코드 또는 이름)를 찾지 못했습니다.",
+           f"  컬럼: {[c for c in g.columns if c != 'geometry']}",
+           f"  후보 매칭률: "
+           f"{ {c: f'{v[0]} {v[1]:.0%}' for c, v in hits.items()} if hits else '후보 없음' }"]
+    for c, vals in unmatched.items():
+        msg.append(f"  [{c}] 크로스워크에 없는 값 (최대 8개): {vals}")
+    msg.append(f"  참조: {os.path.basename(ADMIN_CROSSWALK_PATH)}")
+    raise ValueError("\n".join(msg))
+
+
+def admin_names_to_codes(s, region: str = "", did: str = "") -> pd.Series:
+    """행정동명 -> 행정구역코드(8자리). 시군구는 데이터에서 **최빈값으로 추론**한다.
+
+    같은 동명이 여러 시군구에 있으므로(중앙동 등) 시군구를 좁히지 않으면 틀린다.
+    region 이 주어지면 그것을 쓰고, 없으면 이름들이 가장 많이 속한 시군구를 택한다
+    (validate_geocode 의 'ADM_CD 앞5자리 최빈값' 과 같은 패턴).
+    """
+    xw = load_admin_crosswalk()
+    nm = _norm_dong(s)
+    xnm = _norm_dong(xw["행정동명"])
+    cand = xw[xnm.isin(set(nm))]
+    if cand.empty:
+        raise ValueError(f"[{did}] 행정동명이 크로스워크에 하나도 없습니다.")
+
+    sgg = None
+    if region:
+        sgg = sgg_code_of(region)
+    if not sgg:
+        top = cand["행정구역코드"].astype(str).str[:5].value_counts()
+        sgg = top.index[0]
+        if len(top) > 1:
+            print(f"  ⓘ [{did}] 행정동명 소속 시군구 최빈값 {sgg} 사용 "
+                  f"({top.iloc[0]}/{top.sum()}건)")
+    cand = cand[cand["행정구역코드"].astype(str).str[:5] == sgg]
+    cnm = _norm_dong(cand["행정동명"])
+
+    dup = int(cnm.duplicated().sum())
+    if dup:
+        raise ValueError(f"[{did}] 시군구 {sgg} 안에 같은 행정동명이 {dup}건 중복입니다.")
+
+    m = dict(zip(cnm, cand["행정구역코드"].astype(str)))
+    out = nm.map(m)
+    miss = int(out.isna().sum())
+    if miss:
+        bad = sorted(set(s.astype(str)[out.isna()]))[:8]
+        print(f"  ⚠ [{did}] 시군구 {sgg} 에서 코드 변환 실패 {miss}건 — {bad}")
+    return out
+
+
 def attach_layers(indicators: list, loader, admin_value_col: str = "총생활인구수",
-                  admin_code_hint: str = "행정동코드", verbose: bool = True) -> None:
+                  admin_code_hint: str = "행정동코드", region: str = "",
+                  verbose: bool = True) -> None:
     """loader(dataset_id) -> GeoDataFrame|DataFrame (EPSG:5186 재투영은 loader 책임).
     각 지표에 _points/_valcol(point) 또는 _admin_agg(admin) 를 심고 kind 확정.
     """
@@ -280,8 +511,38 @@ def attach_layers(indicators: list, loader, admin_value_col: str = "총생활인
         if not is_geo:                                  # 좌표 없는 통계표 -> admin
             i["kind"] = "admin"
             code_col = next((c for c in g.columns if admin_code_hint in str(c)), None)
-            vcol = admin_value_col if admin_value_col in g.columns else _pick_value_cols(g)[0]
-            g = g.copy(); g[vcol] = pd.to_numeric(g[vcol], errors="coerce")
+            code_src, key_kind = "hint", "code"
+            if code_col is None:
+                # 이름 힌트 실패 -> 값으로 판정(코드/이름). 못 찾거나 애매하면 raise.
+                code_col, key_kind, rate, _ = _detect_admin_key_col(g, i["id"])
+                code_src = f"crosswalk_{key_kind}"
+                if verbose:
+                    print(f"  [{i['id']}] 행정동 조인키 자동판정: '{code_col}' "
+                          f"({key_kind}, 크로스워크 매칭 {rate:.0%})")
+            i["_admin_code_source"] = code_src
+
+            vcols = _pick_value_cols(g)
+            if admin_value_col in g.columns:
+                vcol = admin_value_col
+            elif len(vcols) == 1:
+                vcol = vcols[0]
+            elif vcols:
+                vcol = vcols[0]
+                if verbose:
+                    print(f"  ⚠ [{i['id']}] 값 컬럼 후보 {vcols} 중 '{vcol}' 사용 — 확인 필요")
+            else:
+                raise ValueError(
+                    f"[{i['id']}] 집계할 수치 컬럼이 없습니다.\n"
+                    f"  컬럼: {[c for c in g.columns if c != 'geometry']}")
+            i["_admin_valcol_candidates"] = vcols
+
+            g = g.copy()
+            if key_kind == "name":
+                # 이름 그대로 두면 build_matrix 의 코드 조인에서 0건이 된다 -> 코드로 변환
+                g["_admcd"] = admin_names_to_codes(g[code_col], region, i["id"])
+                g = g[g["_admcd"].notna()]
+                code_col = "_admcd"
+            g[vcol] = pd.to_numeric(g[vcol], errors="coerce")
             agg = g.groupby(code_col)[vcol].mean().reset_index()   # 시간대·일 평균
             i["_admin_agg"] = agg; i["_admin_code_col"] = code_col; i["_admin_valcol"] = vcol
             if verbose: print(f"  [{i['id']}] admin  code={code_col} val={vcol} dongs={len(agg)}")
@@ -477,6 +738,84 @@ def build_matrix(candidates: gpd.GeoDataFrame, indicators: list,
 _XWALK_CACHE: dict = {}
 
 
+def sgg_code_of(region: str) -> str | None:
+    """'서울특별시 성동구' -> '11200'. 크로스워크에서 조회(하드코딩 없음).
+
+    지역명 표기가 흔들려도(용산구 / 서울특별시 용산구) 시군구명으로 맞춘다.
+    동명 시군구가 여러 시도에 있으면(예: 중구) 시도명까지 일치해야 확정한다.
+    """
+    if not region:
+        return None
+    xw = load_admin_crosswalk()
+    if "시군구명" not in xw.columns or "행정구역코드" not in xw.columns:
+        return None
+    r = str(region).strip()
+    sub = xw[xw["시군구명"].astype(str).apply(lambda s: bool(s) and s in r)]
+    if sub.empty:
+        return None
+    if "시도명" in sub.columns and sub["시군구명"].nunique() > 1:
+        sub = sub[sub["시도명"].astype(str).apply(lambda s: bool(s) and s in r)]
+    codes = sorted(set(sub["행정구역코드"].astype(str).str[:5]))
+    if len(codes) != 1:
+        raise ValueError(
+            f"지역 '{region}' 의 시군구코드를 확정할 수 없습니다: {codes}\n"
+            f"  '<시도명> <시군구명>' 형태로 지정하세요(예: '서울특별시 중구').")
+    return codes[0]
+
+
+def find_region_file(pattern: str, region: str = "", sgg_code: str | None = None,
+                     root: str | None = None, must: bool = True) -> str | None:
+    """지역 데이터 파일 탐색. **시군구코드로 고른다.**
+
+    region_data/ 아래 지자체별 하위폴더(용산구/ · 성동구/)를 재귀 탐색한다.
+    폴더명이 아니라 **파일명의 시군구코드**로 판정하므로 폴더 구성이 바뀌어도 동작한다.
+
+      find_region_file("LSMD_CONT_LDREG_*.shp", "서울특별시 성동구")
+        -> region_data/성동구/LSMD_CONT_LDREG_11200_202607.shp
+
+    코드가 파일명에 없으면(국유부동산 CSV 등) **폴더명**으로 좁힌 뒤,
+    후보가 여러 개면 중단한다 — 예전처럼 `hits[-1]` 로 아무거나 집으면
+    다른 구 파일을 쓰고도 조용히 지나간다(마포구 사건과 같은 구조).
+    """
+    base = root or REGION_DATA_DIR
+    code = sgg_code or (sgg_code_of(region) if region else None)
+    hits = sorted(glob.glob(os.path.join(base, "**", pattern), recursive=True))
+
+    if code:
+        coded = [h for h in hits if code in os.path.basename(h)]
+        if coded:
+            hits = coded
+        elif region:                       # 파일명에 코드가 없으면 폴더명으로
+            gu = region.split()[-1]
+            named = [h for h in hits if gu in h.replace("\\", "/").split("/")[:-1].__str__()]
+            if named:
+                hits = named
+
+    if not hits:
+        if not must:
+            return None
+        raise FileNotFoundError(
+            f"지역 파일 없음: {pattern}\n"
+            f"  지역: {region or '(미지정)'}"
+            + (f" (시군구코드 {code})" if code else "") + "\n"
+            f"  탐색: {os.path.join(base, '**', pattern)}\n"
+            f"  region_data 하위에 해당 지자체 파일을 두세요.")
+
+    if len(hits) > 1:
+        # 같은 지역의 여러 연월이면 최신을 쓰되 알린다. 다른 지역이 섞였으면 중단.
+        bns = {os.path.basename(h) for h in hits}
+        if code and all(code in b for b in bns):
+            pick = hits[-1]
+            print(f"  ⚠ {pattern} 후보 {len(hits)}개 — 최신본 사용: {os.path.basename(pick)}")
+            return pick
+        raise ValueError(
+            f"지역 파일 후보가 여러 개입니다 — 어느 지역인지 확정할 수 없습니다.\n  "
+            + "\n  ".join(hits)
+            + f"\n\n  지역 '{region or '(미지정)'}' 로는 좁혀지지 않습니다. "
+              f"경로를 직접 지정하세요.")
+    return hits[0]
+
+
 def load_admin_crosswalk(path: str | None = None) -> pd.DataFrame:
     """행정동 코드 크로스워크. 프로세스당 파일별 1회만 읽는다.
 
@@ -653,11 +992,46 @@ def critic_bootstrap(norm: pd.DataFrame, sparse_ids: set = None,
 # [C] w_human / [E] 합성
 # =========================================================
 def human_weights(indicators: list) -> dict:
-    s = {i["id"]: i["seed_weight"] for i in indicators}
-    tot = sum(s.values())
-    return {k: v / tot for k, v in s.items()} if tot else s
+    """seed_weight 를 합=1 로 정규화.
 
-def synthesize(w_human: dict, w_critic: dict, alpha: float = 0.3, sparse_ids: set = None) -> dict:
+    seed_weight 는 **크기만** 담는다(항상 >=0). 방향은 `direction` 필드가 갖는다
+    — define_indicators 가 negative_factor 에 abs() 를 씌우는 이유다.
+    부호를 여기 넣으면 normalize_matrix 의 cost 반전과 이중으로 걸려
+    감점 지표가 조용히 가점으로 작동한다.
+    """
+    s = {i["id"]: float(i["seed_weight"]) for i in indicators}
+
+    # 지표 0개 — 아래 합계 0 가드에도 걸리지만 원인이 전혀 다르다.
+    #   합계 0 = 사람이 슬라이더를 전부 0으로 내림
+    #   지표 0개 = 감리가 가점/감점을 하나도 판정하지 않음 (STEP1 문제)
+    #   같은 메시지를 내면 STEP3 를 붙잡고 있게 된다.
+    if not s:
+        raise ValueError(
+            "지표가 0개입니다 — 가중치를 계산할 대상이 없습니다.\n"
+            "  감리 결과에 positive_factor / negative_factor 판정이 없습니다.\n"
+            "  reviewed.json 의 roles 를 확인하세요 "
+            "(전부 hard_exclusion / reference_only 로 판정됐을 수 있습니다).")
+
+    # 음수 방지 — [W] HITL 이 슬라이더 -1~+1 을 분해하지 않고 그대로 넣으면 여기 걸린다.
+    neg = {k: v for k, v in s.items() if v < 0}
+    if neg:
+        raise ValueError(
+            f"seed_weight 에 음수가 있습니다: {neg}\n"
+            f"  가중치는 크기(>=0)만 담습니다. 방향은 indicator['direction'] "
+            f"('benefit'|'cost') 로 표현하세요.")
+
+    tot = sum(s.values())
+    if tot <= 0:
+        raise ValueError(
+            f"가중치 합이 {tot} 입니다 — 최소 하나는 0보다 커야 합니다.\n"
+            f"  입력값: {s}\n"
+            f"  전부 0이면 모든 후보 점수가 0이 되어 순위가 무의미해집니다.")
+
+    return {k: v / tot for k, v in s.items()}
+
+
+def synthesize(w_human: dict, w_critic: dict, alpha: float = 0.3,
+               sparse_ids: set = None) -> dict:
     """w = (1-a)*human + a*critic. 희소지표는 human 만. 최종 sum=1 재정규화."""
     out = {}
     for i in w_human:
@@ -666,31 +1040,180 @@ def synthesize(w_human: dict, w_critic: dict, alpha: float = 0.3, sparse_ids: se
             out[i] = h
         else:
             out[i] = (1 - alpha) * h + alpha * w_critic.get(i, 0.0)
+
     tot = sum(out.values())
-    return {k: v / tot for k, v in out.items()} if tot else out
+    if tot <= 0:
+        raise ValueError(
+            f"합성 가중치 합이 {tot} 입니다 — 정규화 불가.\n"
+            f"  w_human={w_human}\n  w_critic={w_critic}\n  alpha={alpha}")
+
+    return {k: v / tot for k, v in out.items()}
+
+
+# =========================================================
+# [W] 가중치 HITL — 슬라이더 -1~+1 (부호=방향, abs=크기)
+# =========================================================
+#   설계: STEP3_가중치_설계 11·12절
+#
+#   🔴 핵심 규약 — 슬라이더 값을 seed_weight 에 그대로 넣으면 안 된다.
+#      seed_weight 는 크기만 담고(항상 >=0), 방향은 direction 필드가 갖는다.
+#      부호를 seed_weight 에 넣으면 normalize_matrix 의 cost 반전과 이중으로 걸려
+#      감점 지표가 조용히 가점으로 작동한다. 반드시 경계에서 분해한다.
+#
+#      슬라이더 -0.6  ─┬─ abs → seed_weight = 0.6
+#                      └─ 부호 → direction  = "cost"
+#
+#   ⚠ 희소 판정은 여기서 표시할 수 없다. detect_sparse 는 [B] 지표 행렬이
+#     있어야 계산되는데 [W] 는 그 앞이다. 대신 레코드 수를 근거로 보여준다.
+def slider_from_indicators(indicators: list) -> dict:
+    """지표 현재 상태 -> 슬라이더 초기값 {id: -1~+1}. cost 는 음수로 표시."""
+    return {i["id"]: round((-1.0 if i.get("direction") == "cost" else 1.0)
+                           * float(i["seed_weight"]), 3)
+            for i in indicators}
+
+
+def slider_pct(slider: dict) -> dict:
+    """슬라이더 -> 정규화 비중 %. **abs 기준**이라 감점 지표도 양수 %가 된다.
+
+    그냥 sum() 으로 나누면 감점이 분모를 깎아 합계가 100%가 안 된다.
+      sum : 0.70 + 0.75 + (-0.55) = 0.90  ->  78% + 83% - 61%
+      abs : 0.70 + 0.75 +   0.55  = 2.00  ->  35% + 37.5% + 27.5% = 100%
+    """
+    tot = sum(abs(float(v)) for v in slider.values())
+    if tot <= 0:
+        return {k: 0.0 for k in slider}
+    return {k: abs(float(v)) / tot * 100.0 for k, v in slider.items()}
+
+
+def data_note(ind: dict) -> str:
+    """[W] 화면용 데이터 근거 한 줄. 희소 판정이 아니라 레코드 수다."""
+    if ind.get("kind") == "admin":
+        agg = ind.get("_admin_agg")
+        return f"행정동 {len(agg)}종" if agg is not None else "행정동 집계"
+    pts = ind.get("_points")
+    n = len(pts) if pts is not None else 0
+    return f"{n:,}건" + (" × 값" if ind.get("val_dataset") else "")
+
+
+def apply_weight_hitl(indicators: list, slider: dict, sources="hitl") -> None:
+    """[W] 확정값을 지표에 반영. 슬라이더를 (크기, 방향) 으로 분해한다.
+
+    sources : str(전체 동일) 또는 {id: "llm"|"hitl"|"cli"}
+    """
+    ids = {i["id"] for i in indicators}
+    unknown = set(slider) - ids
+    if unknown:
+        raise ValueError(f"없는 지표 ID: {sorted(unknown)}\n  사용 가능: {sorted(ids)}")
+
+    tot = sum(abs(float(v)) for v in slider.values())
+    if tot <= 0:
+        raise ValueError(
+            f"가중치 절대값 합이 {tot} 입니다 — 최소 하나는 0이 아니어야 합니다.\n"
+            f"  입력값: {slider}\n"
+            f"  전부 0이면 모든 후보 점수가 0이 되어 순위가 무의미해집니다.")
+
+    at = datetime.now().isoformat(timespec="seconds")
+    src_of = (lambda k: sources) if isinstance(sources, str) else (
+        lambda k: sources.get(k, "llm"))
+
+    for i in indicators:
+        v = slider.get(i["id"])
+        if v is None:
+            continue
+        v = float(v)
+        if not (-1.0 <= v <= 1.0):
+            raise ValueError(f"[{i['id']}] 슬라이더 범위는 -1 ~ +1 입니다: {v}")
+
+        src = src_of(i["id"])
+        # 0 은 '그 지표 제외' — 방향이 무의미하므로 원래 값을 유지한다.
+        new_dir = i["direction"] if v == 0 else ("cost" if v < 0 else "benefit")
+        if new_dir != i["direction"]:
+            i["direction_source"] = src
+        i["direction"] = new_dir
+        i["seed_weight"] = round(abs(v), 3)
+        i["w_human_source"] = src
+        i["adjusted_at"] = at if src != "llm" else i.get("adjusted_at")
 
 
 # =========================================================
 # [F] weight_set 조립 + 저장 (DB 이관 전 JSON)
 # =========================================================
+def fingerprint(path: str | None) -> dict | None:
+    """입력 파일 지문. **어느 데이터로 계산된 가중치인지** 특정한다.
+
+    왜 필요한가 — STEP4 의 check_consistency 는 지표 ID·kind·구성 데이터셋만 본다.
+    정제를 다시 돌려 clean 산출물 내용이 바뀌어도 **구조는 그대로**라 통과한다.
+    그러면 옛 데이터로 만든 가중치로 새 데이터를 점수화하게 되는데, 조용히 지나간다.
+
+    대상은 제어 파일 3개(reviewed · clean_report · 후보)로 한정한다.
+    정제 산출물 본체(버스 127만행 등)까지 해시하면 실행마다 수 초가 붙는데,
+    clean_report 를 해시하면 정제 재실행 자체는 어차피 잡힌다.
+    """
+    if not path or not os.path.isfile(path):
+        return None
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    st = os.stat(path)
+    return {"file": os.path.basename(path),
+            "sha256": h.hexdigest(),
+            "mtime": datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"),
+            "size": int(st.st_size)}
+
+
 def build_weight_set(domain: str, facility: str, region: str,
                      indicators: list, radius_conf: dict, alpha: float,
                      w_human: dict, w_critic: dict, w_final: dict,
                      boot: dict, sparse_ids: set, n_candidates: int,
-                     engine_version: str = "wm-1.0") -> dict:
-    """DB 한 행이 될 dict. '왜 이 값인가' 근거를 전부 동봉(B2G 설명책임)."""
+                     engine_version: str = "wm-1.0",
+                     candidate_unit: str | None = None,
+                     candidate_source: dict | None = None,
+                     inputs: dict | None = None,
+                     hitl: dict | None = None) -> dict:
+    """DB 한 행이 될 dict. '왜 이 값인가' 근거를 전부 동봉(B2G 설명책임).
+
+    candidate_unit / candidate_source
+      후보 1건이 무엇인지는 **코드가 알 수 없는 도메인 지식**이다.
+      과거엔 "국유부동산 필지" 가 박혀 있었는데, 후보가 지적도 42,216필지로
+      바뀐 뒤에도 그대로 찍혀 산출물이 존재하지 않는 숫자를 주장했다.
+      호출부가 주입하고, 없으면 후보 파일에서 사실만 기술한다.
+
+    generated_at / inputs
+      **언제, 무엇으로** 만든 파일인지. 없으면 여러 실행분을 구분할 수 없다.
+      설계노트 6절의 '인수인계 표 ↔ JSON 불일치' 가 이것 때문에 원인 규명이 늦었다.
+
+    hitl / radius_source / w_human_source
+      **누가 정했나.** 대외 설명이 "사람 70% / 데이터 30%" 인데 실제로는 LLM 값이
+      들어갈 수 있으므로, 값마다 출처를 남겨야 그 주장이 방어된다.
+      radius_source 가 없으면 --radius 로 덮어쓴 뒤에도 rationale 은 LLM 제안값
+      기준 문장이 남아 산출물이 앞뒤 안 맞는 근거를 주장하게 된다.
+    """
     return {
         "domain": domain, "facility": facility, "region": region,
-        "engine_version": engine_version, "alpha": alpha,
-        "n_candidates": n_candidates, "candidate_unit": "국유부동산 필지",
+        "engine_version": engine_version,
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "inputs": inputs,
+        "hitl": hitl,
+        "alpha": alpha,
+        "n_candidates": n_candidates,
+        "candidate_unit": candidate_unit or "미기록",
+        "candidate_source": candidate_source,
         "indicators": [{
             "id": i["id"], "kind": i["kind"], "direction": i["direction"],
             "components": {"geo": i["geo_dataset"], "val": i["val_dataset"]},
             "radius_m": radius_conf.get(i["id"], {}).get("radius_m"),
+            "radius_source": radius_conf.get(i["id"], {}).get("source", "llm"),
             "radius_rationale": radius_conf.get(i["id"], {}).get("rationale", ""),
             "seed_rationale": i.get("rationale", ""),
             "sparse_excluded": i["id"] in sparse_ids,
             "w_human": round(w_human.get(i["id"], 0), 4),
+            # 출처 — "사람 70%" 를 방어하려면 누가 정했는지가 근거가 된다(B2G 설명책임).
+            "w_human_source": i.get("w_human_source", "llm"),
+            "direction_source": i.get("direction_source", "llm"),
+            "direction_llm": i.get("direction_llm", i["direction"]),
+            "direction_conflict": i.get("direction_conflict"),
+            "adjusted_at": i.get("adjusted_at"),
             "w_critic": None if i["id"] in sparse_ids else round(w_critic.get(i["id"], 0), 4),
             "w_critic_ci": boot.get(i["id"]),
             "w_final": round(w_final.get(i["id"], 0), 4),
@@ -727,6 +1250,7 @@ def diagnose_sample_bias(mat: pd.DataFrame, indicators: list, sparse_ids: set,
 
     strata: 후보와 같은 길이의 계층 라벨(예: 법정동명). None이면 층화 검사 생략.
     반환: {지표: {"base","min","max","spread"}, "_max_spread":float, "_rank_stable":bool}
+          — **그대로 json 직렬화 가능해야 한다.** 산출물(`weight_set.diagnostics`)로 나간다.
 
     판정 기준(경험적): spread < 0.05 이고 순위가 유지되면 '표본 편향의 영향 미미'.
     실측(용산 국유지 2,486, 후암동 21%·상위5동 49% 쏠림): 최대 spread 0.018,
@@ -760,8 +1284,9 @@ def diagnose_sample_bias(mat: pd.DataFrame, indicators: list, sparse_ids: set,
         vals = [ws[k].get(c, 0.0) for k in ws]
         sp = max(vals) - min(vals)
         max_spread = max(max_spread, sp)
-        out[c] = {"base": ws["전체"].get(c, 0.0), "min": min(vals),
-                  "max": max(vals), "spread": sp}
+        # float() — numpy 스칼라는 json.dump 가 못 삼킨다. 이 값은 이제 산출물로 나간다(S4).
+        out[c] = {"base": float(ws["전체"].get(c, 0.0)), "min": float(min(vals)),
+                  "max": float(max(vals)), "spread": float(sp)}
 
     ranks = [tuple(sorted(cols, key=lambda c: -ws[k].get(c, 0.0))) for k in ws]
     rank_stable = len(set(ranks)) == 1
@@ -818,23 +1343,39 @@ def diagnose_sample_bias(mat: pd.DataFrame, indicators: list, sparse_ids: set,
 # =========================================================
 def diagnose_alpha(w_human: dict, w_critic: dict, sparse_ids: set,
                    alphas=(0.0, 0.1, 0.2, 0.3, 0.4, 0.5),
-                   verbose: bool = True) -> pd.DataFrame:
+                   verbose: bool = True) -> dict:
     """alpha 를 바꿔가며 최종 가중치·순위가 얼마나 달라지는지 표로 본다.
     'alpha=0.3 인 이유'를 관례가 아니라 근거로 설명하기 위한 진단.
     순위가 바뀌지 않는 구간이 넓으면 그 중앙값을 택하는 것이 방어 가능하다.
+
+    반환 dict
+      weights      {alpha: {지표: w_final}}      — json 직렬화 가능
+      rank_groups  [{"alphas": [...], "order": [...]}]  순위가 같은 alpha 구간
+      table        pandas DataFrame. **사람이 보는 용도 — json 에는 싣지 않는다.**
+
+    순위 구간은 verbose 여부와 무관하게 계산한다. 예전에는 print 블록 안에서만
+    만들어져, `--no-diag` 가 아니어도 **근거가 콘솔에만 남고 사라졌다**(S4).
     """
     rows = {}
     for a in alphas:
         rows[a] = synthesize(w_human, w_critic, alpha=a, sparse_ids=sparse_ids)
     df = pd.DataFrame(rows)
+
+    ranks = {a: tuple(df[a].sort_values(ascending=False).index) for a in alphas}
+    uniq = {}
+    for a, r in ranks.items():
+        uniq.setdefault(r, []).append(a)
+
     if verbose:
         print("\n[alpha 민감도]")
         print(df.round(3).to_string())
-        ranks = {a: tuple(df[a].sort_values(ascending=False).index) for a in alphas}
-        uniq = {}
-        for a, r in ranks.items():
-            uniq.setdefault(r, []).append(a)
         print("  순위가 같은 alpha 구간:")
         for r, aa in uniq.items():
             print(f"    α={aa}  →  {' > '.join(r)}")
-    return df
+
+    return {
+        "weights": {str(a): {k: float(v) for k, v in rows[a].items()} for a in alphas},
+        "rank_groups": [{"alphas": [float(x) for x in aa], "order": list(r)}
+                        for r, aa in uniq.items()],
+        "table": df,
+    }

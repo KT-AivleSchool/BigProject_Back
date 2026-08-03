@@ -33,10 +33,14 @@ v3 유지 (버그 수정)
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any, Callable
 
 import pandas as pd
@@ -50,6 +54,9 @@ from app.config import (
     DISPLAY_CRS,
     GEOCODE_SLEEP_SEC,
     REVERSE_GEOCODE_SLEEP_SEC,
+    GEOCODE_CACHE_DIR,
+    GEOCODE_RATE_LIMIT,
+    GEOCODE_MAX_WORKERS,
 )
 
 # 행정동 코드 크로스워크(전국). config 에 없으면 region_data 에서 찾는다.
@@ -217,6 +224,90 @@ def _normalize_addr(a) -> str:
     return a
 
 
+# ── 지오코딩 디스크 캐시 (S6) ──────────────────────────────────────
+# 주소→좌표는 도메인과 무관하므로 **도메인을 넘어 공유**한다. 같은 지역을 다시 돌리거나
+# 다른 도메인이 같은 건물을 참조해도 재호출하지 않는다.
+# 실패도 저장한다 — 안 하면 매 실행마다 실패 주소를 다시 두들긴다(변형 3개 × 타입 2개).
+# 실패 캐시는 `--refresh-geocode` 로만 무효화한다(주소 DB 가 갱신됐을 때).
+_GEO_CACHE_PATH = os.path.join(GEOCODE_CACHE_DIR, "vworld_addr.json")
+_GEO_CACHE: dict | None = None
+_GEO_CACHE_LOCK = threading.Lock()
+_GEO_REFRESH_FAILED = False
+
+
+def set_geocode_refresh(on: bool) -> None:
+    """`--refresh-geocode`. **실패분만** 무효화한다 — 성공한 주소→좌표는 바뀌지 않는다."""
+    global _GEO_REFRESH_FAILED
+    _GEO_REFRESH_FAILED = bool(on)
+
+
+def _geo_cache() -> dict:
+    global _GEO_CACHE
+    if _GEO_CACHE is None:
+        try:
+            with open(_GEO_CACHE_PATH, encoding="utf-8") as f:
+                _GEO_CACHE = json.load(f)
+        except FileNotFoundError:
+            _GEO_CACHE = {}
+        except json.JSONDecodeError as e:
+            # 조용히 비우지 않는다(절대원칙 1). 깨진 캐시를 무시하면 왜 갑자기 수천 건을
+            # 다시 호출하는지 알 수 없다. 지우는 판단은 사람이 한다.
+            raise RuntimeError(
+                f"지오코딩 캐시가 손상됐다: {_GEO_CACHE_PATH} ({e})\n"
+                f"  → 파일을 지우면 새로 만든다(전 주소 재호출)."
+            ) from e
+    return _GEO_CACHE
+
+
+def _geo_cache_save() -> None:
+    if _GEO_CACHE is None:
+        return
+    os.makedirs(GEOCODE_CACHE_DIR, exist_ok=True)
+    tmp = _GEO_CACHE_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(_GEO_CACHE, f, ensure_ascii=False)
+    os.replace(tmp, _GEO_CACHE_PATH)  # 중간에 죽어도 반쪽 파일이 남지 않는다
+
+
+class _RateLimiter:
+    """초당 rate 건으로 제한한다. 스레드가 공유하는 '다음 허용 시각' 하나로 간격을 벌린다.
+
+    슬롯을 락 안에서 **예약**하고 대기는 락 밖에서 한다 — 락을 쥔 채 자면 워커가
+    직렬화돼 병렬화한 의미가 없어진다.
+    """
+
+    def __init__(self, rate: float):
+        self._interval = 1.0 / rate if rate and rate > 0 else 0.0
+        self._lock = threading.Lock()
+        self._next = 0.0
+
+    def acquire(self) -> None:
+        if self._interval <= 0:
+            return
+        with self._lock:
+            now = time.monotonic()
+            slot = max(now, self._next)
+            self._next = slot + self._interval
+        wait = slot - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+
+
+_GEO_LIMITER = _RateLimiter(GEOCODE_RATE_LIMIT)
+
+
+@lru_cache(maxsize=4)
+def _read_boundary(shp_path: str):
+    """경계 SHP 로드 캐시(S6). 데이터셋마다 같은 파일을 다시 읽던 것을 세션 1회로 줄인다.
+
+    ⚠️ GeoDataFrame 을 **그대로** 돌려준다. 호출자가 수정하면 다음 호출이 오염된다 —
+    아래 `_join_admin` 은 읽기(slice·sjoin·to_crs)만 한다.
+    """
+    import geopandas as gpd
+
+    return gpd.read_file(shp_path)
+
+
 def _join_admin(
     df: pd.DataFrame,
     xcol: str,
@@ -229,10 +320,10 @@ def _join_admin(
     """점 좌표(x=lng, y=lat, EPSG:4326)를 행정동 경계에 within 조인해 ADM_CD·ADM_NM 부여.
     sigungu_shp 를 주면 시군구 경계도 조인해 SIGUNGU_CD·SIGUNGU_NM('용산구')까지 붙인다.
     spatial_join_admin·validate_geocode 공용. 반환: (조인된 DataFrame, 조인실패 인덱스).
-    ※ 성능: SHP(대용량)를 매 호출 로드한다. 잦아지면 세션 캐시로 최적화(지금은 정확성 우선)."""
+    ※ 성능: 경계 SHP 는 `_read_boundary` 로 세션 캐시한다(S6). 결과는 바꾸지 않는다."""
     import geopandas as gpd
 
-    bnd = gpd.read_file(shp_path)
+    bnd = _read_boundary(shp_path)
     _require_cols(bnd, [code_col, name_col], "join_admin(경계SHP)")
     pts = gpd.GeoDataFrame(
         df.copy(),
@@ -252,7 +343,7 @@ def _join_admin(
     #   과거 이 때문에 filter_by_value(col='ADM_NM', allowed=['용산구']) 가 0행을 냈다.
     if sigungu_shp:
         try:
-            sgg = gpd.read_file(sigungu_shp)
+            sgg = _read_boundary(sigungu_shp)
             keep = [c for c in ("SIGUNGU_CD", "SIGUNGU_NM") if c in sgg.columns]
             if keep:
                 joined = gpd.sjoin(
@@ -318,6 +409,9 @@ def _vworld_geocode(address: str, addr_type: str) -> tuple | None:
     )
     for attempt in range(GEOCODE_RETRY + 1):
         try:
+            # 호출 직전에 슬롯을 받는다(S6). 변형·타입 폴백·재시도까지 전부 여기를 지나므로
+            # 실제 HTTP 건수 기준으로 초당 한도가 지켜진다.
+            _GEO_LIMITER.acquire()
             resp = requests.get(
                 VWORLD_ENDPOINT, params=params, timeout=GEOCODE_TIMEOUT
             ).json()["response"]
@@ -396,6 +490,20 @@ register_op(
 
 
 # -- op 2: run_geocode ---------------------------------------------
+def _geocode_addr(raw: str, order: list) -> tuple:
+    """주소 1건 → (res, used, vi). res 는 (lat, lng, matched) 또는 None.
+
+    원본이 실패하면 괄호 제거 → 도로명+건물번호 순으로 단순화해 재시도한다.
+    (건물명·층·괄호 법정동이 붙어 있으면 지오코더가 못 찾는 사례가 흔하다)
+    """
+    for vi, cand in enumerate(_addr_variants(raw)):
+        for t in order:
+            res = _vworld_geocode(cand, t)
+            if res:
+                return res, t, vi
+    return None, None, 0
+
+
 def _run_geocode(df, p, ctx):
     _require_params(p, ["address_cols"], "run_geocode")
     _require_cols(df, list(p["address_cols"]), "run_geocode")
@@ -406,10 +514,10 @@ def _run_geocode(df, p, ctx):
     out_lat, out_lng = p.get("out_cols", ["위도", "경도"])
     _ctx(ctx, "region")  # 기본값 대체 없이 존재만 강제
 
-    cache: dict = {}
-    lats, lngs, srcs, matches, states, flags = [], [], [], [], [], []
-    for idx, row in df.iterrows():
-        raw = next(
+    # ① 행 → 원본 주소 / 정규화 키.  **여기서 순서를 확정하고 ④ 에서 그대로 되짚는다.**
+    #    (병렬화의 실패 모드는 행 어긋남이다. 행 수·flag 수는 그대로라 자동검증을 통과한다)
+    raws = [
+        next(
             (
                 row.get(c)
                 for c in addr_cols
@@ -417,7 +525,61 @@ def _run_geocode(df, p, ctx):
             ),
             "",
         )
-        key = _normalize_addr(raw)
+        for _, row in df.iterrows()
+    ]
+    keys = [_normalize_addr(r) for r in raws]
+
+    # ② 고유 주소만 남기고, 디스크 캐시에 있는 것은 호출하지 않는다.
+    resolved: dict[str, tuple] = {}
+    todo: dict[str, str] = {}  # key -> 대표 원본 주소(변형 생성에 원본 형태가 필요)
+    dc = _geo_cache()
+    for k, raw in zip(keys, raws):
+        if not k or k in resolved or k in todo:
+            continue
+        if k in dc:
+            hit = dc[k]
+            if hit is not None:
+                resolved[k] = (
+                    (hit["lat"], hit["lng"], hit["matched"]),
+                    hit["type"],
+                    hit["variant"],
+                )
+                continue
+            if not _GEO_REFRESH_FAILED:
+                resolved[k] = (None, None, 0)
+                continue
+        todo[k] = raw
+
+    # ③ 남은 것만 병렬 호출. 초당 한도는 _GEO_LIMITER 가 지킨다.
+    n_uniq = len(resolved) + len(todo)
+    if todo:
+        with ThreadPoolExecutor(max_workers=max(1, GEOCODE_MAX_WORKERS)) as ex:
+            outs = list(ex.map(lambda r: _geocode_addr(r, order), todo.values()))
+        for k, out in zip(todo.keys(), outs):  # dict 는 삽입순 — keys/values 가 짝이다
+            resolved[k] = out
+        with _GEO_CACHE_LOCK:
+            for k in todo:
+                res, used, vi = resolved[k]
+                dc[k] = (
+                    None
+                    if res is None
+                    else {
+                        "lat": res[0],
+                        "lng": res[1],
+                        "matched": res[2],
+                        "type": used,
+                        "variant": vi,
+                    }
+                )
+            _geo_cache_save()
+    print(
+        f"  [지오코딩] {len(raws)}행 · 고유 {n_uniq}건 · "
+        f"캐시 적중 {n_uniq - len(todo)}건 · 신규 호출 {len(todo)}건"
+    )
+
+    # ④ ① 의 순서 그대로 결과를 되짚는다.
+    lats, lngs, srcs, matches, states, flags = [], [], [], [], [], []
+    for idx, key, raw in zip(df.index, keys, raws):
         if not key:
             lats.append(None)
             lngs.append(None)
@@ -433,22 +595,7 @@ def _run_geocode(df, p, ctx):
                 )
             )
             continue
-        if key in cache:
-            res, used, vi = cache[key]
-        else:
-            res, used, vi = None, None, 0
-            # 원본 주소가 실패하면 괄호 제거 → 도로명+건물번호 순으로 단순화해 재시도.
-            # (건물명·층·괄호 법정동이 붙어 있으면 지오코더가 못 찾는 사례가 흔하다)
-            for vi, cand in enumerate(_addr_variants(raw)):
-                for t in order:
-                    res = _vworld_geocode(cand, t)
-                    if res:
-                        used = t
-                        break
-                if res:
-                    break
-            cache[key] = (res, used, vi)
-            time.sleep(GEOCODE_SLEEP_SEC)
+        res, used, vi = resolved[key]
         if res:
             lats.append(res[0])
             lngs.append(res[1])

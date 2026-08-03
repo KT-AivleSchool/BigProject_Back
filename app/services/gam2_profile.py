@@ -15,7 +15,7 @@ OmniSite 감리 AI — 데이터 프로파일러 (profile)
 출력 dict 필드 (build_prompt / run_harness 가 기대하는 계약)
   dataset_id, filename, extension, columns, row_count, null_coords,
   has_coord_col, has_addr_col, addr_cols, coord_cols, dup_estimate,
-  sample_rows, sampled(bool, 표본 추정 여부)
+  sample_rows, value_dist(저카디널리티 컬럼 값 분포), sampled(bool, 표본 추정 여부)
 
 dataset_id 결정
   폴더의 데이터 파일을 '파일명 가나다순'으로 정렬해 '01','02'… 두 자리 번호를 부여한다.
@@ -47,6 +47,13 @@ ADDR_COL_KEYWORDS = ("주소", "소재지", "상세위치", "설치위치")  # �
 ADDR_COL_EXCLUDE = ("홈페이지", "이메일", "전자우편", "url", "코드")  # 오탐 제외
 DATA_EXTENSIONS = (".csv", ".xlsx", ".xls", ".shp", ".json")
 _NON_VALUE_COLS = ("geometry",)  # 샘플/중복에서 제외(shp geometry 등)
+
+# 값 분포(value_dist) 파라미터 — 저카디널리티 컬럼만 값 목록을 통째로 싣는다.
+#   sample_rows(2행)로는 카테고리 컬럼의 값 집합을 알 수 없다. 감리 AI 가
+#   filter_by_value 의 allowed 를 '본 값'으로만 채워 조용히 행을 잃는다.
+CATEGORY_MAX_UNIQUE = 30    # 고유값이 이보다 많으면 카테고리로 보지 않는다(자유 텍스트·ID)
+CATEGORY_MAX_COLS = 25      # 프롬프트 비대화 방지
+CATEGORY_VAL_MAXLEN = 40    # 값 하나라도 이보다 길면 그 컬럼은 싣지 않는다(자유 텍스트)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -370,6 +377,63 @@ def _sample_rows(df, n: int = 2) -> list[dict]:
     return out
 
 
+def _is_numericish(vals: list) -> bool:
+    """값 대부분이 숫자로 파싱되면 카테고리가 아니다(연도·개수·코드 등)."""
+    if not vals:
+        return True
+    ok = 0
+    for v in vals:
+        try:
+            float(str(v).strip().replace(",", ""))
+            ok += 1
+        except ValueError:
+            pass
+    return ok / len(vals) >= 0.8
+
+
+def _value_dist(df, max_unique: int = CATEGORY_MAX_UNIQUE) -> dict:
+    """고유값이 적은 컬럼의 **값 분포 전체**. {컬럼: {고유수, 값:{값:건수}, 결측}}
+
+    왜 필요한가 (2026-08-03 실측)
+      sample_rows 는 앞 2행뿐이다. 어린이집 `운영현황` 은 9,483행 중
+      정상 3,835 / 폐지 5,504 / 재개 75 / 휴지 66 인데, 앞 2행이 둘 다 '정상'이고
+      '재개' 는 30번째 행에 처음 나온다. 감리 AI 가 볼 수 없으니
+      filter_by_value(allowed=['정상']) 를 냈고, **운영 중인 시설이 조용히
+      배제에서 빠졌다.** 행 수는 그럴듯해서 자동 검증으로는 안 잡힌다.
+
+      고유값이 적은 컬럼은 값 목록을 통째로 실어도 토큰이 거의 안 든다.
+      '추측해서 열거' 를 '보고 고르기' 로 바꾸는 것이 요점이다.
+
+    ⚠ 대용량 파일은 상위 N행 표본이므로 건수는 근사다(profile.sampled=True).
+       값 **집합**은 표본에서도 대체로 보존되지만, 극히 드문 값은 빠질 수 있다.
+    """
+    out: dict = {}
+    for c in df.columns:
+        if c in _NON_VALUE_COLS or len(out) >= CATEGORY_MAX_COLS:
+            continue
+        s = df[c]
+        try:
+            nun = int(s.nunique(dropna=True))
+        except TypeError:                      # 해시 불가 타입(list 등)
+            continue
+        if nun == 0 or nun > max_unique:
+            continue
+        uniq = [str(v) for v in s.dropna().unique()]
+        if _is_numericish(uniq):
+            continue
+        # 값 하나라도 길면 자유 텍스트다. 자르면 allowed 에 잘린 값이 들어가
+        #   0행이 되므로 **자르지 말고 컬럼 자체를 뺀다.**
+        if any(len(v) > CATEGORY_VAL_MAXLEN for v in uniq):
+            continue
+        vc = s.value_counts(dropna=True)
+        out[c] = {
+            "고유수": nun,
+            "값": {str(k): int(v) for k, v in vc.items()},
+            "결측": int(s.isna().sum()),
+        }
+    return out
+
+
 # ══════════════════════════════════════════════════════════════════
 # 3. dataset_id 결정 (폴더 단위: 가나다순 번호 / 단독 호출: 파일명 프리픽스)
 # ══════════════════════════════════════════════════════════════════
@@ -421,6 +485,7 @@ def profile_file(
         coord_cols=coord_cols,
         dup_estimate=_dup_estimate(df),
         sample_rows=_sample_rows(df),
+        value_dist=_value_dist(df),
         sampled=(len(df) >= max_rows),  # 표본 추정이면 True
     )
 

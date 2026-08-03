@@ -53,6 +53,7 @@ from app.services import gam4_spatial_ops as S
 from app.services import gam4_facility_params as FP
 from app.services import gam4_export as EX
 from app.services import gam4_jimok as J
+from app.services import gam4_exclusion_shape as X
 
 IMPORT_SEC = time.perf_counter() - _T_IMPORT   # geopandas 계열 + 프로젝트 모듈
 
@@ -81,7 +82,8 @@ def make_loader(domain: str):
         f = files[did]
         if f.endswith(".gpkg"):
             return gpd.read_file(f).to_crs(W.WORK_CRS)
-        return pd.read_parquet(f)
+        # parquet 에 좌표가 남아 있으면 geometry 복원(좌표계는 값으로 판정).
+        return W.as_geodataframe(pd.read_parquet(f), did)
     return loader, doc
 
 
@@ -256,8 +258,22 @@ def build_demand_grid(cpath: str, parcels: gpd.GeoDataFrame, spacing: float,
 # =========================================================
 # 배제
 # =========================================================
-def load_exclusions(reviewed: dict, loader, verbose: bool = True):
-    """reviewed.json 의 hard_exclusion -> 버퍼 union. polygon 도 반경만큼 확장."""
+def load_exclusions(reviewed: dict, loader, all_parcels=None,
+                    shape_opts: dict | None = None, verbose: bool = True):
+    """reviewed.json 의 hard_exclusion -> 버퍼 union.
+
+    all_parcels 가 있으면 **지목 배수로 점/면을 판정**하고(S9, gam4_exclusion_shape),
+    면으로 판정된 점은 그 필지(+인접 동일지목 확장)를 복원해 배제한다.
+    LLM 이 낸 `exclusion_type` 은 참고로만 쓰고 코드 값이 확정한다 —
+    `exclusion_type_source` 에 어느 쪽이 쓰였는지 남긴다.
+
+    all_parcels 가 없으면 종전대로 `buffer_union` 만 한다(구 경로 보존).
+
+    ※ all_parcels 는 **지목 필터 전 전체 지적도**여야 한다.
+      후보 필지를 넣으면 `학`·`천` 이 빠져 기저율이 왜곡된다.
+    """
+    opts = shape_opts or {}
+    base = X.area_base_rate(all_parcels) if all_parcels is not None else None
     geoms, rows, layers = [], [], {}      # layers: 표출에서 '어느 규칙인지' 보여주기 위함
     for r in reviewed.get("results", []):
         did = r.get("dataset_id")
@@ -265,29 +281,83 @@ def load_exclusions(reviewed: dict, loader, verbose: bool = True):
             if role.get("role") != "hard_exclusion":
                 continue
             rad = role.get("배제반경_m")
-            etype = role.get("exclusion_type", "")
+            etype_llm = role.get("exclusion_type", "")
             try:
                 g = loader(did)
             except Exception as e:
-                rows.append((did, etype, rad, 0, f"로드 실패({e})")); continue
+                rows.append({"id": did, "etype": etype_llm, "src": "-", "radius": rad,
+                             "n": 0, "area": 0.0, "note": f"로드 실패({e})"}); continue
             if not isinstance(g, gpd.GeoDataFrame):
-                rows.append((did, etype, rad, 0, "geometry 없음")); continue
-            u = S.buffer_union(g, rad)
+                rows.append({"id": did, "etype": etype_llm, "src": "-", "radius": rad,
+                             "n": 0, "area": 0.0, "note": "geometry 없음"}); continue
+            g = S.clean_geometry(g)
+            if g.empty:
+                rows.append({"id": did, "etype": etype_llm, "src": "-", "radius": rad,
+                             "n": 0, "area": 0.0, "note": "빈 레이어"}); continue
+
+            det = None
+            if base is not None and (g.geom_type == "Point").all():
+                # 점 레이어만 배수 판정 대상이다. 이미 폴리곤이면 복원할 것이 없다.
+                det = X.resolve(g, all_parcels, rad, base=base, **opts)
+                u, etype, src = det["geom"], det["exclusion_type"], "jimok_lift"
+            else:
+                u, etype, src = S.buffer_union(g, rad), etype_llm, "llm_audit"
+
             if u is None:
-                rows.append((did, etype, rad, 0, "빈 레이어")); continue
+                rows.append({"id": did, "etype": etype, "src": src, "radius": rad,
+                             "n": len(g), "area": 0.0, "note": "빈 레이어"}); continue
             geoms.append(u)
-            layers[did] = {"geom": u, "type": etype, "radius": rad}
-            rows.append((did, etype, rad, len(S.clean_geometry(g)), ""))
+            layers[did] = {"geom": u, "type": etype, "radius": rad,
+                           "exclusion_type_source": src,
+                           "exclusion_type_llm": etype_llm, "detail": det}
+            # rows 는 갭 리포트로 흘러간다 — shapely geom 을 넣으면 직렬화에서 터진다.
+            rows.append({"id": did, "etype": etype, "src": src, "radius": rad,
+                         "n": len(g), "area": u.area / 1e6, "note": "",
+                         "detail": {k: v for k, v in det.items() if k != "geom"}
+                                   if det else None})
 
     union = S.union_all(geoms)
     if verbose:
         print("\n[G] 배제 레이어")
-        for did, etype, rad, n, note in rows:
-            print(f"  {did:<4} {etype:<8} +{str(rad) + 'm' if rad else '  - ':<6} "
-                  f"{n:>6,} features  {note}")
+        for r in rows:
+            print(f"  {r['id']:<4} {r['etype']:<8} {r['src']:<10} "
+                  f"+{(str(r['radius']) + 'm') if r['radius'] else '  -   ':<6} "
+                  f"{r['n']:>6,} features  {r['area']:>8.4f} km²  {r['note']}")
+            d = r.get("detail")
+            if d:
+                if d["n_시드필지"]:
+                    print(f"       면 {d['n_면점']}점 → 시드 {d['n_시드필지']}필지 "
+                          f"→ 인접확장 {d['n_확장필지']}필지 · 점 {d['n_점점']}점")
+                for w in d.get("warnings", []):
+                    print(f"       ⚠ {w}")
         if union is not None:
-            print(f"    union {union.area/1e6:.3f} km²")
+            print(f"    union {union.area/1e6:.4f} km²")
+    _guard_zero_area(rows)
     return union, layers, rows
+
+
+def _guard_zero_area(rows: list) -> None:
+    """면적 0 레이어는 배제에 아무 기여를 못 한다 — 조용한 실패의 전형이라 중단한다.
+
+    실제로 겪은 형태: `11 어린이보호구역` 이 polygon 판정 + 반경 없음이라
+    `buffer_union(points, None)` = 점들의 union = **면적 0**. 경고도 예외도 없었고
+    31개 시설이 배제에서 통째로 빠진 채 Top-N 이 나왔다.
+
+    **features 가 있는데** 면적이 0 인 경우만 잡는다. 로드 실패·빈 레이어는
+    이미 note 가 붙어 갭 리포트에 드러나므로 중단시키지 않는다 — 조용하지 않다.
+    """
+    dead = [r for r in rows if r["n"] > 0 and r["area"] == 0]
+    if not dead:
+        return
+    lines = "\n".join(
+        f"    {r['id']}  {r['etype'] or '-':<8} 반경 {r['radius'] or '없음'}  "
+        f"{r['n']:,} features  {r['note'] or '기여 0'}" for r in dead)
+    raise SystemExit(
+        f"[중단] 배제 기여가 0 인 레이어 {len(dead)}건 — 배제가 조용히 사라집니다.\n"
+        f"{lines}\n\n"
+        f"  점 레이어인데 반경이 없으면 면적이 0 이 됩니다.\n"
+        f"  HITL 에서 배제반경을 입력하거나, 그 레이어를 hard_exclusion 에서 빼세요:\n"
+        f"    python app\\services\\gam2_audit_judgment_test.py hitl <도메인>")
 
 
 # =========================================================
@@ -566,6 +636,19 @@ def main():
                     help="시설 파라미터 LLM 판정 생략 (CLI 값만 사용)")
     ap.add_argument("--force-params", action="store_true", help="파라미터 재판정")
     ap.add_argument("--max-per-parcel", type=int, default=400)
+    # 배제 점/면 판정(S9). 기본값 근거는 gam4_exclusion_shape 상단 실측표.
+    # 용산구 1개 도메인 관찰값이라 재활용·EV 에서는 조정이 필요할 수 있어 노출한다.
+    ap.add_argument("--lift", type=float, default=X.LIFT_MIN,
+                    help=f"면 판정 지목 배수 임계 (기본 {X.LIFT_MIN:g})")
+    ap.add_argument("--share", type=float, default=X.SHARE_MIN,
+                    help=f"면 판정 관측비율 하한 (기본 {X.SHARE_MIN:.2f}). "
+                         f"소수 예외의 면 승격을 막는다")
+    ap.add_argument("--min-pts", type=int, default=X.COUNT_MIN,
+                    help=f"면 판정 최소 표본 점 수 (기본 {X.COUNT_MIN})")
+    ap.add_argument("--no-expand", action="store_true",
+                    help="면 판정 시 인접 동일지목 확장 생략(시드 필지만)")
+    ap.add_argument("--no-shape-lift", action="store_true",
+                    help="점/면 배수 판정 생략 — 감리 exclusion_type 을 그대로 쓴다")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
@@ -626,7 +709,8 @@ def main():
     # ── C 지표 ──
     print("\n[C] 지표 정의·부착")
     inds = W.define_indicators(reviewed, report)
-    W.attach_layers(inds, loader)
+    # region 은 weight_set 에 기록돼 있다 — 행정동명 -> 코드 변환의 시군구 확정에 쓴다.
+    W.attach_layers(inds, loader, region=ws.get("region", ""))
     check_consistency(ws, inds)
 
     admin_gdf = None
@@ -642,7 +726,22 @@ def main():
     T.lap("D·E 점수화")
 
     # ── G 배제 (점수화 뒤) ──
-    union, excl_layers, excl_rows = load_exclusions(reviewed, loader)
+    # 점/면 판정(S9)의 기저율은 **지목 필터 전 전체 지적도**에서 계산해야 한다.
+    # 후보 gpkg 의 parcels 레이어는 설치 가능 지목만 남긴 것이라(학·천이 없다)
+    # 기저율이 왜곡된다 — 실측 42,216필지 / 원본 44,452필지, 대 66% vs 46%.
+    all_parcels = None
+    if not args.no_shape_lift:
+        try:
+            _shp = W.find_region_file("LSMD_CONT_LDREG_*.shp",
+                                      ws.get("region", ""), root=REGION_DATA_DIR)
+            all_parcels = S.load_parcels(_shp, verbose=False)
+        except Exception as e:
+            print(f"  ⚠ 전체 지적도 로드 실패({e}) — 점/면 배수 판정 생략, "
+                  f"감리 exclusion_type 을 그대로 씁니다")
+    union, excl_layers, excl_rows = load_exclusions(
+        reviewed, loader, all_parcels=all_parcels,
+        shape_opts={"lift_min": args.lift, "share_min": args.share,
+                    "count_min": args.min_pts, "expand": not args.no_expand})
     keep = S.filter_outside(pts, union)
     n_exc = len(pts) - int(keep.sum())
     print(f"    배제 통과 {keep.sum():,} / {len(pts):,}  ({keep.mean()*100:.1f}%)")

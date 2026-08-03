@@ -33,6 +33,7 @@ if _ROOT not in _sys.path:
     _sys.path.insert(0, _ROOT)
 
 import app.services.gam2_audit_judgment_test as A
+from app import config
 
 # tqdm 은 선택 의존 — 없으면 간단한 텍스트 진행 표시로 폴백(파이프라인은 그대로 동작).
 try:
@@ -143,6 +144,24 @@ def run(
     print(
         f'[입력]   "{user_input}"' + ("   ※ MOCK 모드(LLM 호출 없음)" if mock else "")
     )
+
+    # ── STEP 0-0. 참조 데이터 점검
+    #   config 가 가리키는 경로에 파일이 없으면 파이프라인은 멈추지 않고 **기능만
+    #   조용히 꺼진다.** 크로스워크가 없으면 지역코드 검증이 통째로 비활성화되는데,
+    #   그 사실은 gpt-4o 11회(142초)를 다 쓴 뒤 HITL 에서야 드러났다(2026-08-03).
+    #   여기서 미리 알리면 Ctrl+C 로 멈출 수 있다.
+    _miss = config.missing_reference_files()
+    if _miss:
+        print("\n[참조 데이터 점검]")
+        for _label, _path, _req in _miss:
+            print(f"  {'🔴 필수' if _req else 'ⓘ 선택'} 없음  {_label} : "
+                  f"{_path or '(경로 미설정)'}")
+        if any(r for _, _, r in _miss):
+            print("  ⚠ 필수 참조 데이터가 없습니다. 관련 검증이 꺼진 채 진행됩니다.\n"
+                  "    행정동 크로스워크가 없으면 지역코드 검증(11440 마포구 사건 방어)이\n"
+                  "    동작하지 않습니다 — 계속하려면 그대로 두고, 멈추려면 Ctrl+C.")
+    else:
+        print("\n[참조 데이터 점검] 이상 없음")
 
     # ── STEP 0-1. fixture 확보 (없으면 build_fixtures 가 자동 프로파일링)
     fixtures = _step(timer, "STEP 0  프로파일/조례", A.build_fixtures)
