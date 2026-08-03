@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 
 # 라우터 Import (v1 하위 라우터 연동)
-from app.api.v1 import auth, lands, ahp, simulations, audit
+from app.api.v1 import auth, lands, ahp, simulations, audit, stakeholders
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -28,6 +28,7 @@ app.include_router(lands.router, prefix=settings.API_V1_STR + "/lands", tags=["L
 app.include_router(ahp.router, prefix=settings.API_V1_STR + "/ahp", tags=["AHP Engine"])
 app.include_router(simulations.router, prefix=settings.API_V1_STR + "/simulation", tags=["AI Simulation"])
 app.include_router(audit.router, prefix=settings.API_V1_STR + "/audit", tags=["Audit AI"])
+app.include_router(stakeholders.router, prefix=settings.API_V1_STR + "/stakeholders", tags=["Dynamic Stakeholders"])
 
 # 루트 헬스체크 엔드포인트
 @app.get("/", tags=["Health Check"])
