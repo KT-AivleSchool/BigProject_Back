@@ -239,7 +239,22 @@ D:\obsidian_claude\10_OmniSite\
 🔴 화면1 (/upload)       폐기 아님. 선행조건은 기능이 아니라 구조 —
                         RagVectorStorage() 를 모듈 최상단이 아니라 요청 시점에 만들 것.
                         그다음 gam2_doc_extract.py + gam2_ordinance_select.py (#203)
-⬜ A2 HITL API           지금 POST /runs 는 픽스처 재실행(STEP2~4)뿐. mode 는 자리만 있다
+🔴 A2 HITL API           **게이트 방식**으로 확정(2026-08-05 사람 승인). 계약 7절.
+                        HITL 은 파이프라인이 멈춰서 사람을 기다리는 게이트다 —
+                        게이트A(STEP1 끝: 배제반경·데이터의도·지역코드) ·
+                        게이트B(STEP3 중간: [R] 집계반경·[W] 가중치 -1~+1).
+                        `status: awaiting_hitl` + `gate` 로 멈추고 POST 로 이어간다.
+                        **재실행 0회.** STEP4 는 안 넣는다(`input()` 0개, 설계와 일치)
+                        🔴 "다 돌린 뒤 뒤집고 재실행" 으로 설계했던 건 **틀렸다.**
+                           재실행범위·reused 상태·부분재실행이 전부 그 전제에서 나온
+                           가짜 문제였다. 원인 — 그때 mode 가 fixture(무입력 완주)
+                           하나뿐이라 **내가 만든 것을 파이프라인의 모습으로 착각**했다.
+                           `stdin=DEVNULL` 은 러너가 박은 것이지 파이프라인의 성질이 아니다.
+                           실측하면 바로 보였다: `input()` 은 gam2_audit_judgment_test 4개 ·
+                           run_weight_model 3개 · 나머지 전부 0개
+                        배선은 거의 없다 — `apply_radius_answer`·`apply_intent_answer`·
+                        `apply_weight_hitl` 이 이미 순수 함수이고, run_weight_model 에
+                        `--radius`·`--weight` 인자가 이미 있다. 정본 수정 불필요
 ⬜ 이슈 #205 되묻기      admin_crosswalk `region_code` 가 통계청/행자부 중 뭔지 ·
                         adm_dong 3,559 ↔ crosswalk 3,555 = 4건 차이 ·
                         경계는 통계청 코드인데 우리는 행자부 → 크로스워크 경유 강제
