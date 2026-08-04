@@ -10,6 +10,7 @@ from app.core.sim_ai.graph import build_discussion_graph
 from sqlalchemy import select
 from app.db.models.simulation import Parcel
 
+
 async def main():
     print("=" * 60)
     print("🚀 실시간 POI 기반 토론 테스트 시작")
@@ -20,16 +21,20 @@ async def main():
         result = await db.execute(select(Parcel).limit(1))
         parcel = result.scalar()
         if not parcel:
-            print("❌ DB에 Parcel(필지) 데이터가 없습니다. 먼저 기초 데이터를 적재해야 합니다.")
+            print(
+                "❌ DB에 Parcel(필지) 데이터가 없습니다. 먼저 기초 데이터를 적재해야 합니다."
+            )
+
             # DB가 비어있을 경우 테스트를 위한 가상 데이터
             class MockParcel:
                 id = 1
                 jibun = "서울특별시 용산구 이태원동 123-45"
                 lat = 37.534
                 lng = 126.994
+
             parcel = MockParcel()
             print("⚠️ 가상의 Parcel 데이터로 테스트를 진행합니다.")
-        
+
         parcel_id = parcel.id
         print(f"✅ 테스트 대상 Parcel ID: {parcel_id} (지번: {parcel.jibun})")
 
@@ -39,7 +44,7 @@ async def main():
         if not poi_context or "필지 정보를 찾을 수 없습니다." in poi_context:
             print("⚠️ DB에 연관된 POI가 없어, 테스트용 POI를 강제 주입합니다.")
             poi_context = "🔴 단점: 가장 가까운 새싹어린이집까지 약 150m 거리\n🟢 장점: 반경 300m 이내 공용 쓰레기통 3개 존재\n🔴 단점: 주변 상권(식당) 50m 이내 밀집"
-            
+
         print(f"📍 도출된 POI 문맥:\n{poi_context}")
 
         audit_context = f"\n\n## 📍 주변 인프라 요인 (DB 연산)\n{poi_context}"
@@ -74,18 +79,21 @@ async def main():
         print("🤖 [AI 토론 엔진 구동]")
         print("=" * 60)
         graph = build_discussion_graph()
-        
+
         async for output in graph.astream(initial_state):
             for node_name, node_state in output.items():
                 if node_state.get("messages"):
                     msg = node_state["messages"][-1]
                     print(msg)
                     print("-" * 50)
-                
+
                 # 1라운드(찬/반) 발화 후 종료 (결과만 확인)
                 if node_name == "con":
-                    print("✅ 찬반 1턴(Turn) 확인 완료! POI 정보가 AI 발언에 반영되었는지 확인하세요.")
+                    print(
+                        "✅ 찬반 1턴(Turn) 확인 완료! POI 정보가 AI 발언에 반영되었는지 확인하세요."
+                    )
                     return
+
 
 if __name__ == "__main__":
     asyncio.run(main())

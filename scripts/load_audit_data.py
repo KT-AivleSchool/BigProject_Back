@@ -10,6 +10,7 @@ from app.db.session import AsyncSessionLocal
 from app.db.models.audit import AuditRule
 from sqlalchemy import text
 
+
 async def main():
     json_path = Path(__file__).resolve().parent.parent / "dummy_audit.json"
     if not json_path.exists():
@@ -35,19 +36,20 @@ async def main():
                 role_type=role_type,
                 weight=weight if weight is not None else 0.0,
                 rationale=rationale,
-                source=source
+                source=source,
             )
             rules_to_insert.append(rule)
 
     async with AsyncSessionLocal() as session:
         # First, clear existing rules to prevent duplicates
         await session.execute(text("TRUNCATE TABLE audit_rules"))
-        
+
         # Add new rules
         session.add_all(rules_to_insert)
         await session.commit()
-    
+
     print(f"Successfully loaded {len(rules_to_insert)} audit rules into the database.")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

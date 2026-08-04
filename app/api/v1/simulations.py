@@ -32,15 +32,21 @@ async def _fetch_and_parse_audit_rules_from_db(db: AsyncSession) -> str:
         try:
             with open("dummy_audit.json", "r", encoding="utf-8") as f:
                 audit_data = json.load(f)
+
             class MockRule:
                 def __init__(self, r_type, rat, src):
                     self.role_type = r_type
                     self.rationale = rat
                     self.source = src
+
             rules = []
             for result in audit_data.get("results", []):
                 for role in result.get("roles", []):
-                    rules.append(MockRule(role.get("role"), role.get("rationale"), role.get("source")))
+                    rules.append(
+                        MockRule(
+                            role.get("role"), role.get("rationale"), role.get("source")
+                        )
+                    )
         except Exception as e:
             print(f"Mock Audit Load Error: {e}")
             rules = []
@@ -87,21 +93,32 @@ async def _extract_dynamic_meta_from_audit_rules(db: AsyncSession) -> dict:
         try:
             with open("dummy_audit.json", "r", encoding="utf-8") as f:
                 audit_data = json.load(f)
-            facility = audit_data.get("facility_inference", {}).get("facility", "흡연부스")
+            facility = audit_data.get("facility_inference", {}).get(
+                "facility", "흡연부스"
+            )
             parsed_weights = {}
             for result in audit_data.get("results", []):
                 for role in result.get("roles", []):
-                    if role.get("role") in ["positive_factor", "negative_factor"] and role.get("weight") is not None:
-                        f_type = role.get("facility_type") or result.get("summary", "")[:100]
+                    if (
+                        role.get("role") in ["positive_factor", "negative_factor"]
+                        and role.get("weight") is not None
+                    ):
+                        f_type = (
+                            role.get("facility_type") or result.get("summary", "")[:100]
+                        )
                         parsed_weights[f_type] = abs(float(role.get("weight")))
             if parsed_weights:
                 raw_weights = parsed_weights
         except Exception:
             pass
-            
+
         jibun = "서울특별시 용산구 (감리 대상 부지)"
         total_w = sum(raw_weights.values())
-        ahp_weights = {k: round(v/total_w, 2) for k, v in raw_weights.items()} if total_w > 0 else {}
+        ahp_weights = (
+            {k: round(v / total_w, 2) for k, v in raw_weights.items()}
+            if total_w > 0
+            else {}
+        )
         return {"facility_type": facility, "jibun": jibun, "ahp_weights": ahp_weights}
 
     result = await db.execute(select(AuditRule))
@@ -117,7 +134,10 @@ async def _extract_dynamic_meta_from_audit_rules(db: AsyncSession) -> dict:
 
     raw_weights = {}
     for r in rules:
-        if r.role_type in ["positive_factor", "negative_factor"] and r.weight is not None:
+        if (
+            r.role_type in ["positive_factor", "negative_factor"]
+            and r.weight is not None
+        ):
             factor_name = r.facility_type or "요인"
             raw_weights[factor_name] = abs(float(r.weight))
 
@@ -186,23 +206,31 @@ async def run_debate_and_publish(
             if USE_MOCK_DB:
                 try:
                     import os
-                    mock_poi_path = os.path.join("data_ai페르소나_임시", "parcel_context.json")
+
+                    mock_poi_path = os.path.join(
+                        "data_ai페르소나_임시", "parcel_context.json"
+                    )
                     with open(mock_poi_path, "r", encoding="utf-8") as f:
                         mock_poi_data = json.load(f)
                     poi_lines = mock_poi_data.get(str(parcel_id))
                     if not poi_lines and mock_poi_data:
                         poi_lines = next(iter(mock_poi_data.values()))
-                    poi_context = "\n".join([f"- {msg}" for msg in poi_lines]) if poi_lines else ""
+                    poi_context = (
+                        "\n".join([f"- {msg}" for msg in poi_lines])
+                        if poi_lines
+                        else ""
+                    )
                 except Exception as e:
                     print(f"Mock POI Load Error: {e}")
                     poi_context = ""
             else:
                 poi_context = await gis_service.get_poi_context_from_db(db, parcel_id)
-                
+
             if poi_context:
                 audit_context += f"\n\n## 📍 주변 인프라 요인 (DB 연산)\n{poi_context}"
-                print(f"[GIS] parcel_id={parcel_id}에 POI 문맥 주입 완료:\n{poi_context}")
-
+                print(
+                    f"[GIS] parcel_id={parcel_id}에 POI 문맥 주입 완료:\n{poi_context}"
+                )
 
             # 1. 시스템 시작 메시지 송출
             await pubsub_manager.publish_debate_message(
@@ -434,7 +462,9 @@ async def run_debate_and_publish(
                                     )
                                     db.add(new_sim)
                                     await db.commit()
-                                    print("=== 최종 도출된 JSON 결과 (DB 저장 성공) ===")
+                                    print(
+                                        "=== 최종 도출된 JSON 결과 (DB 저장 성공) ==="
+                                    )
                                 except Exception as e:
                                     await db.rollback()
                                     print(f"=== DB 저장 실패: {e} ===")

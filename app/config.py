@@ -76,7 +76,7 @@ PERSONA_SETTINGS: dict = {
         "model_name": os.environ.get("PERSONA_REPORTER_MODEL", "gpt-4o-mini"),
         "temperature": 0.2,
         "streaming": True,
-    }
+    },
 }
 
 # ══════════════════════════════════════════════════════════════════
@@ -260,5 +260,5 @@ class Settings(BaseSettings):
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
 
-settings = Settings()
 
+settings = Settings()

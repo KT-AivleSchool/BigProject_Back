@@ -60,6 +60,8 @@ def get_persona_llm(role: str) -> ChatOpenAI:
         temperature=persona_config.get("temperature", 0.7),
         streaming=persona_config.get("streaming", True),
     )
+
+
 vector_db = RagVectorStorage()
 
 
