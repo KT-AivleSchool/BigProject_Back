@@ -209,8 +209,9 @@ S9 증가분의 출처: `01 금연구역` 0.0245→0.6325(학·공 55점이 면 
 ```
 D:\obsidian_claude\10_OmniSite\
   남은 작업들\00_남은작업.md          ← S1~S12 전체. 여기부터
-  02_작업일지\2026-08-04.md           ← 최근 작업 (파이프라인 실행 API)
+  02_작업일지\2026-08-04c.md          ← 최근 작업 (라우터 표면 확정 · 폐기 스캐폴딩 삭제 · 의존성 핀)
   02_작업일지\2026-08-04b.md          ← S5 선행 검증 (계측 + PostGIS 정합성 실측)
+  02_작업일지\2026-08-04.md           ← 파이프라인 실행 API 신설
   02_작업일지\2026-08-03b.md          ← S4·S6·S12 완료
   02_작업일지\2026-08-03.md           ← S9 완료
   02_작업일지\2026-08-02.md
@@ -232,11 +233,14 @@ D:\obsidian_claude\10_OmniSite\
 ## 현재 우선순위 (2026-08-04)
 
 ```
-⬜ 이슈 #189 교차참조    #189 기준선(57,023 · 0.755)은 S9 이전 값이라 낡았다. 단
-                        **#203 에서 이미 현행값(56,967 · 1.1107)과 "check_fixture.py
-                        로 대조하라"를 공유했다** — 대체 완료. #189 엔 참조 한 줄이면 된다.
-                        (#203 공유 산출물 ≡ 현행 픽스처. sha 일치, 값 불일치 0건)
-🔴 이슈 #205 되묻기      admin_crosswalk `region_code` 가 통계청/행자부 중 뭔지 ·
+🔴 화면5 (/simulation)   pdf_service 폐기 → 재작성. /simulation·/simulations 두 prefix 로
+                        같은 라우터를 두 번 등록하고 있었다 — 한쪽만 살리면 조용히 404.
+                        PDF 호출부는 simulations.py:500 한 곳뿐이라 화면6 없이 먼저 낼 수 있다
+🔴 화면1 (/upload)       폐기 아님. 선행조건은 기능이 아니라 구조 —
+                        RagVectorStorage() 를 모듈 최상단이 아니라 요청 시점에 만들 것.
+                        그다음 gam2_doc_extract.py + gam2_ordinance_select.py (#203)
+⬜ A2 HITL API           지금 POST /runs 는 픽스처 재실행(STEP2~4)뿐. mode 는 자리만 있다
+⬜ 이슈 #205 되묻기      admin_crosswalk `region_code` 가 통계청/행자부 중 뭔지 ·
                         adm_dong 3,559 ↔ crosswalk 3,555 = 4건 차이 ·
                         경계는 통계청 코드인데 우리는 행자부 → 크로스워크 경유 강제
 ⬜ 조문 선별 검증        검증용\check_ordinance_select.py 재활용 — 누락 조문 확인
@@ -253,6 +257,11 @@ D:\obsidian_claude\10_OmniSite\
        check_fixture.py 46 → **57항목**(2026-08-04). 남은 것: `--fixture` 경로 주입
 ✅ A1  파이프라인 실행 API  app/api/v1/pipeline.py    2026-08-04 완료
        픽스처 재실행(STEP2~4)만. 계약은 `pipeline_run_contract.md` 단독 기준
+       산출물 화이트리스트 7키(reviewed 포함) · 응답 media_type 명시
+✅ 라우터 표면 확정  /api 경로 7개(auth 2·audit 2·pipeline 3)  2026-08-04
+       services/dummy(4248ff3) · api/v1/{ahp,lands}.py(7f66fd9) 삭제.
+       gis/ahp/pdf_service 는 **미구현이 아니라 폐기** — 만들면 안 된다.
+       여기 없는 경로는 404 다. try/except 로 감싸서 건너뛰지 않았다(원칙 1)
 S10  조례 단서 조항 "금연구역 ≠ 설치 불가"           설계 확정
 S11  조례 없을 때 상위법 직접 검색 + x좌표→4326
 🔴 S5  공간 연산 PostGIS 전환 — **실측하고 중단했다 (2026-08-04)**
