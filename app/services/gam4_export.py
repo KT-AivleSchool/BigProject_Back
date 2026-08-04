@@ -115,7 +115,7 @@ def export_topn(path: str, sel: gpd.GeoDataFrame) -> dict:
 
 def export_report(path: str, *, domain: str, facility: str, ws: dict,
                   params: dict, counts: dict, cov: dict, sel: gpd.GeoDataFrame,
-                  gap: list | None = None) -> dict:
+                  gap: list | None = None, spatial: dict | None = None) -> dict:
     """파라미터·커버곡선·진단을 한 파일에. 재현성과 설명책임용."""
     doc = {
         "domain": domain,
@@ -142,7 +142,17 @@ def export_report(path: str, *, domain: str, facility: str, ws: dict,
             "ceiling": cov.get("ceiling"),
             "unreached_n": cov.get("unreached_n"),
             "unreached_val": cov.get("unreached_val"),
+            # 🔴 공간 술어 회귀 대조용(S5). 아래 spatial 절 주석 참조.
+            "cover_pairs": cov.get("cover_pairs"),
+            "n_cand_mclp": cov.get("n_cand_mclp"),
+            "n_demand": cov.get("n_demand"),
         } if cov else None),
+        # 🔴 공간 연산 회귀 대조용 (S5 PostGIS 전환).
+        #   여기 값들은 **화면에 쓰라고 넣은 게 아니라 대조하라고 넣은 것**이다.
+        #   지금까지 배제 union 면적은 어떤 산출물에도 없어 로그를 손으로 옮겨
+        #   픽스처에 적었다(make_fixture.py --union). 사람이 옮겨적는 값은
+        #   오타 한 번에 기준선이 조용히 바뀐다.
+        "spatial": spatial,
         "topn": json.loads(sel.drop(columns="geometry").to_json(orient="records")),
         "data_gap": gap or [],
     }
@@ -415,7 +425,7 @@ def export_preview(path: str, grid_doc: dict, topn_doc: dict,
 
 def export_all(out_dir: str, prefix: str, *, grid, gscore, gexcluded, spacing,
                sel, excl_layers, crs, domain, facility, ws, params, counts,
-               cov, gap=None, simplify_m: float = 1.0,
+               cov, gap=None, spatial=None, simplify_m: float = 1.0,
                verbose: bool = True) -> dict:
     os.makedirs(out_dir, exist_ok=True)
     p = lambda name: os.path.join(out_dir, f"{prefix}_{name}")
@@ -425,7 +435,8 @@ def export_all(out_dir: str, prefix: str, *, grid, gscore, gexcluded, spacing,
                                 simplify_m=simplify_m)
     topn_doc = export_topn(p("topN.geojson"), sel)
     export_report(p("report.json"), domain=domain, facility=facility, ws=ws,
-                  params=params, counts=counts, cov=cov, sel=sel, gap=gap)
+                  params=params, counts=counts, cov=cov, sel=sel, gap=gap,
+                  spatial=spatial)
 
     meta = {"후보 필지": f"{counts.get('parcels',0):,}",
             "후보점": f"{counts.get('points',0):,}",

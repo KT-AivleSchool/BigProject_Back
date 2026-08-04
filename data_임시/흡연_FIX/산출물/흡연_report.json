@@ -267,7 +267,25 @@
     "knee": 46,
     "ceiling": 0.9996570464990011,
     "unreached_n": 4,
-    "unreached_val": 0.0003429535009989474
+    "unreached_val": 0.0003429535009989474,
+    "cover_pairs": 5971966,
+    "n_cand_mclp": 56967,
+    "n_demand": 6797
+  },
+  "spatial": {
+    "exclusion_union_km2": 1.1107,
+    "shape_lift": true,
+    "width_m": {
+      "n": 66915,
+      "min": 0.0158,
+      "p05": 1.1369,
+      "median": 10.7784,
+      "p95": 251.7108,
+      "max": 391.2365,
+      "sum": 3445355.8962,
+      "min_width": 2.0,
+      "pass_min_width": 59989
+    }
   },
   "topn": [
     {

@@ -452,6 +452,13 @@ def select_mclp(pts: gpd.GeoDataFrame, score: np.ndarray, keep: np.ndarray,
     sel.attrs["gains"] = list(gains)          # 곡선 분석용(n 을 넘는 구간 포함)
     sel.attrs["total_demand"] = float(total)
     sel.attrs["ceiling"] = ceiling
+    # 🔴 S5(PostGIS 전환) 회귀 대조용. **커버 쌍 개수가 공간 술어에 가장 예민하다** —
+    #   `neighbors_within` 이 `ST_DWithin` 으로 바뀌었을 때 쌍 개수가 그대로면
+    #   술어가 같게 동작한 것이고, 어긋나면 그 아래 모든 지표가 의미를 잃는다.
+    #   지금까지 로그에만 찍히고 산출물에 없어 **대조할 방법이 없었다**.
+    sel.attrs["cover_pairs"] = int(len(ci))
+    sel.attrs["n_cand_mclp"] = int(len(idx))
+    sel.attrs["n_demand"] = int(len(demand_pts))
     sel.attrs["unreached_n"] = int((~reached).sum())
     sel.attrs["unreached_val"] = float(dem[~reached].sum() / total) if total else 0.0
     if verbose and len(chosen):
@@ -773,7 +780,8 @@ def main():
         T.lap("H3 MCLP 선정")
         # attrs 는 head()·copy() 에서 항상 전파되지는 않는다 — 자르기 전에 빼둔다.
         mclp_meta = {k: sel.attrs.get(k)
-                     for k in ("ceiling", "unreached_n", "unreached_val")}
+                     for k in ("ceiling", "unreached_n", "unreached_val",
+                               "cover_pairs", "n_cand_mclp", "n_demand")}
     else:
         sel = select_topn(pts, score, keep, n=args.topn, d_min=d_min)
         T.lap("H Top-N 선정")
@@ -860,6 +868,31 @@ def main():
         })
     EX.print_gap_report(gaps)
 
+    # ── 공간 연산 회귀 대조값 (S5 PostGIS 전환 준비) ──
+    #   왜 산출물에 넣나: 지금까지 배제 union 면적은 **로그에만** 있었다.
+    #   기준선을 잡으려면 사람이 콘솔에서 눈으로 읽어 `make_fixture --union` 으로
+    #   옮겨적어야 했다. 옮겨적는 값은 오타 한 번에 기준선이 조용히 바뀐다.
+    #   내접폭은 분위수로 남긴다 — 평균만으로는 `ST_MaximumInscribedCircle` 로
+    #   바꿨을 때 꼬리만 달라지는 변화를 못 잡는다. 폭 필터가 후보 수를
+    #   직접 좌우하므로(실측 66,915 → 59,989) 꼬리가 곧 결과다.
+    spatial = {"exclusion_union_km2": (round(union.area / 1e6, 4)
+                                       if union is not None else 0.0),
+               "shape_lift": not args.no_shape_lift}
+    if "내접폭" in pts.columns:
+        _w = pts["내접폭"].to_numpy(dtype=float)
+        _q = np.quantile(_w, [0.0, 0.05, 0.5, 0.95, 1.0])
+        spatial["width_m"] = {
+            "n": int(_w.size),
+            "min": round(float(_q[0]), 4), "p05": round(float(_q[1]), 4),
+            "median": round(float(_q[2]), 4), "p95": round(float(_q[3]), 4),
+            "max": round(float(_q[4]), 4),
+            # 합계는 분위수가 못 잡는 개별 행 변화를 잡는 체크섬 역할이다.
+            "sum": round(float(_w.sum()), 4),
+            "min_width": min_width,
+            "pass_min_width": (int((_w >= min_width).sum())
+                               if min_width is not None else None),
+        }
+
     # ── J 표출 산출물 ──
     if not args.no_export and args.select == "mclp":
         # 배제구역 셀도 점수를 갖는다 — "수요 최고인데 막힘"을 보여주기 위함
@@ -873,7 +906,7 @@ def main():
                     "최소_이격_m": d_min},
             counts={"parcels": len(parcels), "points": len(pts),
                     "survive": int(keep.sum())},
-            cov=cov_an, gap=gaps)
+            cov=cov_an, gap=gaps, spatial=spatial)
         T.lap("J 표출 산출물")
 
     dst = args.out or os.path.join(STEP4_OUTPUT_DIR, f"{prefix}_topN_min.csv")
