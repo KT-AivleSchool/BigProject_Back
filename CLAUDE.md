@@ -261,7 +261,11 @@ D:\obsidian_claude\10_OmniSite\
        화이트리스트에 키를 추가하면 **옛 run 의 status.json 에는 그 키가 없다**
        (생성 시점 ARTIFACTS 로 굳는다) → `read_status` 가 빠진 키만 디스크 보고
        채운다. 있는 값은 안 건드리고 파일에도 안 쓴다
-✅ 라우터 표면 확정  /api 경로 7개(auth 2·audit 2·pipeline 3)  2026-08-04
+       `GET /runs/{id}/log` 추가(2026-08-05) — **유일하게 원본을 안 내보내는 응답**이다.
+       run.log 는 우리가 뭘 찍을지 통제하지 않는 자식 stdout 이라 마스킹 후 내보낸다:
+       `<repo>`·`<home>`(OS 계정명)·`<python>`·`<마스킹:KEY이름>`. 지운 자리는 표시를
+       남긴다 — 조용히 없애면 원본인 척한다(원칙 4)
+✅ 라우터 표면 확정  /api 경로 8개(auth 2·audit 2·pipeline 4)  2026-08-04
        services/dummy(4248ff3) · api/v1/{ahp,lands}.py(7f66fd9) 삭제.
        gis_service·ahp_service 는 **미구현이 아니라 폐기** — 만들면 안 된다.
        🔴 pdf_service·simulations 를 여기 같이 넣었던 건 **틀렸다**(정정 2026-08-04).

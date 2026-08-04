@@ -8,8 +8,8 @@
    나중에 오케스트레이터로 갈아끼울 때 라우터를 건드리지 않기 위해서다.
    status.json 과 산출물은 **가공하지 않고 그대로** 내보낸다(계약 4절).
 """
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 
 from app.services import pipeline_runner as runner
@@ -67,6 +67,24 @@ def get_run(run_id: str):
     if doc is None:
         raise HTTPException(status_code=404, detail=f"없는 run_id 입니다: {run_id}")
     return doc
+
+
+@router.get("/runs/{run_id}/log", response_class=PlainTextResponse)
+def get_run_log(run_id: str, tail: int | None = Query(None, ge=1)):
+    """실행 로그(마스킹본). 실행 중에도 읽힌다. `?tail=N` 이면 마지막 N 줄.
+
+    🔴 `FileResponse` 가 아니다 — 파일을 그대로 내보내면 안 되기 때문이다.
+       비밀값·서버 로컬 경로를 지운 뒤 본문으로 만든다(`runner._scrub`).
+       그래서 여기만 산출물 규칙("가공하지 않고 그대로")의 예외다.
+
+    run 은 있는데 로그가 아직 없으면 200 + 빈 본문이다. 404 로 하면
+    "없는 run" 과 구분이 안 된다.
+    """
+    text = runner.read_log(run_id, tail)
+    if text is None:
+        raise HTTPException(status_code=404, detail=f"없는 run_id 입니다: {run_id}")
+    # media_type 명시 — 미지정 시 mimetypes 추측에 맡기지 않는다(`.gpkg` 건과 같은 이유).
+    return PlainTextResponse(text, media_type="text/plain; charset=utf-8")
 
 
 @router.get("/runs/{run_id}/artifacts/{name}")
