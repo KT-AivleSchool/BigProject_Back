@@ -15,7 +15,7 @@ from app.core.sim_ai.prompts import (
     REPORTER_PROMPT,
 )
 from app.core.sim_ai.vector_db import RagVectorStorage
-from app.config import settings
+from app.config import settings, PERSONA_SETTINGS
 from app.db.session import AsyncSessionLocal
 from app.db.models.rag_feedback import RagFeedbackLog
 
@@ -50,13 +50,18 @@ class AgentState(TypedDict):
     next_speaker: str  # 라우터가 결정한 다음 발화자
 
 
-# LLM 및 Vector DB 전역 인스턴스 (온도는 창의적 역할극을 위해 0.7 유지)
-llm = ChatOpenAI(
-    api_key=settings.OPENAI_API_KEY,
-    model="gpt-4o-mini",
-    temperature=0.7,
-    streaming=True,
-)
+# [수정] 글로벌 llm 인스턴스 대신 Config 기반 동적 생성 함수 도입
+def get_persona_llm(role: str) -> ChatOpenAI:
+    """Config에서 해당 역할(role)의 LLM 설정을 불러와 인스턴스 반환"""
+    persona_config = PERSONA_SETTINGS.get(role, {})
+    return ChatOpenAI(
+        api_key=settings.OPENAI_API_KEY,
+        model=persona_config.get("model_name", "gpt-4o-mini"),
+        temperature=persona_config.get("temperature", 0.7),
+        streaming=persona_config.get("streaming", True),
+    )
+
+
 vector_db = RagVectorStorage()
 
 
@@ -125,6 +130,7 @@ async def pro_node(state: AgentState) -> dict:
         css_level=css_level,
     )
 
+    llm = get_persona_llm("pro")
     response = await llm.ainvoke([SystemMessage(content=prompt)])
     spoken = state.get("spoken_this_round", [])
     return {
@@ -155,6 +161,7 @@ async def con_node(state: AgentState) -> dict:
         css_level=css_level,
     )
 
+    llm = get_persona_llm("con")
     response = await llm.ainvoke([SystemMessage(content=prompt)])
     spoken = state.get("spoken_this_round", [])
     return {
@@ -196,6 +203,7 @@ async def gov_node(state: AgentState) -> dict:
             + "\n\n현재 상황: 3라운드의 찬반 토론이 종료되거나 합의점이 도달하여 정부가 개입할 차례입니다. 양측 의견을 수렴하여 공정한 중재안을 제시하십시오."
         )
 
+    llm = get_persona_llm("gov")
     response = await llm.ainvoke([SystemMessage(content=system_msg)])
     return {
         "messages": [f"정부: {response.content}"],
@@ -213,6 +221,7 @@ async def evaluator_node(state: AgentState) -> dict:
     prev_pro_acc = prev_evals.get("pro_acceptance", 0.0)
     prev_con_acc = prev_evals.get("con_acceptance", 0.0)
 
+    llm = get_persona_llm("evaluator")
     llm_json = llm.bind(response_format={"type": "json_object"})
     response = await llm_json.ainvoke(
         [
@@ -270,6 +279,7 @@ async def reporter_node(state: AgentState) -> dict:
     eval_score = state.get("eval_score", 0.0)
     common_rag = state.get("common_rag", "조례 데이터 없음")
 
+    llm = get_persona_llm("reporter")
     llm_json = llm.bind(response_format={"type": "json_object"})
     response = await llm_json.ainvoke(
         [

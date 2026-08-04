@@ -198,3 +198,15 @@ CREATE TABLE IF NOT EXISTS rag_feedback_log (
     label INT NOT NULL,               -- LLM이 실제로 인용했으면 1, 안 했으면 0
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 19. Audit 규칙 (감리 AI 산출물 대체용) 테이블
+CREATE TABLE IF NOT EXISTS audit_rules (
+    id SERIAL PRIMARY KEY,
+    dataset_id VARCHAR(50),
+    facility_type VARCHAR(100),
+    role_type VARCHAR(50),      -- "positive_factor", "negative_factor", "hard_exclusion"
+    weight NUMERIC,             -- 가점/감점 가중치
+    rationale TEXT,             -- 판정 근거
+    source VARCHAR(250),        -- 출처 (조항 등)
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
