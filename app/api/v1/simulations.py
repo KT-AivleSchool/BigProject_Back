@@ -12,7 +12,9 @@ from app.schemas.simulations import SimulationResultResponse, StreamRequest
 from app.core.sim_ai.graph import build_discussion_graph, vector_db
 from app.api.deps import get_db, get_redis
 from app.db.models.simulation import Parcel, ConflictSimulation
+from app.db.models.audit import AuditRule
 from app.services.pdf_service import pdf_builder
+from app.services.gis_service import gis_service
 from app.db.session import AsyncSessionLocal
 from app.utils.redis_pubsub import RedisPubSubManager
 from app.core.security_limiter import rate_limiter
@@ -20,45 +22,105 @@ from app.core.security_limiter import rate_limiter
 # API 라우터 인스턴스 초기화
 router = APIRouter()
 
+# 임시 DB 우회용 스위치 (Mock 데이터 모드 활성화 여부)
+USE_MOCK_DB = True
 
-def _extract_dynamic_meta_from_audit(audit_data: dict) -> dict:
-    """dummy_audit.json 및 실제 감리 AI 산출물 JSON에서 지번, 시설종류, 동적 AHP 가중치(갈등인자)를 자동 추출"""
-    if not audit_data:
+
+async def _fetch_and_parse_audit_rules_from_db(db: AsyncSession) -> str:
+    """DB에서 AuditRule을 가져와 포맷팅된 문자열로 반환"""
+    if USE_MOCK_DB:
+        try:
+            with open("dummy_audit.json", "r", encoding="utf-8") as f:
+                audit_data = json.load(f)
+            class MockRule:
+                def __init__(self, r_type, rat, src):
+                    self.role_type = r_type
+                    self.rationale = rat
+                    self.source = src
+            rules = []
+            for result in audit_data.get("results", []):
+                for role in result.get("roles", []):
+                    rules.append(MockRule(role.get("role"), role.get("rationale"), role.get("source")))
+        except Exception as e:
+            print(f"Mock Audit Load Error: {e}")
+            rules = []
+    else:
+        result = await db.execute(select(AuditRule))
+        rules = result.scalars().all()
+
+    if not rules:
+        return "프론트엔드 감리 데이터 없음"
+
+    positive = set()
+    negative = set()
+    hard_exclusion = set()
+
+    for r in rules:
+        rationale = r.rationale or ""
+        source = r.source or "출처 불명"
+        if r.role_type == "positive_factor":
+            positive.add(f"- {rationale}")
+        elif r.role_type == "negative_factor":
+            negative.add(f"- {rationale}")
+        elif r.role_type == "hard_exclusion":
+            hard_exclusion.add(f"- [절대금지] {rationale} (근거: {source})")
+
+    lines = []
+    if positive:
+        lines.append("## 설치 가점 요인\n" + "\n".join(sorted(positive)))
+    if negative:
+        lines.append("## 설치 감점/갈등 요인\n" + "\n".join(sorted(negative)))
+    if hard_exclusion:
+        lines.append("## 절대 배제(금지) 요인\n" + "\n".join(sorted(hard_exclusion)))
+
+    if not lines:
+        return "유효한 감리 팩터가 발견되지 않았습니다."
+
+    return "\n\n".join(lines)
+
+
+async def _extract_dynamic_meta_from_audit_rules(db: AsyncSession) -> dict:
+    """DB에서 AuditRule을 가져와 동적 메타데이터 반환"""
+    if USE_MOCK_DB:
+        facility = "흡연부스"
+        raw_weights = {"보행혼잡도": 0.4, "소음민감도": 0.3, "상권활성화": 0.3}
+        try:
+            with open("dummy_audit.json", "r", encoding="utf-8") as f:
+                audit_data = json.load(f)
+            facility = audit_data.get("facility_inference", {}).get("facility", "흡연부스")
+            parsed_weights = {}
+            for result in audit_data.get("results", []):
+                for role in result.get("roles", []):
+                    if role.get("role") in ["positive_factor", "negative_factor"] and role.get("weight") is not None:
+                        f_type = role.get("facility_type") or result.get("summary", "")[:100]
+                        parsed_weights[f_type] = abs(float(role.get("weight")))
+            if parsed_weights:
+                raw_weights = parsed_weights
+        except Exception:
+            pass
+            
+        jibun = "서울특별시 용산구 (감리 대상 부지)"
+        total_w = sum(raw_weights.values())
+        ahp_weights = {k: round(v/total_w, 2) for k, v in raw_weights.items()} if total_w > 0 else {}
+        return {"facility_type": facility, "jibun": jibun, "ahp_weights": ahp_weights}
+
+    result = await db.execute(select(AuditRule))
+    rules = result.scalars().all()
+
+    if not rules:
         return {}
 
-    facility_inf = audit_data.get("facility_inference", {})
-    facility = facility_inf.get("facility")
-    region = facility_inf.get("region")
-    source_input = facility_inf.get("source_input")
+    facility_types = [r.facility_type for r in rules if r.facility_type]
+    facility = facility_types[0] if facility_types else "알 수 없음"
 
-    jibun = (
-        f"서울특별시 {region} (감리 대상 부지)"
-        if region
-        else (source_input or "서울특별시 용산구 (감리 대상 부지)")
-    )
+    jibun = "서울특별시 용산구 (감리 대상 부지)"
 
-    # Dynamic AHP Weight Extraction from results[].roles
     raw_weights = {}
-    results = audit_data.get("results", [])
-    for res in results:
-        summary = res.get("summary", "")
-        roles = res.get("roles", [])
-        for r in roles:
-            role_type = r.get("role")
-            weight = r.get("weight")
-            if (
-                role_type in ["positive_factor", "negative_factor"]
-                and weight is not None
-            ):
-                # 팩터 간략 명칭 추출
-                factor_name = (
-                    summary.split("로")[0].strip()
-                    if "로" in summary
-                    else summary[:15].strip()
-                )
-                raw_weights[factor_name] = abs(float(weight))
+    for r in rules:
+        if r.role_type in ["positive_factor", "negative_factor"] and r.weight is not None:
+            factor_name = r.facility_type or "요인"
+            raw_weights[factor_name] = abs(float(r.weight))
 
-    # 가중치 합이 1.0이 되도록 정규화
     total_w = sum(raw_weights.values())
     ahp_weights = {}
     if total_w > 0:
@@ -72,56 +134,16 @@ def _extract_dynamic_meta_from_audit(audit_data: dict) -> dict:
     }
 
 
-# audit 데이터 중 필요한 데이터들만 정제하는 함수
-def _parse_audit_data(audit_data: dict) -> str:
-    if not audit_data:
-        return "프론트엔드 감리 데이터 없음"
-
-    positive = []
-    negative = []
-    hard_exclusion = []
-
-    results = audit_data.get("results", [])
-    for res in results:
-        roles = res.get("roles", [])
-        for r in roles:
-            role_type = r.get("role", "")
-            rationale = r.get("rationale", "")
-            if role_type == "positive_factor":
-                positive.append(f"- {rationale}")
-            elif role_type == "negative_factor":
-                negative.append(f"- {rationale}")
-            elif role_type == "hard_exclusion":
-                source = r.get("source", "출처 불명")
-                hard_exclusion.append(f"- [절대금지] {rationale} (근거: {source})")
-
-    lines = []
-    if positive:
-        lines.append("## 설치 가점 요인\n" + "\n".join(positive))
-    if negative:
-        lines.append("## 설치 감점/갈등 요인\n" + "\n".join(negative))
-    if hard_exclusion:
-        lines.append("## 절대 배제(금지) 요인\n" + "\n".join(hard_exclusion))
-
-    if not lines:
-        return "유효한 감리 팩터가 발견되지 않았습니다."
-
-    return "\n\n".join(lines)
-
-
 async def run_debate_and_publish(
     parcel_id: int,
     facility_type: str,
-    audit_context: str,
     redis: aioredis.Redis,
-    audit_data: dict = None,
 ):
     pubsub_manager = RedisPubSubManager(redis)
     async with AsyncSessionLocal() as db:
         try:
-            audit_meta = (
-                _extract_dynamic_meta_from_audit(audit_data) if audit_data else {}
-            )
+            audit_context = await _fetch_and_parse_audit_rules_from_db(db)
+            audit_meta = await _extract_dynamic_meta_from_audit_rules(db)
             if audit_meta.get("facility_type"):
                 facility_type = audit_meta["facility_type"]
 
@@ -159,6 +181,28 @@ async def run_debate_and_publish(
                         "상권활성화": 0.3,
                     },
                 }
+
+            # 0. DB에서 실시간 공간 쿼리로 POI 문맥 가져오기
+            if USE_MOCK_DB:
+                try:
+                    import os
+                    mock_poi_path = os.path.join("data_ai페르소나_임시", "parcel_context.json")
+                    with open(mock_poi_path, "r", encoding="utf-8") as f:
+                        mock_poi_data = json.load(f)
+                    poi_lines = mock_poi_data.get(str(parcel_id))
+                    if not poi_lines and mock_poi_data:
+                        poi_lines = next(iter(mock_poi_data.values()))
+                    poi_context = "\n".join([f"- {msg}" for msg in poi_lines]) if poi_lines else ""
+                except Exception as e:
+                    print(f"Mock POI Load Error: {e}")
+                    poi_context = ""
+            else:
+                poi_context = await gis_service.get_poi_context_from_db(db, parcel_id)
+                
+            if poi_context:
+                audit_context += f"\n\n## 📍 주변 인프라 요인 (DB 연산)\n{poi_context}"
+                print(f"[GIS] parcel_id={parcel_id}에 POI 문맥 주입 완료:\n{poi_context}")
+
 
             # 1. 시스템 시작 메시지 송출
             await pubsub_manager.publish_debate_message(
@@ -379,18 +423,21 @@ async def run_debate_and_publish(
                             }
 
                             # 최종 JSON을 DB에 저장 (ConflictSimulation)
-                            try:
-                                new_sim = ConflictSimulation(
-                                    parcel_id=parcel_id,
-                                    facility_type=facility_type,
-                                    result_json=result_json,
-                                )
-                                db.add(new_sim)
-                                await db.commit()
-                                print("=== 최종 도출된 JSON 결과 (DB 저장 성공) ===")
-                            except Exception as e:
-                                await db.rollback()
-                                print(f"=== DB 저장 실패: {e} ===")
+                            if USE_MOCK_DB:
+                                print("=== [MOCK 모드] DB 저장 우회 완료 ===")
+                            else:
+                                try:
+                                    new_sim = ConflictSimulation(
+                                        parcel_id=parcel_id,
+                                        facility_type=facility_type,
+                                        result_json=result_json,
+                                    )
+                                    db.add(new_sim)
+                                    await db.commit()
+                                    print("=== 최종 도출된 JSON 결과 (DB 저장 성공) ===")
+                                except Exception as e:
+                                    await db.rollback()
+                                    print(f"=== DB 저장 실패: {e} ===")
 
                             # Redis에도 최종 JSON 데이터 10분(600초) 임시 저장 (캐싱 및 GUI 검증용)
                             try:
@@ -498,21 +545,12 @@ async def stream_ai_discussion(
     parcel_id = request.parcel_id
     facility_type = request.facility_type
 
-    # 전달받은 JSON 데이터를 파싱하여 텍스트로 정제
-    audit_context = (
-        _parse_audit_data(request.audit_data)
-        if request.audit_data
-        else "감리 데이터가 제공되지 않았습니다."
-    )
-
     # 1. 백그라운드 태스크로 모의 심의 테스트 실행 (비동기로 루프를 돌며 Redis에 Publish)
     asyncio.create_task(
         run_debate_and_publish(
             parcel_id=parcel_id,
             facility_type=facility_type,
-            audit_context=audit_context,
             redis=redis,
-            audit_data=request.audit_data,
         )
     )
 

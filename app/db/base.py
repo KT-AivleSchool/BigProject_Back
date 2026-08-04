@@ -5,6 +5,7 @@ from app.db.session import Base
 from app.db.models.user import User
 from app.db.models.simulation import Parcel, ConflictSimulation
 from app.db.models.precedent import VerifiedPrecedent
+from app.db.models.audit import AuditRule
 from app.db.models.spatial import (
     District,
     DongBoundary,
@@ -30,6 +31,7 @@ __all__ = [
     "Parcel",
     "ConflictSimulation",
     "VerifiedPrecedent",
+    "AuditRule",
     "District",
     "DongBoundary",
     "RestrictedZone",

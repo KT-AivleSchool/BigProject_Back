@@ -162,6 +162,84 @@ class GisService:
 
         return screened_results
 
+    @staticmethod
+    async def get_poi_context_from_db(db: AsyncSession, parcel_id: int) -> str:
+        """
+        [DB Real-time] PostGIS를 이용해 필지(Parcel) 주변의 주요 시설물을 조회합니다.
+        """
+        from app.db.models.simulation import Parcel
+        from app.db.models.spatial import ChildcareCenter, TrashBin, TransitStation, RestrictedZone
+        from sqlalchemy import select, func
+
+        try:
+            result = await db.execute(select(Parcel).where(Parcel.id == parcel_id))
+            parcel = result.scalar()
+            if not parcel:
+                return "필지 정보를 찾을 수 없습니다."
+
+            # 타겟 포인트 지오메트리 생성 (경도, 위도) EPSG:4326 -> 3857 투영
+            target_geom_3857 = func.ST_Transform(
+                func.ST_SetSRID(func.ST_MakePoint(parcel.lng, parcel.lat), 4326), 3857
+            )
+
+            context_lines = []
+            search_radius_m = 300
+
+            # 1. 어린이집/학교 검색 (단점)
+            stmt_school = select(
+                ChildcareCenter.center_name,
+                func.ST_Distance(func.ST_Transform(ChildcareCenter.geom, 3857), target_geom_3857).label("dist")
+            ).where(
+                func.ST_DWithin(func.ST_Transform(ChildcareCenter.geom, 3857), target_geom_3857, search_radius_m)
+            ).order_by("dist").limit(3)
+            
+            for row in (await db.execute(stmt_school)).all():
+                context_lines.append(f"🔴 단점: 가장 가까운 {row.center_name}까지 약 {int(row.dist)}m 거리")
+
+            # 2. 쓰레기통 검색 (장점)
+            stmt_trash = select(
+                TrashBin.bin_name,
+                func.ST_Distance(func.ST_Transform(TrashBin.geom, 3857), target_geom_3857).label("dist")
+            ).where(
+                func.ST_DWithin(func.ST_Transform(TrashBin.geom, 3857), target_geom_3857, search_radius_m)
+            ).order_by("dist").limit(3)
+            
+            for row in (await db.execute(stmt_trash)).all():
+                name = row.bin_name or "쓰레기통"
+                context_lines.append(f"🟢 장점: 가장 가까운 {name}까지 약 {int(row.dist)}m 거리")
+            
+            # 3. 버스/지하철역 (장점)
+            stmt_transit = select(
+                TransitStation.station_name,
+                func.ST_Distance(func.ST_Transform(TransitStation.geom, 3857), target_geom_3857).label("dist")
+            ).where(
+                func.ST_DWithin(func.ST_Transform(TransitStation.geom, 3857), target_geom_3857, search_radius_m)
+            ).order_by("dist").limit(3)
+            
+            for row in (await db.execute(stmt_transit)).all():
+                context_lines.append(f"🟢 장점: 가장 가까운 대중교통역({row.station_name})까지 약 {int(row.dist)}m 거리")
+
+            # 4. 금연구역/제한구역 (단점)
+            stmt_restricted = select(
+                RestrictedZone.zone_name,
+                func.ST_Distance(func.ST_Transform(RestrictedZone.geom, 3857), target_geom_3857).label("dist")
+            ).where(
+                func.ST_DWithin(func.ST_Transform(RestrictedZone.geom, 3857), target_geom_3857, search_radius_m)
+            ).order_by("dist").limit(3)
+            
+            for row in (await db.execute(stmt_restricted)).all():
+                name = row.zone_name or "금연구역"
+                context_lines.append(f"🔴 단점: 가장 가까운 {name}까지 약 {int(row.dist)}m 거리")
+
+            if context_lines:
+                return "\n".join([f"- {msg}" for msg in context_lines])
+            return "반경 300m 이내에 특별한 POI 제약/가점 요인이 없습니다."
+
+        except Exception as e:
+            print(f"POI Context Load Error (DB): {e}")
+            await db.rollback()
+            return ""
+
 
 # 서비스 싱글톤 인스턴스 배포
 gis_service = GisService()

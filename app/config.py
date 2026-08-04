@@ -48,6 +48,36 @@ FACILITY_LLM_MODEL = os.environ.get("FACILITY_LLM_MODEL", "gpt-4o-mini")
 # 배제반경 서핑용 모델(web_search). 검색·추출이라 mini 로 충분(비용).
 SEARCH_LLM_MODEL = os.environ.get("SEARCH_LLM_MODEL", "gpt-4o-mini")
 
+# ══════════════════════════════════════════════════════════════════
+# 1c. AI 페르소나별 상세 설정 (토론용 LLM 모델, Temperature 등)
+# ══════════════════════════════════════════════════════════════════
+PERSONA_SETTINGS: dict = {
+    "pro": {
+        "model_name": os.environ.get("PERSONA_PRO_MODEL", "gpt-4o-mini"),
+        "temperature": 0.7,
+        "streaming": True,
+    },
+    "con": {
+        "model_name": os.environ.get("PERSONA_CON_MODEL", "gpt-4o-mini"),
+        "temperature": 0.7,
+        "streaming": True,
+    },
+    "gov": {
+        "model_name": os.environ.get("PERSONA_GOV_MODEL", "gpt-4o-mini"),
+        "temperature": 0.5,  # 중재자로서 약간 더 차분하게
+        "streaming": True,
+    },
+    "evaluator": {
+        "model_name": os.environ.get("PERSONA_EVAL_MODEL", "gpt-4o-mini"),
+        "temperature": 0.0,  # 평가자는 일관성을 위해 0.0
+        "streaming": False,
+    },
+    "reporter": {
+        "model_name": os.environ.get("PERSONA_REPORTER_MODEL", "gpt-4o-mini"),
+        "temperature": 0.2,
+        "streaming": True,
+    }
+}
 
 # ══════════════════════════════════════════════════════════════════
 # 2. 외부 API 엔드포인트
@@ -230,5 +260,5 @@ class Settings(BaseSettings):
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
 
-
 settings = Settings()
+
