@@ -257,10 +257,17 @@ D:\obsidian_claude\10_OmniSite\
        check_fixture.py 46 → **57항목**(2026-08-04). 남은 것: `--fixture` 경로 주입
 ✅ A1  파이프라인 실행 API  app/api/v1/pipeline.py    2026-08-04 완료
        픽스처 재실행(STEP2~4)만. 계약은 `pipeline_run_contract.md` 단독 기준
-       산출물 화이트리스트 7키(reviewed 포함) · 응답 media_type 명시
+       산출물 화이트리스트 8키(reviewed·exclusion 포함) · 응답 media_type 명시
+       화이트리스트에 키를 추가하면 **옛 run 의 status.json 에는 그 키가 없다**
+       (생성 시점 ARTIFACTS 로 굳는다) → `read_status` 가 빠진 키만 디스크 보고
+       채운다. 있는 값은 안 건드리고 파일에도 안 쓴다
 ✅ 라우터 표면 확정  /api 경로 7개(auth 2·audit 2·pipeline 3)  2026-08-04
        services/dummy(4248ff3) · api/v1/{ahp,lands}.py(7f66fd9) 삭제.
-       gis/ahp/pdf_service 는 **미구현이 아니라 폐기** — 만들면 안 된다.
+       gis_service·ahp_service 는 **미구현이 아니라 폐기** — 만들면 안 된다.
+       🔴 pdf_service·simulations 를 여기 같이 넣었던 건 **틀렸다**(정정 2026-08-04).
+          simulations = 공청회 시뮬레이션(512행+graph.py 335행) · pdf_service =
+          화면6 PDF 빌더(42행). 둘 다 폐기가 아니라 **배선 대기**이고 담당이 넘어갔다.
+          `dummy/` 라는 위치·이름만 보고 분류했다 — 파일을 열지 않은 단정(원칙 5)
        여기 없는 경로는 404 다. try/except 로 감싸서 건너뛰지 않았다(원칙 1)
 S10  조례 단서 조항 "금연구역 ≠ 설치 불가"           설계 확정
 S11  조례 없을 때 상위법 직접 검색 + x좌표→4326
