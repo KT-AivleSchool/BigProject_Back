@@ -37,6 +37,11 @@ MVP: 용산구 흡연부스 / 2차: 성동구 재활용정거장.
 | **LLM 변동** | 같은 입력에 `seed_weight` 0.7↔0.8, HITL 대기 4건↔3건 | 회귀엔 고정 픽스처 필요 (S12) |
 | **POINT EMPTY** | `isna()` 로 안 잡힘 | `~is_empty & notna()` |
 | **CSV 저장** | 앞자리 0 유실(`"00001"`→`1`) → 조인 파괴 | parquet (pyarrow 필수) |
+| **모듈 사본** | `app/services/dummy/gam4_spatial_ops.py` 가 정본(378행)의 낡은 368행 사본이었다(2026-08-04 dummy/ 삭제로 해소). **import 는 멀쩡히 되고 값만 다르게 나온다** — 안 터지니 안 걸린다 | 같은 파일명을 두 곳에 두지 않는다. 옮길 땐 사본이 아니라 **이동**. 값이 안 맞으면 `sys.modules[...].__file__` 부터 찍는다 |
+| **import 시점 외부접속** | `upload.py:10`·`sim_ai/graph.py:57` 이 모듈 최상단에서 `RagVectorStorage()` 생성 → `vector_db.py:32` 의 `PGVector` 가 **import 중에** Postgres 접속. DB 없으면 `import app.api.v1.upload` 가 **525.7초**(실측, rc=0). 등록하면 uvicorn 기동이 9분 | 모듈 최상단에서 DB·API·파일 접속을 하지 않는다. 요청 시점에 만든다 |
+| **타임아웃을 "무한"으로 읽음** | 위 건을 240초 타임아웃으로 재고 "끝나지 않는다"고 단정했다. 실제로는 525.7초에 **성공**했다. 게다가 `simulations` 의 진짜 사유는 DB 가 아니라 15행 `pdf_service` 부재였는데, 12행 DB 대기에 가려 240초 안에 안 드러났다 | 타임아웃은 "여기까진 안 끝났다"만 증명한다. **"끝나지 않는다"는 다른 주장이다**(원칙 5). 끝까지 돌려보고 말할 것. import 실패는 **첫 에러가 진짜 원인이 아닐 수 있다** — 앞 줄이 느리면 뒷줄 에러가 안 보인다 |
+| **응답 Content-Type** | `.gpkg` 25MB 바이너리가 `text/plain; charset=utf-8` 로 나갔다. `FileResponse` 에 `media_type` 미지정 → `mimetypes` 가 모르면 텍스트로 떨어진다. `res.text()` 쓰면 조용히 깨짐 | 파일 응답에 `media_type` 을 **명시**한다. 모르면 `text/plain` 이 아니라 `application/octet-stream` — 틀린 단정보다 참인 진술이 낫다 |
+| **전이 의존 버전 이동** | `pip install langchain-openai` 가 `openai` 를 2.44→2.53 으로 말없이 올렸다. `sse-starlette` 은 `starlette` 0.37→1.3 을 시도(막힘). **감시 목록 밖이라 안 보인다** | `pip install -c constraints.txt` + `--dry-run` 선행. 사후엔 `pip freeze` **전체 diff** — 5개만 보면 놓친다 |
 
 ---
 
@@ -74,11 +79,14 @@ HITL 위치: STEP1(배제반경·데이터의도·지역코드) · STEP3 `[R]`(�
 ## 실행
 
 ```bat
-:: 진단 (LLM 호출 0회)
-python check_loader_health.py <도메인>        :: 좌표계·행정동 조인키
-python check_ordinance_select.py <도메인>     :: 조례 조문 선별
-python check_exclusion_state.py <도메인>      :: 배제 레이어 면적
-python check_fixture.py <도메인>              :: 회귀 픽스처 대조 (S12) [--restore]
+:: 진단 (LLM 호출 0회) — 전부 검증용\ 아래다. 루트에는 없다.
+python 검증용\check_loader_health.py <도메인>     :: 좌표계·행정동 조인키
+python 검증용\check_ordinance_select.py <도메인>  :: 조례 조문 선별
+python 검증용\check_exclusion_state.py <도메인>   :: 배제 레이어 면적
+python 검증용\check_fixture.py <도메인>           :: 회귀 픽스처 대조 (S12) [--restore]
+python 검증용\check_postgis_parity.py <도메인>    :: S5 — geopandas ↔ PostGIS 술어 **값** 대조
+python 검증용\bench_postgis.py <도메인>          :: S5 — 같은 술어 **속도** 대조
+                                                 :: (둘 다 도커 필요. PGIS_DSN 으로 접속지 지정)
 
 :: 파이프라인
 python app\services\gam2_run_pipeline.py <도메인> "<지역> <시설> 부지 선정"
@@ -94,13 +102,20 @@ python app\services\gam4_site_select.py <도메인>
 
 ### 흡연 회귀 기준 (고정 조건에서만 유효)
 
-**기준은 픽스처다** — `data_임시/흡연_FIX/` (2026-08-03 재고정, S12).
+**기준은 픽스처다** — `data_임시/흡연_FIX/` (2026-08-04 재고정, S5(A) 계측 추가).
 **여기 적힌 숫자는 사본이다. 다르면 픽스처가 맞다.**
 
 ```bat
-python check_fixture.py 흡연            :: 46항목 대조 (읽기 전용). --restore 로 reviewed.json 복원
-python make_fixture.py  흡연 --write    :: 기준선 이동. 수기값(--union·--spacing·--cli) 필수
+python 검증용\check_fixture.py 흡연      :: 57항목 대조 (읽기 전용). --restore 로 reviewed.json 복원
+python 검증용\make_fixture.py  흡연 --write  :: 기준선 이동. 수기값(--spacing·--cli) 필수
 ```
+
+배제 union·커버 쌍·내접폭 분포는 이제 `report.json`(`spatial`·`coverage`)에서 **자동으로 읽는다**.
+예전엔 `--union` 으로 손으로 옮겨 적었다 — 옮겨 적는 값은 언젠가 틀리고, 틀려도 아무도 모른다.
+
+🔴 **콘솔이 cp949 면 `PYTHONIOENCODING=utf-8` 없이 죽는다.** 진단 스크립트가 `✅`·`🔴` 를
+출력하는 순간 `UnicodeEncodeError` 로 터진다 — 값이 틀린 게 아니라 **출력에서** 터지는 것이라
+회귀로 오인하기 쉽다. 파이썬을 subprocess 로 부르는 쪽(API 러너 포함)도 이 env 를 넘길 것.
 
 대조기와 갱신기를 **분리**했다. 확인용 도구가 자기 기준을 갈아치울 수 있으면
 오타 한 번에 회귀가 기준으로 승격되고 그 뒤로는 잡을 방법이 없다.
@@ -114,6 +129,8 @@ w_final  0.1858 / 0.1827 / 0.1975 / 0.0870 / 0.1683 / 0.1786
 후보 42,216필지 → 후보점 66,915 → 생존 56,967
 배제 union  1.1107 km²   (S9 적용. `--no-shape-lift` 면 0.4157)
 gap 6건 — 배제판정_확인요청 4 · 주변이격_미적용 1 · 수요_도달불가 1
+커버 쌍 5,971,966 · 수요점 6,797                              ← S5 대조용(2026-08-04 추가)
+내접폭  중앙 10.7784m · p95 251.7108 · 합 3,445,355.8962 · 폭2m통과 59,989
 ```
 
 `check_fixture.py` 는 **감리 입력 sha256 이 다르면 값 비교를 하지 않고 멈춘다.**
@@ -142,7 +159,7 @@ LLM 이 달라진 것과 코드가 회귀한 것을 섞어서 보여주면 진�
 3. **실행 조건** — `--spacing 20`. 후보점이 절반 이하가 된 주된 원인이며 회귀가 아니다.
    구 픽스처는 spacing 을 기록조차 안 했다(그래서 안 걸렸다). 지금은 `조건.spacing` 에 남는다.
 
-**레이어별 실측** — `check_exclusion_state.py 흡연` (LLM 호출 0회, 픽스처와 자동 대조)
+**레이어별 실측** — `검증용\check_exclusion_state.py 흡연` (LLM 호출 0회, 픽스처와 자동 대조)
 
 | ID | 시설 | 감리 | S9판정 | 반경 | 건수 | 기존 | S9 |
 |---|---|---|---|---|---|---|---|
@@ -174,6 +191,11 @@ S9 증가분의 출처: `01 금연구역` 0.0245→0.6325(학·공 55점이 면 
 
 ## 작업 방식
 
+- 🔴 **감리·데이터 쪽은 `app/services/` 의 `gam2_*`·`gam4_*` 를 최우선으로 쓴다.**
+  그게 실제로 돌아가고 이어져 있는 코드다. 없거나 모자랄 때만 다른 걸 본다.
+  나머지(`api/v1` 일부·`sim_ai`·`services` 하위 기타)는 **작성자가 다르고 안 이어진 게 많다** —
+  파일이 있다고 살아 있는 코드로 취급하지 말 것. 실제로 `dummy/`·`lands.py`·`ahp.py`가
+  그 경우였고(2026-08-04 삭제), 값은 안 맞는데 import 는 되니 안 걸렸다.
 - 코드 변경 전 **읽고 확인**한다. 파일 내용을 가정하지 않는다.
 - 변경 후 **무회귀 확인** — 정상 경로 결과가 안 바뀌어야 한다.
 - 구조 설계 갈림길에서는 **진행 전에 물어본다.**
@@ -187,10 +209,13 @@ S9 증가분의 출처: `01 금연구역` 0.0245→0.6325(학·공 55점이 면 
 ```
 D:\obsidian_claude\10_OmniSite\
   남은 작업들\00_남은작업.md          ← S1~S12 전체. 여기부터
-  02_작업일지\2026-08-03b.md          ← 최근 작업 (S4·S6·S12 완료)
+  02_작업일지\2026-08-04.md           ← 최근 작업 (파이프라인 실행 API)
+  02_작업일지\2026-08-04b.md          ← S5 선행 검증 (계측 + PostGIS 정합성 실측)
+  02_작업일지\2026-08-03b.md          ← S4·S6·S12 완료
   02_작업일지\2026-08-03.md           ← S9 완료
   02_작업일지\2026-08-02.md
   02_작업일지\2026-07-31.md
+  01_설계결정\벡엔드_설계.md          ← 계층·저장경계·격리층·실행API·회귀방어·규약·DB연동
   01_설계결정\STEP1_감리AI_설계.md
   01_설계결정\STEP3_가중치_설계.md
   01_설계결정\STEP4_위치선정_설계.md
@@ -204,10 +229,17 @@ D:\obsidian_claude\10_OmniSite\
 
 ---
 
-## 현재 우선순위 (2026-08-03)
+## 현재 우선순위 (2026-08-04)
 
 ```
-⬜ 조문 선별 검증        check_ordinance_select.py 재활용 — 누락 조문 확인
+⬜ 이슈 #189 교차참조    #189 기준선(57,023 · 0.755)은 S9 이전 값이라 낡았다. 단
+                        **#203 에서 이미 현행값(56,967 · 1.1107)과 "check_fixture.py
+                        로 대조하라"를 공유했다** — 대체 완료. #189 엔 참조 한 줄이면 된다.
+                        (#203 공유 산출물 ≡ 현행 픽스처. sha 일치, 값 불일치 0건)
+🔴 이슈 #205 되묻기      admin_crosswalk `region_code` 가 통계청/행자부 중 뭔지 ·
+                        adm_dong 3,559 ↔ crosswalk 3,555 = 4건 차이 ·
+                        경계는 통계청 코드인데 우리는 행자부 → 크로스워크 경유 강제
+⬜ 조문 선별 검증        검증용\check_ordinance_select.py 재활용 — 누락 조문 확인
 ⬜ 인용 법령 한정        규제 조문에서만 추출 (한 줄, 크레딧 절약)
 ⬜ 성동구 완주           OpenAI 크레딧 충전 후
 
@@ -218,10 +250,26 @@ D:\obsidian_claude\10_OmniSite\
 ✅ S6  지오코딩 디스크캐시 + 토큰버킷 + ThreadPool     2026-08-03 완료
        STEP2 흡연 267s → cold 74.6s / warm 24.8s. 전 컬럼 행 단위 diff 0건
 ✅ S12 회귀 픽스처 고정  data_임시/흡연_FIX/          2026-08-03 완료
-       check_fixture.py 46항목. 남은 것: `--fixture` 경로 주입(현재는 --restore 로 복원)
+       check_fixture.py 46 → **57항목**(2026-08-04). 남은 것: `--fixture` 경로 주입
+✅ A1  파이프라인 실행 API  app/api/v1/pipeline.py    2026-08-04 완료
+       픽스처 재실행(STEP2~4)만. 계약은 `pipeline_run_contract.md` 단독 기준
 S10  조례 단서 조항 "금연구역 ≠ 설치 불가"           설계 확정
 S11  조례 없을 때 상위법 직접 검색 + x좌표→4326
-S5   PostGIS·Redis 전환 — S9 끝났으므로 착수 가능. 기준선은 위 1.1358 km²
+🔴 S5  공간 연산 PostGIS 전환 — **실측하고 중단했다 (2026-08-04)**
+     `검증용\bench_postgis.py 흡연` — 정합성은 맞았지만 **6~10배 느리다.**
+       neighbors_within  geopandas 1.24s ↔ PostGIS 12.9s (**0.10x**, 쌍 7.0M)
+       inscribed_width   8.41s ↔ 9.6s (0.87x) · buffer_union 은 비김
+     반증 2건 다 실패 — work_mem 4MB→1GB 무변화 · SQL 안에서 집계해 전송 0 으로
+     만들어도 0.16x. 병목은 설정도 전송도 아니고 **행 단위 실행기 오버헤드**다.
+     shapely 는 STRtree+벡터화 numpy 로 700만 쌍을 연속 메모리에서 한 번에 돈다.
+     ✅ 정합성은 확인됨: ST_DWithin ≡ neighbors_within, 커버 쌍 7,014,079 완전 일치
+        (GEOS 3.13 ↔ 3.9, 4버전 차이에도 짝까지 같다)
+     ⚠ ST_MaximumInscribedCircle 만 **tolerance 정책 차이**로 갈린다(GEOS 탓 아님).
+        경계 8필지 폭 2.0005~2.0115m — 옮길 일이 생기면 tolerance 를 맞출 것
+     🔵 PostGIS 가 이기는 건 속도가 아니라 **메모리 한계**(out-of-core)다.
+        전환 방아쇠는 "확장성"이 아니라 **실제로 RAM 이 터지는 시점**이어야 한다.
+        `gam4_spatial_ops.py` 격리층은 그대로 둔다 — 갈아끼울 지점은 여전히 한 곳이다
+     S5 의 Redis·크로스워크 항목은 별개다. 위 결론이 그쪽까지 부정하지 않는다
 ```
 
 S9 결과 실측: 배제 union 0.5478 → **1.1358 km²** (×2.07, 예상했던 3 km² 보다 작다 —
