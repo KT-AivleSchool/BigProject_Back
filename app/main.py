@@ -37,12 +37,12 @@ from app.api.v1 import auth, audit, pipeline
 #    ※ 화면6(PDF)은 별건이다. `pdf_service.py`(9be3851) ·
 #      `report_template.html`(2bd69ef 에서 삭제) 복구 + weasyprint(GTK3) 가 필요하다.
 #      재작성이 아니라 **복구 + 환경**이며, 그 사정은 그 함수 주석에 적어뒀다.
-# from app.api.v1 import simulations
+from app.api.v1 import simulations
 #
 # 🔴 upload 도 폐기가 아니다 — **앞으로 쓸 것**이다. 이슈 #203 대로
 #    gam2_doc_extract.py(문서→텍스트) + gam2_ordinance_select.py(조문 분할·규제 선별)를
 #    붙이는 업로드 경로가 여기로 들어온다.
-# from app.api.v1 import upload
+from app.api.v1 import upload
 #
 # ── ⏱ 둘의 공통 차단 요인 — import 가 **525.7초** 걸린다 (2026-08-04 실측) ────
 #    `upload.py:10` 과 `core/sim_ai/graph.py:57` 이 **모듈 최상단에서**
@@ -119,24 +119,24 @@ app.include_router(
 #    (/lands · /ahp 는 성격이 다르다 — 그건 폐기라서 라우터 파일째 삭제했다)
 #    /simulation 과 /simulations 두 prefix 로 **같은 라우터를 두 번** 등록하고 있었다 —
 #    되살릴 때 한쪽만 살리면 프런트 경로가 조용히 404 가 된다. 둘 다 같이 처리할 것.
-# app.include_router(
-#     simulations.router,
-#     prefix=settings.API_V1_STR + "/simulation",
-#     tags=["AI Simulation"],
-# )
-# app.include_router(
-#     simulations.router,
-#     prefix=settings.API_V1_STR + "/simulations",
-#     tags=["AI Simulation"],
-# )
+app.include_router(
+    simulations.router,
+    prefix=settings.API_V1_STR + "/simulation",
+    tags=["AI Simulation"],
+)
+app.include_router(
+    simulations.router,
+    prefix=settings.API_V1_STR + "/simulations",
+    tags=["AI Simulation"],
+)
 app.include_router(
     audit.router, prefix=settings.API_V1_STR + "/audit", tags=["Audit AI"]
 )
-# app.include_router(
-#     upload.router,
-#     prefix=settings.API_V1_STR + "/upload",
-#     tags=["Regulation & File Upload"],
-# )
+app.include_router(
+    upload.router,
+    prefix=settings.API_V1_STR + "/upload",
+    tags=["Regulation & File Upload"],
+)
 app.include_router(
     pipeline.router,
     prefix=settings.API_V1_STR + "/pipeline",

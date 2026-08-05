@@ -9,7 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.schemas.simulations import SimulationResultResponse, StreamRequest
-from app.core.sim_ai.graph import build_discussion_graph, vector_db
+from app.core.sim_ai.graph import build_discussion_graph
+from app.core.sim_ai.vector_db import get_vector_db
 from app.api.deps import get_db, get_redis
 from app.db.models.simulation import Parcel, ConflictSimulation
 
@@ -19,7 +20,6 @@ from app.db.models.simulation import Parcel, ConflictSimulation
 #    실사용은 `download_feasibility_report_pdf` **한 곳뿐**이라 그 함수 안으로 옮겼다.
 #    화면6 을 붙이는 사람이 볼 것: 이 파일이 아니라 그 함수의 주석이다.
 from app.db.models.audit import AuditRule
-from app.services.pdf_service import pdf_builder
 from app.services.gis_service import gis_service
 from app.db.session import AsyncSessionLocal
 from app.utils.redis_pubsub import RedisPubSubManager
@@ -266,6 +266,7 @@ async def run_debate_and_publish(
             # 시설 이름과 맞춤 키워드를 결합하여 최종 쿼리 생성
             query = f"{facility_type} {specific_keywords}"
             try:
+                vector_db = get_vector_db()
                 retrieved_docs = await vector_db.retrieve_similar_statutes(
                     query, top_k=5, facility_type=facility_type
                 )
@@ -778,11 +779,11 @@ async def download_feasibility_report_pdf(
     try:
         from app.services.pdf_service import pdf_builder
 
-        pdf_file = pdf_builder.generate_feasibility_pdf(report_data)
+        pdf_file = await pdf_builder.generate_feasibility_pdf(report_data)
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"PDF 생성 중 오류가 발생했습니다. 서버 환경(WeasyPrint/폰트 설치)을 확인해 주세요. 오류: {str(e)}",
+            detail=f"PDF 생성 중 오류가 발생했습니다. 서버 환경(Playwright 설치)을 확인해 주세요. 오류: {str(e)}",
         )
 
     filename = f"OmniSite_Feasibility_Report_{parcel_id}.pdf"

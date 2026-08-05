@@ -82,6 +82,9 @@ class RagVectorStorage:
                 f"metadatas 길이({len(metadatas)})와 chunks 길이({len(chunks)})가 일치하지 않습니다."
             )
 
+        if not self.statutes_store:
+            raise RuntimeError("RAG Vector DB (PGVector) is not initialized. Database connection is required.")
+
         try:
             if metadatas is None:
                 metadatas = [{"source": "uploaded_statute"} for _ in chunks]
@@ -91,6 +94,7 @@ class RagVectorStorage:
             )
         except Exception as e:
             logger.error(f"[RAG Error] Statute Data Insert Error: {e}")
+            raise e
 
     async def retrieve_similar_statutes(
         self, query: str, top_k: int = 3, facility_type: str = None
@@ -100,7 +104,7 @@ class RagVectorStorage:
         '기본 조례 콜렉션(statutes_collection)'에서 비동기로 검색합니다.
         """
         if not self.statutes_store:
-            return []
+            raise RuntimeError("RAG Vector DB (PGVector) is not initialized. Database connection is required.")
 
         try:
             # LangChain의 비동기 유사도 검색 (asimilarity_search_with_relevance_scores) 사용
@@ -164,4 +168,13 @@ class RagVectorStorage:
 
         except Exception as e:
             logger.error(f"[RAG Error] 유사도 검색 및 Re-ranking 실패: {e}")
-            return []
+            raise e
+
+_vector_db_instance = None
+
+def get_vector_db() -> RagVectorStorage:
+    """RagVectorStorage 싱글톤 인스턴스를 지연 생성(Lazy Load)하여 반환합니다."""
+    global _vector_db_instance
+    if _vector_db_instance is None:
+        _vector_db_instance = RagVectorStorage()
+    return _vector_db_instance

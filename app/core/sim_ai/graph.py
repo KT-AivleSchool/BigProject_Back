@@ -14,7 +14,6 @@ from app.core.sim_ai.prompts import (
     EVALUATOR_PROMPT,
     REPORTER_PROMPT,
 )
-from app.core.sim_ai.vector_db import RagVectorStorage
 from app.config import settings, PERSONA_SETTINGS
 from app.db.session import AsyncSessionLocal
 from app.db.models.rag_feedback import RagFeedbackLog
@@ -62,7 +61,6 @@ def get_persona_llm(role: str) -> ChatOpenAI:
     )
 
 
-vector_db = RagVectorStorage()
 
 
 def _format_chat_history(messages: Sequence[str]) -> str:
