@@ -30,11 +30,21 @@ docker exec -i omnisite-db psql -U admin -d omnisite < schema.sql
 *   *주의*: pgvector 확장 제어 선언은 `CREATE EXTENSION vector;` 문법을 사용해야 합니다.
 
 ### ➌ FastAPI 백엔드 개발 서버 실행
-핫 리로드(`--reload`) 옵션을 주어 소스코드 변경 사항이 uvicorn 좀비 프로세스 교착 현상 없이 즉각 반영되도록 실행합니다.
 ```bash
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 *   **Swagger API 문서**: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+
+> 🔴 **`--reload` 를 붙이지 마십시오 (2026-08-05 정정).**
+> 파이프라인 실행 API(`/api/v1/pipeline/*`)가 생기면서 **서버가 자식 프로세스를 들고
+> 있게 됐습니다.** 서버가 죽으면 그 자식을 추적할 수 없으므로,
+> `pipeline_runner.py` 의 `_reap_orphans` 는 기동 시 **이전 서버가 남긴 run 을 전부
+> `failed` 로 닫습니다.** `--reload` 는 파일이 바뀔 때마다 프로세스를 갈아치우므로,
+> 코드를 한 줄 저장하는 순간 **본인과 남이 돌리던 run 이 같이 죽습니다.**
+>
+> 대신 **코드를 고쳐도 재시작 전에는 반영되지 않습니다.** 재시작할 때는 같은 서버를
+> 보는 사람에게 말하고 하십시오. (이 문장은 파이프라인 API 신설 전에 쓰인 것이라
+> 그때는 틀린 말이 아니었습니다 — 낡은 것이지 잘못이 아닙니다.)
 
 ---
 
