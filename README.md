@@ -34,11 +34,31 @@ Docker를 활용해 지리 정보 공간 데이터베이스(PostGIS) 및 RAG 벡
 # Docker Compose 백그라운드 실행
 docker compose up -d --build
 
-# 16대 물리 테이블 DDL 주입 상태 확인
-docker exec -i omnisite-db psql -U admin -d omnisite < schema.sql
+# 17개 물리 테이블 DDL 주입
+docker exec -i omnisite-postgres-db psql -U postgres -d omnisite < schema.sql
 ```
-*   **로컬 DB 접속 정보**: 포트 `5432` / 사용자 `admin` / 비밀번호 `admin1234` / DB명 `omnisite`
+*   **로컬 DB 접속 정보**: 포트 `5432` / 사용자 `postgres` / 비밀번호 `postgres` / DB명 `omnisite`
+    *   컨테이너명은 `omnisite-postgres-db` 입니다(Redis 는 `omnisite-redis-cache`).
+    *   `app/config.py` 의 `DATABASE_URL` 기본값이 이 값과 같으므로, 로컬에서는 `.env` 없이도 붙습니다.
 *   *주의*: pgvector 확장 제어 선언은 `CREATE EXTENSION vector;` 문법을 사용해야 합니다.
+
+> 🔴 **위 접속 정보는 2026-08-05 에 정정된 것입니다.**
+> 그전까지 이 자리에는 컨테이너 `omnisite-db` / 사용자 `admin` / 비밀번호 `admin1234` /
+> "16대 테이블" 이라고 적혀 있었습니다. **네 값 모두 실제와 달랐습니다** —
+> `docker-compose.yml` 은 `omnisite-postgres-db` · `postgres`/`postgres` 이고
+> `Dockerfile.db` 어디에도 `admin` 계정을 만드는 구문이 없으며, `schema.sql` 의
+> `CREATE TABLE` 은 **17개**입니다. 그대로 치면 컨테이너명과 사용자 두 군데에서 실패합니다.
+>
+> 코드가 아니라 **문서만 어긋나 있었습니다.** 이런 종류는 실행해 보기 전엔 안 걸리고,
+> 처음 받은 사람이 첫 명령에서 막힙니다.
+
+> ⚠️ **`schema.sql` 과 ORM(`app/db/models/`)이 지금 서로 다릅니다.**
+> 공통 14개 테이블 중 11개는 컬럼까지 일치하지만 `conflict_simulations`·
+> `verified_precedents` 는 컬럼 구성이 갈리고, ORM 이 참조하는 `parcels` 테이블은
+> `schema.sql` 에 아예 없습니다. **하필 `/api/v1/audit/*` 이 쓰는 테이블들입니다.**
+> 어느 쪽을 정본으로 삼을지 정해지기 전까지 `/audit/*` 은 이 DB 에서 동작을 보장할 수
+> 없습니다. 대조 근거와 스크립트는 문서
+> `01_설계결정\백엔드팀_API현황_및_Redis_Postgres_전환.md` §5-2 · §10-1 에 있습니다.
 
 ### ➌ FastAPI 백엔드 개발 서버 실행
 ```bash
