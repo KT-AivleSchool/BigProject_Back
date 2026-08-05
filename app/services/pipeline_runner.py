@@ -297,12 +297,16 @@ def _svc(name: str) -> str:
     return str(SERVICES_DIR / name)
 
 
-def _weight_args(base: dict, radius: str, weight: str | None) -> list[str]:
+def _weight_args(base: dict, radius: str, weight: str | None,
+                 value_source: str) -> list[str]:
     """STEP3-2 공통 인자. 반경·가중치 **값만** 모드에 따라 갈린다.
 
     fixture 는 픽스처의 `radius_m` 을, hitl 은 사람이 게이트B 에서 준 값을 넣는다.
     나머지(alpha·decay·scale·candidates)는 두 모드가 같은 곳에서 읽는다 —
     갈라두면 "hitl 로 돌린 값이 픽스처와 왜 다른지"를 설명할 수 없게 된다.
+
+    `value_source` 는 그 값을 **누가 정했는지**다. 자식 프로세스는 알 수 없다 —
+    `--radius 07+02=150` 만 봐서는 픽스처 재생인지 사람 답인지 구분이 안 된다.
     """
     cond = base["조건"]
     argv = [
@@ -314,7 +318,9 @@ def _weight_args(base: dict, radius: str, weight: str | None) -> list[str]:
         "--radius", radius,
         # --auto-weight 는 [W] 대화형 루프를 건너뛴다. 사람 답은 --weight 로 이미
         # 들어와 있다 — 게이트에서 받았지 자동으로 정한 게 아니다.
+        # 그 사정을 산출물에 담는 건 --value-source 쪽이다.
         "--auto-weight",
+        "--value-source", value_source,
     ]
     if weight:
         argv += ["--weight", weight]
@@ -352,8 +358,12 @@ def _proc_of(stage: str, domain: str, base: dict,
         # 주면 그 순간 도메인 값이 러너에 박힌다.
         return _Proc(("3-1",), [py, _svc("make_parcel_candidates.py"), domain])
     if stage == "3-2":
+        # 출처는 **모드 이름이 아니라 값을 어디서 가져왔는지**로 정한다.
+        # `radius` 가 있다 = `_stage_args` 가 게이트B 답을 넘겼다(= hitl 모드).
+        # 없으면 픽스처에서 조립한다 — 사람 개입 0회다.
         return _Proc(("3-2",), [py, _svc("run_weight_model.py"), domain]
-                     + _weight_args(base, radius or _radius_arg(base), weight))
+                     + _weight_args(base, radius or _radius_arg(base), weight,
+                                    "human" if radius else "fixture"))
     if stage == "4":
         # STEP4 위치 선정. 한 프로세스가 4-1·4-2·4-3 을 전부 담당한다.
         return _Proc(("4-1", "4-2", "4-3"),

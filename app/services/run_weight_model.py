@@ -172,6 +172,49 @@ def _print_weight_table(inds, slider, conflicts=None) -> None:
         print(f"     병합값은 {c['val_dataset']} 쪽({vd})을 기본으로 뒀습니다. "
               f"부호로 확정하세요.")
 
+
+# ── 값의 출처 라벨 ────────────────────────────────────────────────────
+#   STEP1 감리가 이미 쓰는 어휘(`human_confirmed`, gam2_audit_judgment_test.py:697)에
+#   맞춘다. 같은 뜻을 단계마다 다른 이름으로 남기면 대조할 때 걸린다.
+SRC_RADIUS = {"human": "human_confirmed", "fixture": "fixture", "cli": "cli_fixed"}
+SRC_WEIGHT = {"human": "human_confirmed", "fixture": "fixture", "cli": "cli"}
+#   사람이 정한 값으로 볼 출처.
+#     human_confirmed = HITL 게이트에서 사람이 확정 · hitl = 대화형 루프에서 숫자 수정
+#     cli_fixed·cli   = 사람이 명령줄에 직접 지정
+#   `fixture`(픽스처 재생)·`llm`(모델 제안)·`none`(반경 없는 admin 지표)은 사람이 아니다.
+HUMAN_SRC = {"human_confirmed", "hitl", "cli_fixed", "cli"}
+
+
+def build_hitl_record(radius_conf: dict, weight_sources: dict, value_source: str,
+                      radius_asked: bool, weight_asked: bool) -> dict:
+    """`weight_set.json` 의 `hitl` 블록. **실행 방식이 아니라 값의 출처로 판정한다.**
+
+    🔴 예전엔 `not args.auto_radius` / `not args.auto_weight` 였다. `--auto-*` 는
+       "대화형 `input()` 루프를 건너뛴다"(실행 방식)는 뜻이지 "사람이 확정하지
+       않았다"(사실 기록)는 뜻이 아니다. CLI 직접 실행에서만 두 뜻이 겹친다.
+
+       API 게이트 방식에서는 앞만 참이다 — 사람은 게이트B 에서 답했고 그 답이
+       `--weight` 로 들어온다. 그래서 mode 가 fixture 든 hitl 이든 네 run 이 전부
+       `{radius: True, weight: False}` 로 똑같이 찍혔다. 사람이 개입한 run 과
+       안 한 run 이 산출물에서 구분되지 않았다(2026-08-05 프런트 제보,
+       `runs/r_20260805_010~014` 실측). 절대원칙 4 위반이다.
+
+    `*_asked` 는 사람이 프롬프트를 본 경우다. **엔터로 제안값을 승인한 것도 확정**인데
+    그때는 출처가 `llm` 그대로 남아서, 출처만 봐서는 안 잡힌다.
+    """
+    r_src = {v.get("source") for k, v in radius_conf.items()
+             if not k.startswith("_") and isinstance(v, dict)}
+    w_src = set(weight_sources.values())
+    return {
+        "radius_confirmed": bool(radius_asked or (r_src & HUMAN_SRC)),
+        "weight_confirmed": bool(weight_asked or (w_src & HUMAN_SRC)),
+        # 판정 근거를 같이 남긴다 — 불리언만 있으면 왜 그 값인지 되짚을 수 없다.
+        "value_source": value_source,
+        "radius_sources": sorted(s for s in r_src if s),
+        "weight_sources": sorted(w_src),
+    }
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("domain")
@@ -214,7 +257,20 @@ def main():
     ap.add_argument("--candidate-unit", default=None,
                     help="후보 1건이 무엇인지(설명책임용). 예: \"지적도 필지\". "
                          "미지정 시 후보 파일에서 사실만 자동 기술한다")
+    # --- 값의 출처 (산출물 설명책임) ---
+    #   🔴 `--radius`/`--weight` 로 들어온 값을 **누가 정했는지는 이 프로세스가 알 수 없다.**
+    #   같은 `--radius 07+02=150` 이 (a) API 게이트B 에서 사람이 답한 값일 수도,
+    #   (b) 회귀 픽스처를 재생한 값일 수도, (c) 사람이 명령줄에 직접 친 값일 수도 있다.
+    #   추측하면 산출물이 거짓말한다(원칙 4·5) — 그래서 호출자가 알려준다.
+    ap.add_argument("--value-source", choices=["human", "fixture", "cli"], default="cli",
+                    help="--radius/--weight 값의 출처. "
+                         "human=사람이 HITL 게이트에서 확정 · fixture=픽스처 재생(사람 개입 0) · "
+                         "cli=명령줄에서 직접 지정(기본)")
     args = ap.parse_args()
+
+    # 사람이 실제로 프롬프트를 보고 승인했는가(엔터=승인도 확정이다).
+    # 값의 출처만으로는 "제안값을 그대로 승인" 을 잡을 수 없어 따로 센다.
+    radius_asked = weight_asked = False
 
     radius_fix = _parse_radius_arg(args.radius)
     weight_fix = _parse_weight_arg(args.weight)
@@ -276,11 +332,12 @@ def main():
         if unknown:
             raise ValueError(f"--radius 에 없는 지표ID: {sorted(unknown)}\n"
                              f"  사용 가능: {[i['id'] for i in inds]}")
-        print("\n  [고정] --radius 로 지정된 반경 (HITL 생략)")
+        print(f"\n  [고정] --radius 로 지정된 반경 (HITL 생략) · 출처={args.value_source}")
         for k, v in radius_fix.items():
             old = radius_conf.get(k, {}).get("radius_m")
             radius_conf.setdefault(k, {})["radius_m"] = v
-            radius_conf[k]["source"] = "cli_fixed"
+            # 대화형 루프를 건너뛴다는 사실과, 그 값을 누가 정했는지는 별개다.
+            radius_conf[k]["source"] = SRC_RADIUS[args.value_source]
             print(f"     [{k}] {old} -> {v}m")
 
     # ── 게이트B 제안만 만들고 종료 ────────────────────────────────────
@@ -300,6 +357,7 @@ def main():
     if not args.auto_radius:
         todo = [i for i in inds if i["kind"] != "admin" and i["id"] not in radius_fix]
         if todo:
+            radius_asked = True        # 사람이 프롬프트를 본다 = 확정 절차를 거친다
             print("\n  >> HITL: 위 반경을 확인/수정하세요. 엔터=승인, 숫자입력=수정")
             for i in todo:
                 cur = radius_conf[i["id"]]["radius_m"]
@@ -336,11 +394,12 @@ def main():
         if unknown:
             raise ValueError(f"--weight 에 없는 지표ID: {sorted(unknown)}\n"
                              f"  사용 가능: {[i['id'] for i in inds]}")
-        print("\n  [고정] --weight 로 지정 (HITL 생략)")
+        print(f"\n  [고정] --weight 로 지정 (HITL 생략) · 출처={args.value_source}")
         for k, v in weight_fix.items():
             print(f"     [{k}] {slider[k]:+.2f} -> {v:+.2f}")
             slider[k] = v
-            sources[k] = "cli"
+            # 대화형 루프를 건너뛴다는 사실과, 그 값을 누가 정했는지는 별개다.
+            sources[k] = SRC_WEIGHT[args.value_source]
 
     conflicts = [i for i in inds if i.get("direction_conflict")]
     _print_weight_table(inds, slider, conflicts)
@@ -354,6 +413,7 @@ def main():
                 f"{[i['id'] for i in unresolved]}\n"
                 "  [W] HITL 로 확정하거나 --weight 로 부호를 지정하세요.")
     else:
+        weight_asked = True            # 사람이 프롬프트를 본다 = 확정 절차를 거친다
         print("\n  >> HITL: 엔터=승인, 숫자입력=수정 (-1 ~ +1). 음수로 넣으면 감점으로 바뀝니다.")
         while True:
             for i in inds:
@@ -489,14 +549,15 @@ def main():
     print("-"*70)
 
     # [F] 저장
+    hitl_rec = build_hitl_record(radius_conf, sources, args.value_source,
+                                 radius_asked, weight_asked)
     ws = W.build_weight_set(args.domain, facility, region, inds, radius_conf,
                             args.alpha, w_h, w_c, w_f, boot, sparse, len(cand),
                             candidate_unit=cand_unit, candidate_source=cand_src,
                             inputs={"reviewed": W.fingerprint(reviewed_path),
                                     "clean_report": W.fingerprint(report_path),
                                     "candidates": W.fingerprint(cand_path)},
-                            hitl={"radius_confirmed": not args.auto_radius,
-                                  "weight_confirmed": not args.auto_weight})
+                            hitl=hitl_rec)
     # 재현성 메타 — 감쇠 설정을 산출물에 남긴다(같은 결과를 다시 못 만드는 일 방지)
     ws["decay"] = {"func": args.decay, "sigma_ratio": args.sigma_ratio if args.decay else None}
     ws["scale"] = args.scale        # 재현성 — 어떤 정규화로 뽑은 가중치인지
