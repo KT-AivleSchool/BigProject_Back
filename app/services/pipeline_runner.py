@@ -591,6 +591,8 @@ def _execute(run_id: str, domain: str, mode: str, start: int = 0) -> None:
                         else _proc_of(stage, domain, base,
                                       *_stage_args(run_id, mode, stage)))
                 _run_one(run_id, doc, proc, log)
+                if stage == "3-2":
+                    _assert_provenance(run_id, mode)
         if not paused:
             doc["status"] = "succeeded"
     except _StepFailed as e:
@@ -614,6 +616,54 @@ def _execute(run_id: str, domain: str, mode: str, start: int = 0) -> None:
 
 class _StepFailed(Exception):
     pass
+
+
+def _assert_provenance(run_id: str, mode: str) -> None:
+    """STEP3-2 산출물의 `hitl` 블록이 **이 run 에 실제로 있었던 사람 개입**과 맞는지 본다.
+
+    자식 프로세스는 자기가 받은 값이 어디서 왔는지 모른다 — `--radius 07+02=150` 만
+    봐서는 픽스처인지 사람 답인지 구분이 안 된다. 그래서 러너가 `--value-source` 로
+    알려주는데, **인자가 새면 산출물이 조용히 거짓말한다.** 2026-08-05 `r_20260805_017`
+    이 그랬다: fixture 재생인데 `value_source:"cli"` · `*_confirmed:true` 로 찍혔다.
+    값은 맞고 설명만 틀려서 아무 데서도 안 터졌다(원칙 4 위반).
+
+    🔴 이 필드들은 **대조기에 하나도 안 들어 있고**(S16) 코드 소비자도 0곳이다.
+       아무도 안 보는 값은 틀려도 안 걸린다. 그래서 러너가 **자기만 아는 사실로**
+       직접 대조한다 — 자식은 이 사실에 접근할 수 없다:
+         · fixture 모드 = 사람 개입 0회 (`stdin=DEVNULL` · 값은 전부 픽스처)
+         · hitl 모드    = 게이트B 에서 사람이 답했다
+                          (답이 없으면 `_stage_args` 가 이미 RuntimeError 다)
+
+    어긋나면 run 을 `failed` 로 닫는다. 숫자는 맞을 수 있지만 **그 숫자를 누가 정했는지가
+    틀린 산출물**이고, 그건 뒤따르는 모든 판단의 근거가 된다.
+    """
+    p = artifact_path(run_id, "weight_set")
+    if p is None:
+        raise _StepFailed("STEP3-2 가 끝났는데 weight_set.json 이 없습니다.")
+    rec = json.loads(p.read_text(encoding="utf-8")).get("hitl")
+    if not isinstance(rec, dict):
+        raise _StepFailed(
+            "weight_set.json 에 hitl 블록이 없습니다 — 이 실행의 값 출처를 "
+            "설명할 수 없습니다. run_weight_model.build_hitl_record 확인.")
+
+    vs = rec.get("value_source")
+    confirmed = [k for k in ("radius_confirmed", "weight_confirmed") if rec.get(k)]
+    if mode == MODE_FIXTURE:
+        # 픽스처 재생은 정의상 사람이 한 번도 안 끼어든다. 여기서 "확정" 이 찍히면
+        # 사람이 안 한 일을 했다고 적은 것이다 — 설명책임 필드에서 가장 나쁜 방향이다.
+        if confirmed or vs != "fixture":
+            raise _StepFailed(
+                f"fixture 재생인데 산출물이 사람 확정을 주장합니다: "
+                f"value_source={vs!r} · {confirmed or '확정없음'}. "
+                f"러너가 --value-source 를 제대로 넘겼는지 확인하세요.")
+    elif vs != "human":
+        # 게이트B 를 거쳐 왔는데 사람 출처가 아니다. 반대 방향(과소기록)이지만
+        # 역시 사실과 다르다. 실측된 경로 하나 — 답변의 `radius` 가 비면
+        # `_proc_of` 가 `"human" if radius else "fixture"` 로 fixture 를 넘긴다
+        # (전 지표가 admin 이면 `_validate_weight` 가 radius 를 금지하므로 도달 가능).
+        raise _StepFailed(
+            f"게이트B 를 거친 run 인데 값 출처가 사람이 아닙니다: value_source={vs!r}. "
+            f"사람이 답했다는 사실이 산출물에서 사라집니다.")
 
 
 def _run_one(run_id: str, doc: dict, proc: _Proc, log) -> None:
