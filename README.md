@@ -14,8 +14,19 @@ source ../.venv/bin/activate
 
 # 의존성 설치
 pip install --upgrade pip setuptools
-pip install -r requirements.txt
+pip install -r requirements.txt -c constraints.txt
 ```
+
+> 🔴 **`-c constraints.txt` 를 빼지 마십시오.**
+> `requirements.txt` 가 "무엇을 설치할지"라면 `constraints.txt` 는 **"무엇을 바꾸면
+> 안 되는지"** 입니다. 값이 달라지는 패키지(pandas·pyarrow·geopandas·shapely·openai
+> 등)를 핀으로 묶어 둡니다.
+>
+> 이미 당한 적이 있습니다 — `pip install langchain-openai` 한 번이 `openai` 를
+> 2.44 → 2.53 으로 **말없이** 올렸습니다. 이런 전이 의존 이동은 회귀 대조
+> (`python app/tools/check_fixture.py 흡연` 57/57)로 **안 걸립니다.** 픽스처는 LLM 을
+> 부르지 않기 때문입니다. 패키지를 새로 설치할 때는 `--dry-run` 을 먼저 보고,
+> 설치 후에는 `pip freeze` **전체 diff** 를 보십시오(몇 개만 지켜보면 놓칩니다).
 
 ### ➋ 로컬 PostGIS + pgvector 컨테이너 기동
 Docker를 활용해 지리 정보 공간 데이터베이스(PostGIS) 및 RAG 벡터 DB(pgvector)가 통합 장착된 DB 인프라를 가동합니다.
