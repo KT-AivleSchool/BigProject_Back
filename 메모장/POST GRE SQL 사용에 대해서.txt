@@ -1,0 +1,7 @@
+POST GRE SQL 을 쓰는 이유
+
+POST GIS - 확장 프로그램
+
+pg vector
+
+ 일반 DB를 Ai DB로

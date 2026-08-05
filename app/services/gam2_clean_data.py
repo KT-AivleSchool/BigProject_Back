@@ -40,8 +40,21 @@ import json
 import os
 import re
 import sys
+import time as _time
 import traceback
 from dataclasses import asdict
+
+# 임포트도 체감 시간의 일부다 — geopandas 계열은 첫 실행에 수 초가 든다.
+#   (STEP4 에서 '랩 합계 = 총계'라고 봤다가 임포트 3.65초를 놓친 이력)
+_T_START = _time.perf_counter()
+
+# 프로젝트 루트를 sys.path 에 추가 → `python app\services\...` 로 직접 실행해도
+#   `app.xxx` 절대 임포트가 된다. (STEP1·3·4 스크립트와 동일한 보정)
+_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+_T_IMPORT = _time.perf_counter()
 
 import pandas as pd
 
@@ -49,6 +62,8 @@ import app.services.gam2_audit_judgment_test as A
 import app.services.gam2_audit_ops_catalog as cat
 from app.services.gam2_profile import _read_sample  # 감리와 동일한 읽기 경로 사용
 from app.config import ADM_DONG_SHP, STEP2_OUTPUT_DIR
+
+IMPORT_SEC = _time.perf_counter() - _T_IMPORT
 
 
 # ── HitlFlag type -> 사람이 읽는 한글 메시지 (HITL 화면·리포트 공용) ──
@@ -379,7 +394,26 @@ def _pick_result_path() -> str:
 # ══════════════════════════════════════════════════════════════════
 
 
+def _report_time(laps: list, import_sec: float = 0.0, start: float = None) -> None:
+    """단계별 소요 시간 표. STEP1·3·4 와 같은 형식으로 맞춘다."""
+    rows = ([("(임포트)", import_sec)] if import_sec else []) + list(laps)
+    total = sum(sec for _, sec in rows) or 1e-9
+    print("\n" + "=" * 60)
+    print("[소요 시간]")
+    print("-" * 60)
+    for name, sec in sorted(rows, key=lambda x: -x[1]):
+        pct = sec / total * 100
+        bar = "█" * max(1, int(pct / 4))
+        print(f"  {name:26.26} {sec:7.2f}s  {pct:5.1f}%  {bar}")
+    print("-" * 60)
+    print(f"  {'처리 합계':26} {total:7.2f}s")
+    if start is not None:
+        print(f"  {'체감(기동~종료)':24} {_time.perf_counter() - start:7.2f}s")
+    print("=" * 60)
+
+
 def clean_domain(domain_dir: str, csv_preview: bool = False, prune: bool = True) -> str:
+    _t_begin = _time.perf_counter()
     A.set_domain(domain_dir)
     prefix = A._DOMAIN["prefix"]
     data_dir = A._DOMAIN["data"]
@@ -408,12 +442,18 @@ def clean_domain(domain_dir: str, csv_preview: bool = False, prune: bool = True)
     prune_reqs: list = []  # 생산자에서 '소비자에 없는 키' 제거 요청
     report = []
 
+    laps: list = []  # (단계명, 초)
+    _t_load = _time.perf_counter() - _t_begin
+    laps.append(("입력 로드(감리·프로파일)", _t_load))
+
     for r in _order_datasets(results):
         did = r["dataset_id"]
+        _t0 = _time.perf_counter()
         prof = profiles.get(did)
         if not prof:
             print(f"  [건너뜀] {did}: profiles.json 에 프로파일 없음")
             report.append({"dataset_id": did, "status": "no_profile"})
+            laps.append((f"{did} (프로파일 없음)", _time.perf_counter() - _t0))
             continue
 
         ops = r.get("cleaning_ops") or []
@@ -596,18 +636,26 @@ def clean_domain(domain_dir: str, csv_preview: bool = False, prune: bool = True)
                     tags.append(f"!! whitelist '{w['whitelist']}' 순환참조 — op 제거")
                 else:
                     tags.append(f"!! whitelist '{w['whitelist']}' 자동연결 실패")
+            _sec = _time.perf_counter() - _t0
+            report[-1]["sec"] = round(_sec, 2)
+            laps.append((f"{did} {prof.get('filename', '')}", _sec))
             print(
                 f"  [{did}] {prof.get('filename', '')}: {before}→{len(clean)}행, "
                 f"flag {len(flags)}개, {fmt} [{status}] "
                 + (" ".join("(" + t + ")" for t in tags))
+                + f"  [{_sec:.1f}s]"
             )
         except Exception as e:  # 한 데이터셋 실패가 전체를 멈추지 않음
-            print(f"  [실패] {did}: {e}")
-            report.append({"dataset_id": did, "status": "error", "error": str(e)})
+            _sec = _time.perf_counter() - _t0
+            print(f"  [실패] {did}: {e}  [{_sec:.1f}s]")
+            report.append({"dataset_id": did, "status": "error", "error": str(e),
+                           "sec": round(_sec, 2)})
+            laps.append((f"{did} (실패)", _sec))
 
     # ── 후처리: 생산자에서 '소비자에 실제 데이터가 없는' 행 제거 ───────────────
     #   예) 용산 버스정류소 336개 중 승하차 통계에 한 번도 안 나오는 22개(폐지·미운행)
     #   → 수요 데이터가 없는 지점은 입지 후보/가중치 계산에서 잡음이므로 정리한다.
+    _t_prune = _time.perf_counter()
     if prune:
         by_out = {r["dataset_id"]: r for r in report if r.get("status") != "error"}
         for q in prune_reqs:
@@ -647,11 +695,15 @@ def clean_domain(domain_dir: str, csv_preview: bool = False, prune: bool = True)
                     "reason": f"{cdid} 에 대응 데이터가 없는 키",
                 }
 
+    laps.append(("후처리(prune)", _time.perf_counter() - _t_prune))
+    _t_save = _time.perf_counter()
+
     # whitelist 요약(생산된 것)
     wl_summary = {k: len(v) for k, v in wl.items()}
 
-    # 산출물 배열을 dataset_id 기준 정렬 (처리순 → id순).
-    # 소비 측에서 위치 인덱스로 접근할 때의 오정렬을 막기 위해 정렬해 저장.
+# 산출물 배열을 dataset_id 기준 정렬 (처리순 → id순).
+    #   report 는 _order_datasets(whitelist 의존 데이터셋 후순위)로 쌓여 배열 순서가
+    #   id 순이 아니다. 소비 측에서 위치 인덱스로 접근할 때의 오정렬을 막기 위해 정렬해 저장.
     report.sort(key=lambda r: r.get("dataset_id", ""))
 
     out_report = os.path.join(
@@ -694,6 +746,9 @@ def clean_domain(domain_dir: str, csv_preview: bool = False, prune: bool = True)
     print(f"  리포트 → {out_report}")
     if wl_summary:
         print(f"[whitelist 생산] {wl_summary}")
+
+    laps.append(("리포트 저장", _time.perf_counter() - _t_save))
+    _report_time(laps, import_sec=IMPORT_SEC, start=_T_START)
     return out_report
 
 
@@ -701,8 +756,13 @@ if __name__ == "__main__":
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     flags_ = {a for a in sys.argv[1:] if a.startswith("--")}
     if not args:
-        print("사용법: python clean_data.py <도메인폴더> [--csv-preview] [--no-prune]")
+        print(
+            "사용법: python clean_data.py <도메인폴더> "
+            "[--csv-preview] [--no-prune] [--refresh-geocode]"
+        )
         sys.exit(1)
+    # 지오코딩 실패 캐시 무효화(S6). 성공분은 주소→좌표라 바뀌지 않으므로 유지한다.
+    cat.set_geocode_refresh("--refresh-geocode" in flags_)
     try:
         clean_domain(
             args[0],
