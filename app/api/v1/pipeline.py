@@ -8,7 +8,7 @@
    나중에 오케스트레이터로 갈아끼울 때 라우터를 건드리지 않기 위해서다.
    status.json 과 산출물은 **가공하지 않고 그대로** 내보낸다(계약 4절).
 """
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 
@@ -67,6 +67,27 @@ def get_run(run_id: str):
     if doc is None:
         raise HTTPException(status_code=404, detail=f"없는 run_id 입니다: {run_id}")
     return doc
+
+
+@router.post("/runs/{run_id}/hitl/{gate_id}")
+def submit_hitl(run_id: str, gate_id: str, payload: dict = Body(...)):
+    """게이트 답변 접수 → 즉시 `running` 으로 돌아간 status 를 반환(계약 7절).
+
+    🔴 본문을 pydantic 모델로 고정하지 않는다. 게이트마다 모양이 다르고(A 는 3종
+       배열, B 는 지표별 맵), 무엇보다 **검증 기준이 그 run 의 질문 목록**이기
+       때문이다 — 어떤 지표ID·dataset_id 가 유효한지는 스키마가 아니라
+       `status.gate.questions` 가 정한다. 검증은 전부 러너에 있다.
+
+    응답은 답변 **직후의 status** 다. 프런트는 이걸 받고 폴링을 재개하면 된다.
+    """
+    try:
+        return runner.submit_gate(run_id, gate_id, payload)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"없는 run_id 입니다: {run_id}")
+    except runner.RunRequestError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except runner.RunConflict as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
 
 @router.get("/runs/{run_id}/log", response_class=PlainTextResponse)

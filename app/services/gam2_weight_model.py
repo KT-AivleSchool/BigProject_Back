@@ -1233,6 +1233,64 @@ def save_weight_set(ws: dict, domain: str) -> str:
     return path
 
 
+def build_weight_proposal(domain: str, facility: str, region: str,
+                          indicators: list, radius_conf: dict, slider: dict,
+                          run_id: str | None = None) -> dict:
+    """[W] 게이트 화면에 보여줄 **제안값**. 확정값이 아니다.
+
+    왜 별도 산출물인가 —
+      [R] 반경 제안과 [W] 슬라이더 초기값은 `run_weight_model` 프로세스 **안에서만**
+      만들어진다(LLM 제안 + define_indicators). 파일로 꺼내지 않으면 사람에게
+      "AI 가 뭘 제안했는지"를 보여줄 방법이 없고, 그러면 원칙 3(LLM 제안 → 사람 확정)이
+      화면에서 성립하지 않는다.
+
+    weight_set 과 이름이 비슷하지만 **성격이 반대**다:
+      · weight_set      = 확정 결과 (w_human·w_critic·w_final)
+      · weight_proposal = 확정 **전** 제안 (radius_proposed·slider_proposed)
+    그래서 w_* 를 담지 않는다. 담으면 확정 전 값이 확정값인 척한다(원칙 4).
+
+    `conflicts` 는 define_indicators 가 reviewed.json 만으로 판정한다(:300).
+    반경·CRITIC 과 접점이 없으므로 이 시점에 전부 알 수 있다.
+    """
+    return {
+        "run_id": run_id,
+        "domain": domain, "facility": facility, "region": region,
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "indicators": [{
+            "id": i["id"], "kind": i["kind"], "direction": i["direction"],
+            "seed_weight": i["seed_weight"],
+            "components": {"geo": i["geo_dataset"], "val": i["val_dataset"]},
+            "rationale": i.get("rationale", ""),
+            "data_note": data_note(i),
+        } for i in indicators],
+        "radius_proposed": {
+            i["id"]: {
+                "radius_m": radius_conf.get(i["id"], {}).get("radius_m"),
+                "rationale": radius_conf.get(i["id"], {}).get("rationale", ""),
+                "source": radius_conf.get(i["id"], {}).get("source", "llm"),
+            } for i in indicators},
+        "slider_proposed": {i["id"]: slider[i["id"]] for i in indicators},
+        "conflicts": [{
+            "indicator_id": i["id"],
+            **i["direction_conflict"],
+        } for i in indicators if i.get("direction_conflict")],
+    }
+
+
+def save_weight_proposal(prop: dict, domain: str, run_id: str | None = None) -> str:
+    """weight_set 과 **같은 디렉터리**에 저장한다(save_weight_set 규칙 재사용).
+
+    별도 경로를 파면 mock/실제 오염 방지 규칙을 한 곳 더 관리해야 한다.
+    run_id 가 있으면 파일명에 붙인다 — API 는 run 마다 이 디렉터리를 가르지만,
+    CLI 로 직접 부르면 한 폴더에 여러 실행분이 쌓이기 때문이다.
+    """
+    os.makedirs(WEIGHT_OUTPUT_DIR, exist_ok=True)
+    name = f"{domain}_weight_proposal{'_' + run_id if run_id else ''}.json"
+    path = os.path.join(WEIGHT_OUTPUT_DIR, name)
+    json.dump(prop, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    return path
+
+
 # =========================================================
 # [진단] 후보 표본 대표성 — 편향이 가중치를 왜곡하는지 검사
 # =========================================================

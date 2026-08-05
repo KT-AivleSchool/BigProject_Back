@@ -5,13 +5,18 @@
 > 두 세션은 이 문서에 적힌 필드명·값·구조를 그대로 따른다.
 > 바꿔야 할 이유가 있으면 **구현하지 말고 사람에게 먼저 말한다.**
 
-작성 2026-08-04 · 갱신 2026-08-04(백엔드 구현·실측 반영) · 범위: 픽스처 재실행(STEP2~4)만
+작성 2026-08-04 · 갱신 **2026-08-05(HITL 게이트 구현·실측 완료)** ·
+범위: STEP2~4 재실행 — `fixture`(무입력 완주) · `hitl`(게이트 2개)
 
-> **갱신 내역** — 사람이 승인한 3건 + 실측 1건. 프런트 세션은 이 판을 기준으로 한다.
+> **갱신 내역** — 프런트 세션은 이 판을 기준으로 한다.
 > ① 산출물 화이트리스트 4개 → 6개 + `clean_NN`(화면4가 `score_grid`·`topN_min` 을 읽는데 구판에 없었다)
 > ② `steps[].label` 확정 (아래 2절, 실측)
 > ③ STEP1 출력도 run 별로 가른다 (5절)
 > ④ 로그·진행률 필드는 **넣지 않는다** — `steps[].sec` 로 충분하다는 판단(6절)
+> ⑤ **2026-08-05 — 7절 HITL 게이트가 설계에서 구현으로 바뀌었다.**
+>    엔드포인트 `POST /runs/{run_id}/hitl/{gate_id}` 신설 · `status` 에 `awaiting_hitl`
+>    추가 · 게이트B 답변 본문 확정(`{run_id, radius, slider}`, `weights` 아님) ·
+>    **폴링 종료 조건에 `awaiting_hitl` 이 추가된다**(7-3)
 
 ---
 
@@ -21,6 +26,7 @@
 |---|---|---|
 | POST | `/api/v1/pipeline/runs` | 실행 시작 |
 | GET | `/api/v1/pipeline/runs/{run_id}` | 상태 조회 (폴링) |
+| POST | `/api/v1/pipeline/runs/{run_id}/hitl/{gate_id}` | **HITL 게이트 답변** (7절) |
 | GET | `/api/v1/pipeline/runs/{run_id}/log` | 실행 로그 (마스킹본) |
 | GET | `/api/v1/pipeline/runs/{run_id}/artifacts/{name}` | 산출물 전달 |
 
@@ -34,8 +40,9 @@
 {"run_id": "r_20260804_001"}
 ```
 
-- `mode` 는 현재 `"fixture"` 하나뿐이다. 다른 값은 400.
-- 같은 `domain` 이 이미 `running` 이면 **409**.
+- `mode` 는 `"fixture"` · `"hitl"` 두 값이다(7절). 다른 값은 400.
+- 같은 `domain` 이 이미 `running` **또는 `awaiting_hitl`** 이면 **409**.
+  게이트 대기는 "끝난 것"이 아니다 — 그 run 이 도메인을 계속 점유한다.
 - `run_id` 는 **백엔드가 만든다.** 프런트가 생성하지 않는다.
 
 ### GET /api/v1/pipeline/runs/{run_id}
@@ -203,7 +210,8 @@ URL 이 트레이스백에 실릴 수 있고, **하필 그때가 로그를 제�
 
 | 필드 | 값 |
 |---|---|
-| `status` | `queued` \| `running` \| `succeeded` \| `failed` |
+| `status` | `queued` \| `running` \| `awaiting_hitl` \| `succeeded` \| `failed` |
+| `gate` | `awaiting_hitl` 일 때**만 존재하는 키**(7-3). 그 외에는 `null` 이 아니라 **키가 없다** |
 | `steps[].status` | `idle` \| `running` \| `done` \| `failed` |
 | `steps[].sec` | 완료된 단계의 소요 초(float). 미완료면 `null` |
 | `artifacts[name]` | 생성됐으면 **GET URL 문자열**, 아직이면 `null` |
@@ -226,7 +234,8 @@ URL 이 트레이스백에 실릴 수 있고, **하필 그때가 로그를 제�
 
 - **실패한 run 도 `status.json` 을 남긴다.** `status: "failed"` + `error` 채움.
   프런트는 `failed` 를 정상 상태 중 하나로 다룬다. 예외로 던지지 않는다.
-- **폴링은 `succeeded` 또는 `failed` 가 되면 멈춘다.** 간격 1~2초.
+- **폴링은 `succeeded` · `failed` · `awaiting_hitl` 이 되면 멈춘다.** 간격 1~2초.
+  `awaiting_hitl` 은 답을 주기 전까지 **영원히 안 바뀐다** — 계속 돌면 무한 폴링이다.
 - `--auto-weight` 는 방향 판정 충돌이 있으면 `ValueError` 로 죽는다. **이건 정상 동작이다.**
   삼키지 말고 `failed` + `error`(stderr 마지막 줄)로 그대로 노출한다.
 - 산출물 값을 라우터에서 **가공하지 않는다.** 파일 그대로 내보낸다.
@@ -269,7 +278,7 @@ URL 이 트레이스백에 실릴 수 있고, **하필 그때가 로그를 제�
 | ~~배제 union 면적 노출~~ | ✅ **틀린 기록이었다.** `report.json` 의 `spatial.exclusion_union_km2` 에 이미 있다(흡연 `1.1107`) |
 | ~~로그 노출~~ | ✅ `GET /runs/{id}/log` (2026-08-05). 진행률 필드는 여전히 안 넣는다 — `steps[].sec` 로 대체 |
 | STEP0·1 실행 | ❌ 아직. 화면1 업로드·감리 배선이 선행이다 (`RagVectorStorage` 를 요청 시점 생성으로) |
-| HITL 게이트 (`mode: "hitl"`) | 🔵 7절에 설계. 사람 승인 완료(2026-08-05) · 구현 전 |
+| ~~HITL 게이트 (`mode: "hitl"`)~~ | ✅ **구현·실측 완료 (2026-08-05)** — 7절 |
 
 **되돌린 결정 (지우지 않고 이유를 남긴다)**
 
@@ -283,10 +292,11 @@ URL 이 트레이스백에 실릴 수 있고, **하필 그때가 로그를 제�
 
 ---
 
-## 7. HITL 게이트 — `mode: "hitl"` (설계 · 구현 전)
+## 7. HITL 게이트 — `mode: "hitl"`
 
-작성 2026-08-05 · 사람 승인 완료 · **구현 전이다. 프런트는 이 절을 보고 미리 짜되,
-동작 확인 전까지 "된다"고 단정하지 않는다.**
+작성 2026-08-05 · 사람 승인 완료 · **구현·실측 완료 2026-08-05.**
+흡연 픽스처로 게이트 두 개를 지나 완주했고, 같은 답을 주면 `fixture` 모드와
+**값이 전 항목 일치**한다(7-8).
 
 ### 7-1. 왜 게이트인가 — 되돌린 설계를 먼저 남긴다
 
@@ -309,13 +319,47 @@ URL 이 트레이스백에 실릴 수 있고, **하필 그때가 로그를 제�
 | `gam2_clean_data.py` · `make_parcel_candidates.py` · `gam2_run_pipeline.py` | **0** | 없음 |
 
 ```
-STEP0/1 감리 ─▶ ⏸ 게이트A ─▶ STEP2 ─▶ STEP3-1 ─▶ ⏸ 게이트B ─▶ STEP3-2 ─▶ STEP4 ─▶ 끝
-                배제반경                             [R] 집계반경
-                데이터의도                           [W] 가중치(-1~+1)
+STEP0/1 감리 ─▶ ⏸ 게이트A ─▶ STEP2 ─▶ STEP3-1 ─▶ (제안패스) ─▶ ⏸ 게이트B ─▶ STEP3-2 ─▶ STEP4 ─▶ 끝
+                배제반경                                            [R] 집계반경
+                데이터의도                                          [W] 가중치(-1~+1)
                 지역코드
 ```
 
 **재실행은 0회다.** 멈췄다가 이어간다.
+
+구현상 실행 계획은 배열 하나다(`pipeline_runner._PLAN`). `hitl` 은 `fixture` 에
+게이트 두 칸과 제안 패스를 끼워 넣은 것이고, **단계 커맨드는 두 모드가 같은 함수를 탄다.**
+
+```
+fixture : 2 · 3-1 · 3-2 · 4
+hitl    : ⏸audit · 2 · 3-1 · propose · ⏸weight · 3-2 · 4
+```
+
+게이트를 만나면 **실행 스레드가 그냥 끝난다.** 진행 상태는 전부 디스크에 있으므로
+서버가 재시작돼도 답변 POST 로 이어갈 수 있다. 이어갈 위치는 `gate.id` 로 유도한다 —
+"어디까지 했나"를 status.json 에 따로 적지 않는다. 같은 사실을 두 곳에 적으면 갈린다.
+
+### 7-1b. 제안 패스 — 왜 한 번 더 도나
+
+게이트B 화면에 올릴 **제안값**([R] 집계반경 · [W] 슬라이더 초기값)은 실행해 봐야 나온다.
+`run_weight_model.py` 에 dry-run 이 없었고, 기존 `--radius`/`--weight` 는 **덮어쓰기**지
+읽어오기가 아니다. API 프로세스에서 `define_indicators`/`suggest_radius` 를 다시 짜면
+**CLI 와 API 가 갈린다** — 이 저장소가 반복해서 당한 유형이다.
+
+그래서 `--propose-only` 를 **정본 CLI 에 추가**했다. `[A] 지표정의 → [A2] 레이어부착 →
+[R] 반경제안 → 슬라이더 초기값 → 제안 파일 저장 → 종료`. 후보 로드·`[B]` 행렬·CRITIC·
+합성·저장은 **하지 않는다**. 흡연 실측 **9.6초**(그중 LLM mini 1회).
+
+제안 파일은 `weight_set` 과 같은 디렉터리에 `<도메인>_weight_proposal_<run_id>.json`
+으로 떨어진다. **산출물 화이트리스트에는 넣지 않았다** — 게이트가 값을 인라인으로
+싣고 나가므로 프런트가 파일을 따로 받을 이유가 없다.
+
+🔴 `--propose-only` 를 넣으면서 `suggest_radius` 앞에 가드도 같이 넣었다:
+`--radius` 가 비-admin 지표를 **전부** 덮는 실행에서는 LLM 제안을 부르지 않는다.
+부르면 만들자마자 덮어써 순수 낭비이고, **쓰지도 않은 제안의 rationale 이 산출물에
+남아 "이 근거로 정했다"고 주장하게 된다**(원칙 4). 픽스처 모드가 여기 해당한다 —
+반경 **값**은 안 바뀌고 `radius_rationale`/`source` 문구만 바뀐다(`source: "none"` →
+`--radius` 가 `"cli_fixed"` 로 덮음).
 
 ### 7-2. `mode` 두 값의 차이
 
@@ -340,7 +384,8 @@ queued → running → awaiting_hitl → running → … → succeeded | failed
   "status": "awaiting_hitl",
   "gate": {
     "id": "audit",            // "audit"(게이트A) | "weight"(게이트B)
-    "questions": [ ... ]      // 7-4 · 7-5
+    "label": "감리 확인 — 배제반경 · 데이터 용도 · 지역 코드",
+    "questions": [ ... ]      // 7-4 · 7-5. **평평한 배열**이고 각 항목에 `kind` 가 있다
   }
 }
 ```
@@ -349,14 +394,79 @@ queued → running → awaiting_hitl → running → … → succeeded | failed
   이제 `awaiting_hitl` 도 멈춰야 한다 — 답을 주기 전까지 영원히 안 바뀐다.
 - `gate` 는 `awaiting_hitl` 일 때만 있다. 그 외에는 **키 자체가 없다**(`null` 아님).
 - 답을 받으면 즉시 `running` 으로 돌아가고 `gate` 는 사라진다.
+- `finished_at` 은 `awaiting_hitl` 동안 `null` 이다. **멈춘 것은 끝난 것이 아니다.**
+- 게이트 대기 중에도 `run.log` 는 읽힌다. 답을 받아 이어갈 때 로그는 **덮어쓰지 않고
+  이어 붙인다** — 게이트 화면에서 보던 로그가 답변 순간 증발하면 안 된다.
+
+### 7-3b. 답변 엔드포인트 — `POST /runs/{run_id}/hitl/{gate_id}`
+
+`gate_id` 는 `audit` | `weight`. 응답은 **답변 직후의 `status.json`**(status 는 이미
+`running`, `gate` 키는 사라진 상태)이다. 프런트는 이걸 받고 폴링을 재개하면 된다.
+
+| 코드 | 언제 |
+|---|---|
+| 200 | 접수됨. 실행이 이어진다 |
+| 400 | 검증 실패 — `detail` 에 한국어 사유 |
+| 404 | 없는 `run_id` |
+| 409 | 게이트 대기 중 다른 run 이 같은 도메인을 점유함 |
+
+400 이 나는 경우(전부 `detail` 로 이유가 나간다):
+
+- `awaiting_hitl` 이 아닌 run 에 답을 보냄 / 지금 기다리는 게이트와 다른 `gate_id`
+- 본문 `run_id` 가 경로와 다름 — **조용히 경로를 쓰지 않는다.** 프런트가 다른 run 을
+  보고 있다는 뜻이고, 그대로 진행하면 남의 run 에 답을 적용한다
+- `gate.questions` 에 없는 대상(`dataset_id`·`role_index`·`op_index`·`indicator_id`)
+- `editable: false` 인 항목을 수정하려 함 (7-4)
+- 값 범위 위반 · 알 수 없는 필드명
 
 ### 7-4. 게이트A — `POST /runs/{run_id}/hitl/audit`
 
 `review_hitl`(`gam2_audit_judgment_test.py:1534`)이 처리하는 flag 3종 그대로다.
 
+**질문** — `gate.questions[]` (`kind` 로 구분)
+
+```json
+{"kind": "exclusion",   "dataset_id": "01", "role_index": 0, "editable": false,
+ "summary": "…", "facility_type": "금연구역", "exclusion_type": "polygon",
+ "rationale": "…", "radius_m": 10, "radius_source": "human_confirmed",
+ "proposed_m": 10, "proposal_source": "…", "evidence": "…",
+ "evidence_matches_facility": true}
+
+{"kind": "intent",      "dataset_id": "12", "editable": true,
+ "summary": "…", "message": "…", "current_roles": ["…"],
+ "choices": [{"value": 1, "label": "가점(수요)", "needs_weight": true}, …]}
+
+{"kind": "code_prefix", "dataset_id": "04", "op_index": 3, "editable": false,
+ "summary": "…", "col": "행정동코드", "prefix": "11170", "region": "서울특별시 용산구",
+ "verdict": "ambiguous", "reason": "…", "detail": "…", "suggestion": "11170",
+ "confirmed_by": "code_table:행자부", "recheck_skipped": false}
+```
+
+🔴 **`editable: false` 인 항목도 목록에 나온다. 보여주되 수정은 안 된다.**
+(사람 결정 2026-08-05) HITL 전에 `confirmed` 가 되는 건 조례·코드표에서 근거를
+확실히 찾았을 때뿐이라 고칠 이유가 없다. 그렇다고 감추면 사람은 **무엇이 이미
+정해졌는지 모른 채** 남은 것만 답하게 된다 — 화면이 사실의 일부만 보여주는 것이다.
+읽기 전용 항목을 수정하려 하면 **400** 이다. 조용히 무시하지 않는다.
+
+> 흡연 픽스처 실측: 질문 **4건**(배제 3 · 의도 0 · 지역코드 1), **전부 읽기 전용**이다.
+> 픽스처 `reviewed.json` 이 이미 전부 확정된 상태이기 때문이다.
+> 즉 픽스처로 `hitl` 을 돌리면 게이트A 는 **확인 화면**이고 빈 답 `{}` 로 통과한다.
+
+`proposed_m`(AI 제안)과 `radius_m`(현재 확정값)을 **한 필드로 합치지 않았다.**
+합치면 "제안인지 확정인지"가 화면에서 사라진다. `evidence_matches_facility: false` 는
+근거문장에 그 시설명이 없다는 뜻 — **다른 시설 규정일 수 있다.** 경고로 띄울 것.
+
+`recheck_skipped: true` 는 감리 때 코드표 대조를 못 했고(`prefix_check` 없음 또는
+`verdict: "unknown"`) **API 가 다시 판정하지도 않았다**는 뜻이다. 재판정에 쓰는
+`_code_samples` 가 `build_fixtures()` 를 부르고 모듈 전역에 캐시하는데, 오래 사는
+API 프로세스가 할 일이 아니다. 못 한 건 못 했다고 내보낸다(원칙 4·5).
+
+**답변**
+
 ```json
 // 요청
 {
+  "run_id": "r_20260805_004",
   "exclusions": [
     {"dataset_id": "01", "role_index": 0, "radius_m": 10}
   ],
@@ -364,10 +474,12 @@ queued → running → awaiting_hitl → running → … → succeeded | failed
     {"dataset_id": "12", "choice": 1, "weight": 0.6}
   ],
   "code_prefixes": [
-    {"dataset_id": "04", "op_index": 0, "prefix": "11170"}
+    {"dataset_id": "04", "op_index": 3, "prefix": "11170"}
   ]
 }
 ```
+
+세 배열 모두 **선택**이다. 고칠 게 없으면 `{}` 로 보낸다.
 
 | 필드 | 값 | 주의 |
 |---|---|---|
@@ -385,17 +497,71 @@ queued → running → awaiting_hitl → running → … → succeeded | failed
 
 ### 7-5. 게이트B — `POST /runs/{run_id}/hitl/weight`
 
+**게이트는 하나다.** `[R]` 집계반경과 `[W]` 가중치를 나누지 않는다 —
+`slider_from_indicators()` 는 `define_indicators` 의 `seed_weight`·`direction` 에만
+의존하므로 반경이 정해지기 전에 이미 계산된다. 둘을 한 화면에 올릴 수 있다.
+(사람 결정 2026-08-05)
+
+#### 질문 (`status.gate.questions[]`)
+
+지표 하나가 항목 하나다. 값은 전부 **제안 패스**(7-1b)가 만든 것이다.
+
 ```json
 {
-  "radius": {"07+02": 150, "06+03": 300, "08": 50, "09": 150, "10": 250},
-  "weights": {"07+02": 0.75, "09": -0.4}
+  "kind": "weight",
+  "indicator_id": "07+02",
+  "indicator_kind": "point_sum",
+  "radius_required": true,
+  "direction": "benefit",
+  "seed_weight": 0.75,
+  "components": {"geo": "07", "val": "02"},
+  "rationale": "버스정류장은 유동인구가 많은 장소로 …",
+  "data_note": "314건 × 값",
+  "radius_proposed": 300,
+  "radius_rationale": "버스정류장은 유동인구가 많아 …",
+  "radius_source": "llm",
+  "slider_proposed": 0.75,
+  "conflict": null
 }
 ```
 
-`run_weight_model.py` 의 **기존 `--radius`·`--weight` 인자**(`:196`·`:202`)로 넘어간다.
-픽스처 모드가 지금 쓰는 바로 그 경로다.
+| 필드 | 뜻 |
+|---|---|
+| `indicator_id` | 답변의 키. `07+02` 처럼 결합 지표는 `geo+val` |
+| `indicator_kind` | `point_sum` · `point_count` · `admin` |
+| `radius_required` | `indicator_kind != "admin"`. **`true` 면 반경 입력이 필수**, `false` 면 **보내면 400** |
+| `radius_proposed` | LLM 제안 반경(m). `admin` 은 `null` |
+| `radius_source` | `llm` · `human` · `none`. 사람이 이미 정한 게 있으면 LLM 을 안 부른다 |
+| `slider_proposed` | `-1 ~ +1`. `direction` 이 `cost` 면 음수다 |
+| `conflict` | `null` 이거나 `{geo_dataset, geo_direction, val_dataset, val_direction}` |
 
-🔴 **`weights` 는 `-1 ~ +1` 을 그대로 보낸다. 프런트가 분해하지 않는다.**
+`conflict` 는 결합 지표에서 **geo 쪽과 val 쪽 방향이 갈릴 때**만 실린다
+(`define_indicators:300-303`). `seed_weight` 는 둘을 평균하는데 `direction` 은 val 쪽만
+쓰므로 geo 판정이 조용히 사라진다 — 어느 쪽이 옳은지는 도메인마다 다르므로
+**규칙으로 정하지 않고 사람에게 넘긴다**(원칙 3).
+
+#### 답변
+
+```json
+{
+  "run_id": "r_20260805_004",
+  "radius": {"07+02": 150, "06+03": 300, "08": 50, "09": 150, "10": 250},
+  "slider": {"07+02": 0.75, "06+03": 0.8, "04": 0.7, "08": 0.3, "09": 0.7, "10": 0.7}
+}
+```
+
+- 필드는 **이 셋뿐**이다. 다른 키가 있으면 400. `resolved_conflicts` 같은 필드는 **없다** —
+  충돌은 **슬라이더 부호로 확정**한다. 같은 사실을 두 곳에 적으면 갈린다.
+- `radius` 는 **정수 m**, 범위 `1~5000`. `radius_required: true` 인 지표가 하나라도
+  빠지면 400 이고, `admin` 지표에 반경을 보내도 400 이다.
+- `slider` 는 생략 가능하다 — **생략하면 `slider_proposed` 를 그대로 쓴다**(안 고친 것).
+  단 `conflict` 가 있는 지표는 **반드시 `slider` 에 있어야 한다.** 없으면 400.
+- 백엔드는 답변을 `runs/<run_id>/hitl/weight_answer.json` 에 남기고,
+  이어지는 `3-2` 단계에 `--radius "07+02=150,…"` · `--weight "07+02=0.75,…"` 로 넘긴다.
+  **`run_weight_model.py` 의 기존 인자다. 픽스처 모드가 쓰는 바로 그 경로**이고
+  파이프라인 정본은 이 때문에 고치지 않았다.
+
+🔴 **`slider` 는 `-1 ~ +1` 을 그대로 보낸다. 프런트가 분해하지 않는다.**
 이유가 두 개다:
 1. 미리 분해해 `{seed_weight, direction}` 으로 보내면 `normalize_matrix` 의 cost 반전과
    **이중으로 걸려 조용히 뒤집힌다.**
@@ -407,7 +573,15 @@ queued → running → awaiting_hitl → running → … → succeeded | failed
 - 전 지표 절대값 합이 0 이면 `ValueError` → 400. 조용히 안 넘어간다(`:1108`).
   **이래서 항목별 PATCH 가 아니라 화면 단위 배치 POST 다** — 한 항목만 받으면
   합이 0 이 되는지 알 수 없고, 검증을 빼면 전 후보 점수가 0 이 된다.
-- 없는 지표 id 는 `ValueError` → 400 (`:1106`).
+  백엔드는 이 검사를 **접수 시점에** 한 번 더 한다(생략분은 `slider_proposed` 로 채운 뒤
+  합산). 파이프라인까지 가서 터지면 run 이 `failed` 로 죽지만, 여기서 막으면 400 이고
+  게이트는 그대로 열려 있다 — 사람이 다시 답하면 된다.
+- 없는 지표 id 는 400. `ValueError`(`:1106`)까지 안 간다.
+
+> 🔴 `run_weight_model.py:314` 의 `ValueError`(반경이 빠진 non-admin 지표)는 **결함이
+> 아니다.** 조용히 기본값을 넣지 않는다는 뜻이므로 그대로 둔다. 대신 백엔드가
+> **접수 시점에 같은 검사**를 해서 400 으로 되돌린다 — 사람이 고칠 수 있는 자리에서
+> 막는 게 맞다. (사람 결정 2026-08-05)
 
 ### 7-6. STEP4 는 HITL 을 넣지 않는다 (1차)
 
@@ -434,3 +608,62 @@ data_임시/search_cache/exclusion_radius_cache.json   키 = facility_type ("금
 - 남는 위험은 **도메인 간 오염**뿐이다. 화면1(실제 감리 실행)을 붙일 때 다룬다.
   그때 `apply_radius_answer` 에 `cache=False` 를 추가할지 결정한다 — 정본 수정이라
   사람 승인이 필요하다.
+
+**부분 완화(2026-08-05).** 게이트A 답변을 적용하기 전에 `set_domain(domain)` 을 부른다.
+`gam2_audit_judgment_test` 의 캐시 경로가 도메인별 폴더 아래로 잡히므로, **API 를
+통해 들어온 답변끼리는** 섞이지 않는다. 단 CLI 로 직접 돌린 결과와의 관계는 그대로다 —
+근본 해결이 아니라 **격리 범위를 API 안으로 좁힌 것**이다. 위 항목은 살아 있다.
+
+### 7-8. 검증 결과 (2026-08-05 실측)
+
+두 가지를 확인했다. 둘 다 서버를 재시작하지 않고 러너를 **in-process** 로 불러 돌렸다.
+
+**① 게이트 로직 단위 — 37/37 통과** (`검증용\check_hitl_gate.py 흡연`, LLM 호출 0회)
+
+- 계획 배열·재개 위치(`gate:` 칸에서 재개하지 않는다)
+- 게이트A 질문 — 기존 run 의 `reviewed.json` 에서 배제 3 · 의도 0 · 지역코드 1,
+  전부 읽기 전용. `op_index` 로 실제 op(`filter_by_code_prefix`)를 찾는지
+- 게이트A 답변 — 확정분 수정 400 · 없는 대상 400 · 알 수 없는 필드 400 ·
+  가점인데 weight 누락/0 400 · 반경 범위 400 · prefix 빈값 400 · 정상 적용 후 값 확인
+- 게이트B 검증 — 반경 누락 · admin 에 반경 · 충돌 미확정 · 없는 지표 · 범위 · 합 0 ·
+  알 수 없는 필드 전부 400
+- 답변 → CLI 인자 왕복. `_parse_radius_arg`·`_parse_weight_arg`(정본 파서)로 되읽어 일치
+
+**② 완주 무회귀 — fixture · hitl 두 모드가 같은 값에 도달**
+(`검증용\check_hitl_e2e.py 흡연`, 제안 패스 때문에 LLM 1회)
+
+비교 항목 **10개**: `w_human` · `w_critic` · `w_final` · `radius_m`(지표별 맵) ·
+`counts`(parcels·points·survive) · `spatial`(배제 union·내접폭 분포) ·
+`coverage`(누적 100점) · `gap_kinds` · `topn_PNU` 20건 · `topn_점수` 20건.
+
+| 대조 | 결과 |
+|---|---|
+| `r_20260805_003`(fixture) ↔ `r_20260805_004`(hitl) | 10개 전 항목 일치 |
+| `r_20260805_001`(변경 **전** fixture) ↔ `r_20260805_004`(hitl) | 10개 전 항목 일치 |
+
+🔴 **처음 쓴 대조기는 없는 키를 읽고 있었다.** `report.json` 의 실제 키는
+`counts`·`data_gap`·`topn` 인데 `후보수`·`gap`·`topN` 으로 읽어 `None == None`,
+`[] == []` 으로 통과했다 — **아무것도 안 본 채 초록불**이다. 지금은 비교 항목이
+비어 있으면 `SystemExit` 로 멈춘다. 대조기가 조용히 통과하면 회귀보다 나쁘다.
+
+hitl 쪽 답변은 게이트A `{}`(질문 4건 전부 읽기 전용) ·
+게이트B 는 **픽스처 반경**(`07+02=150,06+03=300,08=50,09=150,10=250`)과
+`slider_proposed` 그대로였다. 게이트B 가 제안한 LLM 반경
+(`07+02=300,06+03=300,08=100,09=50,10=200`)을 그대로 쓰면 값이 달라지는 게
+**정상**이다 — 이 대조는 *"같은 답을 넣으면 같은 값이 나오는가"* 를 본 것이지
+*"LLM 제안이 픽스처와 같은가"* 를 본 게 아니다.
+
+답변 기록은 `runs/<run_id>/hitl/{audit,weight}_answer.json` 에 남는다.
+
+🔴 **부수적으로 러너 결함 두 개가 여기서 드러났다.** uvicorn 으로는 안 보였고,
+in-process 로 부르니 바로 나왔다.
+
+1. `_SERVER_BOOT` 가 마이크로초까지 갖는데 `started_at` 은 `timespec="seconds"` 로
+   기록된다 → **부팅과 같은 초에 시작된 run 을 `_reap_orphans` 가 "이전 서버의 고아"로
+   판정**해 실행 도중 `failed` 로 닫았다. → `.replace(microsecond=0)`
+2. `status.json` 임시파일 이름이 공유라 실행 스레드와 폴링 스레드가 같은 `.tmp` 를
+   두고 부딪혔다(Windows `PermissionError: WinError 32`).
+   → `_IO_LOCK` + 스레드ID 접미사
+
+`runs/r_20260805_002` 가 그 피해자다. `failed` 로 남아 있지만 **거짓 실패**다.
+지우지 않고 둔다 — 기록이다.

@@ -201,6 +201,16 @@ def main():
                          "방향 판정 충돌이 있으면 중단한다")
     ap.add_argument("--weight", default=None,
                     help='가중치 고정. 부호=방향. 예: "07+02=0.75,09=-0.4"')
+    # --- 게이트B(HITL) 제안 단계 ---
+    #   [A]지표정의 → [A2]레이어부착 → [R]반경제안 → 슬라이더 초기값 까지만 하고
+    #   제안 산출물을 남긴 뒤 끝낸다. 후보 로드·[B]행렬·CRITIC·[F]저장은 **하지 않는다.**
+    #   왜 필요한가 — 제안값은 이 프로세스 안에서만 만들어진다. 사람에게 보여주려면
+    #   한 번은 여기까지 돌려야 하고, 끝까지 돌리면 확정 전 weight_set 이 생겨
+    #   산출물이 "확정됐다"고 거짓말한다(원칙 4).
+    ap.add_argument("--propose-only", action="store_true",
+                    help="[R]·[W] 제안값만 만들고 종료(HITL 게이트B 화면용)")
+    ap.add_argument("--run-id", default=None,
+                    help="제안 산출물 파일명에 붙일 실행 id (API 러너가 준다)")
     ap.add_argument("--candidate-unit", default=None,
                     help="후보 1건이 무엇인지(설명책임용). 예: \"지적도 필지\". "
                          "미지정 시 후보 파일에서 사실만 자동 기술한다")
@@ -237,11 +247,25 @@ def main():
     T.lap("[A2] 레이어 부착")
 
     # [R] 반경 제안 (mini) -> HITL
-    print("\n[R] 집계반경 제안 (mini)")
-    radius_conf = W.suggest_radius(facility, inds)
-    for _rc in radius_conf.values():          # 기본 출처 — 이후 CLI/HITL 이 덮어쓴다
-        if isinstance(_rc, dict):
-            _rc.setdefault("source", "llm")
+    #   🔴 --radius 가 비-admin 지표를 **전부** 덮는 실행에서는 제안을 부르지 않는다.
+    #      부르면 LLM 값을 만들자마자 아래 fix 루프가 전부 덮어쓴다 — 순수 낭비이고,
+    #      쓰지도 않은 제안의 rationale 이 산출물에 남아 "이 근거로 정했다"고
+    #      주장하게 된다(원칙 4). admin 지표는 반경 개념 자체가 없어 대상이 아니다.
+    non_admin = {i["id"] for i in inds if i["kind"] != "admin"}
+    if non_admin and non_admin <= set(radius_fix):
+        print("\n[R] 집계반경 — --radius 가 전 지표를 덮으므로 LLM 제안을 건너뜁니다.")
+        radius_conf = {
+            i["id"]: ({"radius_m": None, "rationale": "행정동 단위 지표(반경 무관)",
+                       "source": "none"} if i["kind"] == "admin"
+                      else {"radius_m": None, "rationale": "", "source": "none"})
+            for i in inds}
+        radius_conf["_confirmed"] = False
+    else:
+        print("\n[R] 집계반경 제안 (mini)")
+        radius_conf = W.suggest_radius(facility, inds)
+        for _rc in radius_conf.values():      # 기본 출처 — 이후 CLI/HITL 이 덮어쓴다
+            if isinstance(_rc, dict):
+                _rc.setdefault("source", "llm")
     for i in inds:
         rc = radius_conf.get(i["id"], {})
         print(f"  {i['id']:<8} R={rc.get('radius_m')}  {rc.get('rationale','')}")
@@ -258,6 +282,20 @@ def main():
             radius_conf.setdefault(k, {})["radius_m"] = v
             radius_conf[k]["source"] = "cli_fixed"
             print(f"     [{k}] {old} -> {v}m")
+
+    # ── 게이트B 제안만 만들고 종료 ────────────────────────────────────
+    #   여기서 끊는 이유: 슬라이더 초기값은 seed_weight·direction 만 쓰고(:1068),
+    #   그 둘은 [A] define_indicators 가 reviewed.json 에서 뽑는다. 반경·행렬·CRITIC 과
+    #   접점이 없다 — 즉 **반경 확정 전에도 슬라이더를 보여줄 수 있다.**
+    #   그래서 [R]·[W] 를 한 화면(게이트 하나)에 올린다.
+    if args.propose_only:
+        slider = W.slider_from_indicators(inds)
+        prop = W.build_weight_proposal(args.domain, facility, region,
+                                       inds, radius_conf, slider, run_id=args.run_id)
+        path = W.save_weight_proposal(prop, args.domain, args.run_id)
+        print(f"\n[P] 제안 저장: {path}  (지표 {len(inds)} · 충돌 {len(prop['conflicts'])})")
+        T.report(import_sec=IMPORT_SEC, start=_T_START)
+        return
 
     if not args.auto_radius:
         todo = [i for i in inds if i["kind"] != "admin" and i["id"] not in radius_fix]

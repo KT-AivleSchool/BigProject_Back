@@ -41,11 +41,27 @@ RUNS_ROOT = Path(BASE_DIR) / "runs"
 SERVICES_DIR = Path(BASE_DIR) / "app" / "services"
 
 MODE_FIXTURE = "fixture"
+# 게이트 모드. 파이프라인이 **원래 갖고 있던** 사람 확정 지점에서 멈춘다.
+#   fixture 는 무입력 완주(회귀 검증용)라 게이트가 없어야 한다 — 사람 입력이 끼는 순간
+#   check_fixture 57/57 이 재현 불가가 된다. 두 모드를 섞지 않는 이유가 그것이다.
+MODE_HITL = "hitl"
+MODES = (MODE_FIXTURE, MODE_HITL)
 
 # 서버가 뜬 시각. 이전 서버 프로세스가 남긴 'running' 을 구분하는 데 쓴다(_reap_orphans).
-_SERVER_BOOT = datetime.now()
+#
+# 🔴 **초 단위로 자른다.** `started_at` 이 `isoformat(timespec="seconds")` 로 기록되기
+#    때문이다. 자르지 않으면 부팅과 같은 초에 시작된 run 은
+#    `started_at`(초 절삭) < `_SERVER_BOOT`(마이크로초 포함) 이 되어 **방금 만든 run 을
+#    '이전 서버가 남긴 고아'로 판정**한다. 그러면 돌고 있는 run 이 failed 로 닫히고,
+#    그 상태 파일을 실행 스레드가 동시에 쓰다가 Windows 에서 os.replace 가 터진다.
+#    (2026-08-05 실측 — 러너를 in-process 로 부르는 검증 스크립트에서 재현됐다.
+#     uvicorn 은 기동과 첫 요청 사이가 벌어져 있어 지금까지 안 드러났을 뿐이다)
+_SERVER_BOOT = datetime.now().replace(microsecond=0)
 
 _LOCK = threading.Lock()
+# status.json 쓰기 직렬화. 실행 스레드·폴링(_reap_orphans)·게이트 답변이 동시에 쓴다.
+# Windows 의 os.replace 는 대상이 열려 있으면 PermissionError 로 터진다.
+_IO_LOCK = threading.Lock()
 # 이 서버 프로세스가 **지금** 돌리고 있는 것. domain -> run_id
 #   409 판정을 파일이 아니라 이걸로 한다. 서버가 죽으면 비므로,
 #   죽은 서버가 남긴 status.json 이 새 실행을 영원히 막지 않는다.
@@ -133,11 +149,18 @@ def _status_path(run_id: str) -> Path:
 
 
 def _write_status(run_id: str, doc: dict) -> None:
-    """원자적 기록. 폴링과 겹쳐도 반쯤 쓰인 JSON 을 읽지 않게 한다."""
+    """원자적 기록. 폴링과 겹쳐도 반쯤 쓰인 JSON 을 읽지 않게 한다.
+
+    🔴 임시 파일 이름에 스레드 id 를 넣고 락으로 감싼다. 두 스레드가 같은 `.tmp` 를
+       쓰면 한쪽이 아직 쥐고 있는 파일을 다른 쪽이 replace 하려다 Windows 에서
+       PermissionError 로 터진다(WinError 32). 실행 스레드와 폴링이 겹치는 건
+       예외가 아니라 **정상 동작**이다.
+    """
     p = _status_path(run_id)
-    tmp = p.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, p)
+    tmp = p.with_suffix(f".json.{threading.get_ident()}.tmp")
+    with _IO_LOCK:
+        tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, p)
 
 
 def read_status(run_id: str) -> dict | None:
@@ -270,6 +293,34 @@ def _python_exe() -> str:
     return exe
 
 
+def _svc(name: str) -> str:
+    return str(SERVICES_DIR / name)
+
+
+def _weight_args(base: dict, radius: str, weight: str | None) -> list[str]:
+    """STEP3-2 공통 인자. 반경·가중치 **값만** 모드에 따라 갈린다.
+
+    fixture 는 픽스처의 `radius_m` 을, hitl 은 사람이 게이트B 에서 준 값을 넣는다.
+    나머지(alpha·decay·scale·candidates)는 두 모드가 같은 곳에서 읽는다 —
+    갈라두면 "hitl 로 돌린 값이 픽스처와 왜 다른지"를 설명할 수 없게 된다.
+    """
+    cond = base["조건"]
+    argv = [
+        "--candidates", cond["candidates"],
+        "--alpha", str(cond["alpha"]),
+        "--decay", cond["decay"]["func"],
+        "--sigma-ratio", str(cond["decay"]["sigma_ratio"]),
+        "--scale", cond["scale"],
+        "--radius", radius,
+        # --auto-weight 는 [W] 대화형 루프를 건너뛴다. 사람 답은 --weight 로 이미
+        # 들어와 있다 — 게이트에서 받았지 자동으로 정한 게 아니다.
+        "--auto-weight",
+    ]
+    if weight:
+        argv += ["--weight", weight]
+    return argv
+
+
 def build_commands(domain: str) -> list[_Proc]:
     """픽스처 재실행(STEP2~4) 커맨드. 값은 전부 픽스처에서 온다.
 
@@ -280,40 +331,48 @@ def build_commands(domain: str) -> list[_Proc]:
         (진단은 가중치와 무관하지만, 안 재본 것을 같다고 단정하지 않는다 — 원칙 5)
     """
     base, _ = _load_fixture(domain)
-    cond = base["조건"]
+    return [_proc_of(s, domain, base) for s in ("2", "3-1", "3-2", "4")]
+
+
+def _proc_of(stage: str, domain: str, base: dict,
+             radius: str | None = None, weight: str | None = None) -> _Proc:
+    """단계 하나의 커맨드. **조립은 여기 한 곳뿐이다.**
+
+    fixture 와 hitl 이 같은 함수를 쓴다. 모드별로 따로 짜면 "픽스처는 되는데
+    hitl 은 다른 값" 이 나오고, 그건 이 프로젝트가 반복해서 당한 유형이다.
+    """
     py = _python_exe()
-
-    def svc(name: str) -> str:
-        return str(SERVICES_DIR / name)
-
-    return [
+    cond = base["조건"]
+    if stage == "2":
         # STEP2 정제. facility·region 은 reviewed.json 에서 스스로 읽는다.
-        _Proc(("2",), [py, svc("gam2_clean_data.py"), domain]),
-
+        return _Proc(("2",), [py, _svc("gam2_clean_data.py"), domain])
+    if stage == "3-1":
         # STEP3 후보 필지. --facility/--region 을 주지 않는다 —
         # _facility_of()/_region_of() 가 reviewed.json 에서 읽으므로 값이 같고,
         # 주면 그 순간 도메인 값이 러너에 박힌다.
-        _Proc(("3-1",), [py, svc("make_parcel_candidates.py"), domain]),
-
-        # STEP3 가중치. --radius 가 비-admin 전 지표를 덮으므로 [R] HITL 이 비고,
-        # --auto-weight 가 [W] HITL 을 건너뛴다 → 무입력 완주.
-        _Proc(("3-2",), [
-            py, svc("run_weight_model.py"), domain,
-            "--candidates", cond["candidates"],
-            "--alpha", str(cond["alpha"]),
-            "--decay", cond["decay"]["func"],
-            "--sigma-ratio", str(cond["decay"]["sigma_ratio"]),
-            "--scale", cond["scale"],
-            "--radius", _radius_arg(base),
-            "--auto-weight",
-        ]),
-
+        return _Proc(("3-1",), [py, _svc("make_parcel_candidates.py"), domain])
+    if stage == "3-2":
+        return _Proc(("3-2",), [py, _svc("run_weight_model.py"), domain]
+                     + _weight_args(base, radius or _radius_arg(base), weight))
+    if stage == "4":
         # STEP4 위치 선정. 한 프로세스가 4-1·4-2·4-3 을 전부 담당한다.
-        _Proc(("4-1", "4-2", "4-3"),
-              [py, svc("gam4_site_select.py"), domain,
-               "--spacing", str(cond["spacing"])],
-              markers=_GAM4_MARKERS),
-    ]
+        return _Proc(("4-1", "4-2", "4-3"),
+                     [py, _svc("gam4_site_select.py"), domain,
+                      "--spacing", str(cond["spacing"])],
+                     markers=_GAM4_MARKERS)
+    raise ValueError(f"알 수 없는 단계: {stage!r}")
+
+
+def _proc_propose(domain: str, base: dict, run_id: str) -> _Proc:
+    """게이트B 제안 패스. `--propose-only` 로 [R]·[W] 제안까지만 만들고 끝낸다.
+
+    `step_ids` 가 비어 있다 — 계약 2절의 6단계에 속하지 않기 때문이다.
+    여기에 7번째 단계를 만들면 프런트 진행률 UI 가 같이 바뀌어야 한다.
+    이 패스는 **사람에게 보여줄 제안을 뽑는 준비 작업**이지 파이프라인 단계가 아니다.
+    """
+    return _Proc((), [_python_exe(), _svc("run_weight_model.py"), domain,
+                      "--candidates", base["조건"]["candidates"],
+                      "--propose-only", "--run-id", run_id])
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -403,11 +462,13 @@ def _refresh_artifacts(doc: dict) -> None:
         doc["artifacts"][name] = _artifact_url(run_id, name) if p.is_file() else None
 
 
-def _new_status(run_id: str, domain: str) -> dict:
+def _new_status(run_id: str, domain: str, mode: str = MODE_FIXTURE) -> dict:
+    # 🔴 `gate` 키는 여기 없다. 계약 7-3 — `awaiting_hitl` 일 때만 **키가 생긴다**.
+    #    항상 두고 null 을 넣으면 "게이트가 있는데 질문이 없다"로 읽힌다.
     return {
         "run_id": run_id,
         "domain": domain,
-        "mode": MODE_FIXTURE,
+        "mode": mode,
         "status": "queued",
         "steps": [{"id": i, "label": lb, "status": "idle", "sec": None}
                   for i, lb in STEP_LABELS],
@@ -423,12 +484,39 @@ def _step(doc: dict, step_id: str) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════
-# 8. 실행
+# 8. 실행 계획 — 게이트는 계획 안의 한 칸이다
 # ══════════════════════════════════════════════════════════════════
+# 🔴 `hitl` 이 `fixture` 에 게이트 두 칸과 제안 패스를 끼워 넣은 것뿐이라는 게 중요하다.
+#    단계 커맨드는 두 모드가 **같은 `_proc_of`** 를 탄다. 모드별로 따로 짜면
+#    "픽스처는 맞는데 hitl 은 다른 값" 이 나오고 그건 이 프로젝트가 반복해서 당한 유형이다.
+#
+#    재실행은 0회다. 게이트에서 **스레드가 끝나고**, 답이 오면 그 다음 칸부터
+#    새 스레드가 이어 간다. 진행 상태는 전부 디스크(status.json · run 폴더)에 있으므로
+#    서버가 재시작돼도 답변 POST 로 이어갈 수 있다.
+_PLAN: dict[str, tuple[str, ...]] = {
+    MODE_FIXTURE: ("2", "3-1", "3-2", "4"),
+    MODE_HITL: ("gate:audit", "2", "3-1", "propose", "gate:weight", "3-2", "4"),
+}
+
+GATE_IDS = ("audit", "weight")
+
+
+def _resume_index(mode: str, gate_id: str) -> int:
+    """`gate.id` 로 이어갈 위치를 계획에서 되찾는다.
+
+    status.json 에 '어디까지 했나' 필드를 새로 두지 않는다 — 계약 3절의 스키마를
+    늘리지 않으려는 것도 있지만, 그보다 **같은 사실을 두 곳에 적으면 갈리기** 때문이다.
+    계획은 고정 배열이고 게이트 id 는 그 안에서 유일하므로 위치는 유도된다.
+    """
+    plan = _PLAN[mode]
+    return plan.index(f"gate:{gate_id}") + 1
+
+
 def start_run(domain: str, mode: str) -> str:
     """검증 → run 폴더 준비 → 백그라운드 실행. run_id 를 돌려준다."""
-    if mode != MODE_FIXTURE:
-        raise RunRequestError(f"지원하지 않는 mode 입니다: {mode!r} (현재 'fixture' 뿐)")
+    if mode not in MODES:
+        raise RunRequestError(
+            f"지원하지 않는 mode 입니다: {mode!r} (가능: {', '.join(MODES)})")
     _validate_domain(domain)
     _load_fixture(domain)          # 픽스처가 없으면 여기서 400
     build_commands(domain)         # 커맨드 조립도 미리 해본다(실패를 실행 전에 낸다)
@@ -442,7 +530,7 @@ def start_run(domain: str, mode: str) -> str:
 
     try:
         _prepare_dirs(run_id, domain)
-        doc = _new_status(run_id, domain)
+        doc = _new_status(run_id, domain, mode)
         # `reviewed` 는 방금 _prepare_dirs 가 넣어서 **이미 있다.** 여기서 안 갱신하면
         # 첫 단계 전이까지 status 는 null 인데 엔드포인트는 200 을 준다 — status 가
         # 거짓말을 한다(원칙 4). 나머지 6개는 아직 없으므로 그대로 null 이다.
@@ -453,22 +541,48 @@ def start_run(domain: str, mode: str) -> str:
             _ACTIVE.pop(domain, None)
         raise
 
-    threading.Thread(target=_execute, args=(run_id, domain), daemon=True).start()
+    _spawn(run_id, domain, mode, 0)
     return run_id
 
 
-def _execute(run_id: str, domain: str) -> None:
-    """프로세스를 순서대로 돌리며 단계 전이를 status.json 에 기록한다."""
-    doc = read_status(run_id) or _new_status(run_id, domain)
+def _spawn(run_id: str, domain: str, mode: str, start: int) -> None:
+    threading.Thread(target=_execute, args=(run_id, domain, mode, start),
+                     daemon=True).start()
+
+
+def _execute(run_id: str, domain: str, mode: str, start: int = 0) -> None:
+    """계획을 `start` 칸부터 돌린다. 게이트를 만나면 **멈추고 스레드가 끝난다.**"""
+    doc = read_status(run_id) or _new_status(run_id, domain, mode)
     doc["status"] = "running"
+    doc.pop("gate", None)          # 계약 7-3 — running 에는 gate 키가 없다
     _write_status(run_id, doc)
 
+    base, _ = _load_fixture(domain)
+    plan = _PLAN[mode]
     log_path = run_dir(run_id) / "run.log"
+    paused = False
     try:
-        with open(log_path, "w", encoding="utf-8") as log:
-            for proc in build_commands(domain):
+        # 이어가는 실행은 append 다. "w" 로 열면 게이트 전 로그가 사라진다 —
+        # 프런트가 게이트 화면에서 보던 로그가 답변 순간 증발한다(원칙 4).
+        with open(log_path, "a" if start else "w", encoding="utf-8") as log:
+            for i in range(start, len(plan)):
+                stage = plan[i]
+                if stage.startswith("gate:"):
+                    gate_id = stage.split(":", 1)[1]
+                    log.write(f"\n[게이트 {gate_id}] 사람 확정 대기\n")
+                    log.flush()
+                    doc["status"] = "awaiting_hitl"
+                    doc["gate"] = build_gate(gate_id, run_id, domain)
+                    _refresh_artifacts(doc)
+                    _write_status(run_id, doc)
+                    paused = True
+                    break
+                proc = (_proc_propose(domain, base, run_id) if stage == "propose"
+                        else _proc_of(stage, domain, base,
+                                      *_stage_args(run_id, mode, stage)))
                 _run_one(run_id, doc, proc, log)
-        doc["status"] = "succeeded"
+        if not paused:
+            doc["status"] = "succeeded"
     except _StepFailed as e:
         doc["status"] = "failed"
         doc["error"] = str(e)
@@ -476,12 +590,16 @@ def _execute(run_id: str, domain: str) -> None:
         doc["status"] = "failed"
         doc["error"] = f"{type(e).__name__}: {e}"
     finally:
-        doc["finished_at"] = _now_iso()
-        _refresh_artifacts(doc)
-        _write_status(run_id, doc)
-        with _LOCK:
-            if _ACTIVE.get(domain) == run_id:
-                _ACTIVE.pop(domain, None)
+        if doc["status"] != "awaiting_hitl":
+            # 🔴 게이트에서 멈춘 run 은 **끝난 게 아니다.** finished_at 을 찍지 않고
+            #    _ACTIVE 에서 빼지도 않는다 — 빼면 같은 도메인으로 새 run 을 시작할 수
+            #    있게 되고, 두 run 이 같은 정본 캐시·데이터를 동시에 건드린다.
+            doc["finished_at"] = _now_iso()
+            _refresh_artifacts(doc)
+            _write_status(run_id, doc)
+            with _LOCK:
+                if _ACTIVE.get(domain) == run_id:
+                    _ACTIVE.pop(domain, None)
 
 
 class _StepFailed(Exception):
@@ -492,10 +610,14 @@ def _run_one(run_id: str, doc: dict, proc: _Proc, log) -> None:
     log.write(f"\n$ {' '.join(proc.argv)}\n")
     log.flush()
 
-    cur = proc.step_ids[0]
-    _step(doc, cur)["status"] = "running"
+    # 🔴 `step_ids` 가 빈 프로세스가 있다 — 게이트B 제안 패스(`_proc_propose`).
+    #    계약 2절의 6단계 중 어느 것도 아니므로 **진행률을 건드리지 않는다.**
+    #    없는 단계를 만들어 붙이면 프런트 진행률이 실제와 어긋난다(원칙 4).
+    cur = proc.step_ids[0] if proc.step_ids else None
     started = time.perf_counter()
-    _write_status(run_id, doc)
+    if cur:
+        _step(doc, cur)["status"] = "running"
+        _write_status(run_id, doc)
 
     tail: list[str] = []          # 실패 시 error 로 내보낼 마지막 줄들
     child = subprocess.Popen(
@@ -527,12 +649,15 @@ def _run_one(run_id: str, doc: dict, proc: _Proc, log) -> None:
     log.flush()
 
     if child.wait() != 0:
-        _step(doc, cur)["status"] = "failed"
+        if cur:
+            _step(doc, cur)["status"] = "failed"
         _refresh_artifacts(doc)
         _write_status(run_id, doc)
         raise _StepFailed(tail[-1] if tail else f"종료 코드 {child.returncode}")
 
-    _step(doc, cur).update(status="done", sec=round(time.perf_counter() - started, 2))
+    if cur:
+        _step(doc, cur).update(status="done",
+                               sec=round(time.perf_counter() - started, 2))
     # 마커를 못 본 나머지 단계 — 프로세스는 정상 종료했으니 done 이다.
     # 다만 **소요 시간은 지어내지 않는다**(sec=null). 원칙 4.
     for sid in proc.step_ids:
@@ -540,6 +665,400 @@ def _run_one(run_id: str, doc: dict, proc: _Proc, log) -> None:
             _step(doc, sid)["status"] = "done"
     _refresh_artifacts(doc)
     _write_status(run_id, doc)
+
+
+# ══════════════════════════════════════════════════════════════════
+# 8b. HITL 게이트 (계약 7절)
+# ══════════════════════════════════════════════════════════════════
+# 질문을 만드는 쪽과 답을 적용하는 쪽이 **같은 파일을 본다.**
+#   게이트A → `runs/<id>/step1/<pre>_audit_result_reviewed.json`
+#   게이트B → `runs/<id>/step3/<domain>_weight_proposal_<run_id>.json`
+# 질문을 따로 계산해 두었다가 적용할 때 다시 계산하면 그 사이에 갈릴 수 있다.
+#
+# 🔴 답을 적용하는 함수는 **정본을 그대로 부른다**(`apply_radius_answer`·
+#    `apply_intent_answer`). 새로 짜면 CLI 와 API 가 갈리고, 그게 이 프로젝트가
+#    반복해서 당한 유형이다(CLAUDE.md '모듈 사본').
+
+
+def _hitl_dir(run_id: str) -> Path:
+    return run_dir(run_id) / "hitl"
+
+
+def _answer_path(run_id: str, gate_id: str) -> Path:
+    return _hitl_dir(run_id) / f"{gate_id}_answer.json"
+
+
+def _save_answer(run_id: str, gate_id: str, payload: dict) -> None:
+    """사람이 무엇을 답했는지 원본 그대로 남긴다.
+
+    규약 '값마다 누가 정했는지 남긴다' 의 게이트판이다. reviewed.json 에는
+    적용 **결과**만 남고 '무엇을 건너뛰었는지'는 안 남는다 — 그건 여기 있다.
+    """
+    _hitl_dir(run_id).mkdir(parents=True, exist_ok=True)
+    doc = {"gate": gate_id, "answered_at": _now_iso(), "answer": payload}
+    _answer_path(run_id, gate_id).write_text(
+        json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _read_answer(run_id: str, gate_id: str) -> dict | None:
+    p = _answer_path(run_id, gate_id)
+    if not p.is_file():
+        return None
+    return json.loads(p.read_text(encoding="utf-8"))["answer"]
+
+
+def _reviewed_path(run_id: str, domain: str) -> Path:
+    return run_dir(run_id) / "step1" / f"{domain_prefix(domain)}_audit_result_reviewed.json"
+
+
+def _proposal_path(run_id: str, domain: str) -> Path:
+    """`save_weight_proposal` 이 쓴 곳. 자식은 STEP3_OUTPUT_DIR 이 run 폴더로 잡혀 있다."""
+    return run_dir(run_id) / "step3" / f"{domain}_weight_proposal_{run_id}.json"
+
+
+def build_gate(gate_id: str, run_id: str, domain: str) -> dict:
+    if gate_id == "audit":
+        return {"id": "audit", "label": "감리 확인 — 배제반경 · 데이터 용도 · 지역 코드",
+                "questions": _questions_audit(run_id, domain)}
+    if gate_id == "weight":
+        return {"id": "weight", "label": "집계반경 · 가중치 확정",
+                "questions": _questions_weight(run_id, domain)}
+    raise ValueError(f"알 수 없는 게이트: {gate_id!r}")
+
+
+# ── 게이트A 질문 ───────────────────────────────────────────────────
+#  🔴 확정분도 **보여준다. 단 수정은 못 한다**(`editable: false`). (사람 결정 2026-08-05)
+#     HITL 전에 confirmed 가 되는 건 조례에서 근거를 확실히 찾았을 때뿐이라
+#     고칠 이유가 없다. 그렇다고 감추면 사람은 "무엇이 이미 정해졌는지" 를 모른 채
+#     남은 것만 답하게 된다 — 화면이 사실의 일부만 보여주는 것이다(원칙 4).
+def _questions_audit(run_id: str, domain: str) -> list[dict]:
+    p = _reviewed_path(run_id, domain)
+    if not p.is_file():
+        raise _StepFailed(f"감리 결과가 없습니다: {p}")
+    doc = json.loads(p.read_text(encoding="utf-8"))
+    region = (doc.get("facility_inference") or {}).get("region", "")
+    out: list[dict] = []
+
+    for r in doc.get("results", []):
+        did = r.get("dataset_id")
+        summary = r.get("summary", "")
+        roles = r.get("roles") or []
+
+        for f in r.get("hitl_flags") or []:
+            ftype = f.get("type")
+            if ftype == "exclusion_radius_missing":
+                idx = f.get("role_index", 0)
+                role = roles[idx] if idx < len(roles) else {}
+                out.append({
+                    "kind": "exclusion",
+                    "dataset_id": did,
+                    "role_index": idx,
+                    "editable": not f.get("confirmed"),
+                    "summary": summary,
+                    "facility_type": role.get("facility_type"),
+                    "exclusion_type": role.get("exclusion_type"),
+                    "rationale": role.get("rationale", ""),
+                    "radius_m": role.get("배제반경_m"),
+                    "radius_source": role.get("source"),
+                    # 제안값은 확정값이 아니다 — 둘을 한 필드로 합치지 않는다.
+                    "proposed_m": f.get("제안값"),
+                    "proposal_source": f.get("출처"),
+                    "evidence": f.get("근거문장"),
+                    # False 면 "다른 시설 규정일 수 있다" — 화면에 경고로 띄울 것
+                    "evidence_matches_facility": f.get("근거_시설_일치"),
+                })
+            elif ftype == "data_intent_unclear":
+                out.append({
+                    "kind": "intent",
+                    "dataset_id": did,
+                    "editable": not f.get("confirmed"),
+                    "summary": summary,
+                    "message": f.get("message", ""),
+                    "current_roles": [x.get("role") for x in roles],
+                    "choices": [
+                        {"value": 1, "label": "가점(수요)", "needs_weight": True},
+                        {"value": 2, "label": "감점(민감도)", "needs_weight": True},
+                        {"value": 3, "label": "배제(금지)", "needs_weight": False},
+                        {"value": 4, "label": "위치선정 참조용", "needs_weight": False},
+                        {"value": 5, "label": "잘못 넣음·제외", "needs_weight": False},
+                    ],
+                })
+
+        for oi, op in enumerate(r.get("cleaning_ops") or []):
+            if op.get("op_id") != "filter_by_code_prefix":
+                continue
+            prm = op.get("params") or {}
+            chk = prm.get("prefix_check") or {}
+            out.append({
+                "kind": "code_prefix",
+                "dataset_id": did,
+                # `cleaning_ops` **전체** 기준 인덱스다. filter_by_code_prefix 만
+                # 센 번호가 아니다 — 적용할 때 같은 방식으로 찾는다.
+                "op_index": oi,
+                "editable": not prm.get("prefix_confirmed"),
+                "summary": summary,
+                "col": prm.get("col"),
+                "prefix": prm.get("prefix", ""),
+                "region": region,
+                "verdict": chk.get("verdict"),
+                "reason": chk.get("reason"),
+                "detail": chk.get("detail"),
+                "suggestion": chk.get("suggestion"),
+                "confirmed_by": prm.get("prefix_confirmed_by"),
+                # 🔴 감리 때 코드표 대조를 못 했으면(`prefix_check` 없음/unknown)
+                #    여기서 다시 판정하지 않는다. `_code_samples` 가 `build_fixtures()`
+                #    를 부르고 모듈 전역에 캐시하는데, 이건 오래 사는 API 프로세스가
+                #    할 일이 아니다. 못 한 건 못 했다고 내보낸다(원칙 4·5).
+                "recheck_skipped": not chk or chk.get("verdict") == "unknown",
+            })
+    return out
+
+
+# ── 게이트B 질문 ───────────────────────────────────────────────────
+def _questions_weight(run_id: str, domain: str) -> list[dict]:
+    p = _proposal_path(run_id, domain)
+    if not p.is_file():
+        raise _StepFailed(f"가중치 제안이 없습니다: {p}")
+    prop = json.loads(p.read_text(encoding="utf-8"))
+    conflicts = {c["indicator_id"]: c for c in prop.get("conflicts", [])}
+    out = []
+    for ind in prop["indicators"]:
+        iid = ind["id"]
+        rp = (prop.get("radius_proposed") or {}).get(iid) or {}
+        out.append({
+            "kind": "weight",
+            "indicator_id": iid,
+            "indicator_kind": ind["kind"],
+            # admin 지표는 행정동 단위라 반경 개념이 없다. 답에 넣으면 400 이다.
+            "radius_required": ind["kind"] != "admin",
+            "direction": ind["direction"],
+            "seed_weight": ind["seed_weight"],
+            "components": ind.get("components"),
+            "rationale": ind.get("rationale", ""),
+            "data_note": ind.get("data_note", ""),
+            "radius_proposed": rp.get("radius_m"),
+            "radius_rationale": rp.get("rationale", ""),
+            "radius_source": rp.get("source"),
+            "slider_proposed": (prop.get("slider_proposed") or {}).get(iid),
+            # 방향 판정 충돌 — 사람이 슬라이더 **부호**로 정해야 넘어간다.
+            "conflict": conflicts.get(iid),
+        })
+    return out
+
+
+# ── 답변 접수 ──────────────────────────────────────────────────────
+def submit_gate(run_id: str, gate_id: str, payload: dict) -> dict:
+    """게이트 답을 검증·적용하고 실행을 이어간다. 갱신된 status 를 돌려준다."""
+    if gate_id not in GATE_IDS:
+        raise RunRequestError(f"알 수 없는 게이트: {gate_id!r}")
+    doc = read_status(run_id)
+    if doc is None:
+        raise KeyError(run_id)              # 라우터가 404
+    if doc.get("status") != "awaiting_hitl":
+        raise RunRequestError(
+            f"이 run 은 사람 확정을 기다리고 있지 않습니다 (status={doc.get('status')!r})")
+    gate = doc.get("gate") or {}
+    if gate.get("id") != gate_id:
+        raise RunRequestError(
+            f"지금 기다리는 게이트는 '{gate.get('id')}' 입니다 (요청: '{gate_id}')")
+    if not isinstance(payload, dict):
+        raise RunRequestError("요청 본문이 객체가 아닙니다.")
+    # 계약 7-5 가 body 에 run_id 를 둔다. 경로와 다르면 프런트가 다른 run 을 보고 있다 —
+    # 조용히 경로 쪽을 쓰면 남의 run 에 답을 적용한다.
+    if payload.get("run_id") not in (None, run_id):
+        raise RunRequestError(
+            f"본문 run_id 가 경로와 다릅니다: {payload.get('run_id')!r} != {run_id!r}")
+
+    domain = doc["domain"]
+    mode = doc.get("mode", MODE_HITL)
+    questions = gate.get("questions") or []
+    if gate_id == "audit":
+        _apply_audit(run_id, domain, questions, payload)
+    else:
+        _validate_weight(questions, payload)
+
+    # 🔴 서버가 재시작되면 `_ACTIVE` 는 비지만 `awaiting_hitl` 인 run 은 디스크에 남는다
+    #    (`_reap_orphans` 는 queued/running 만 닫는다 — 게이트 대기는 중단이 아니다).
+    #    그 상태에서 답이 오면 여기서 다시 점유한다. 안 하면 같은 도메인에 새 run 이
+    #    동시에 돌아 정본 캐시·데이터를 함께 건드린다.
+    with _LOCK:
+        other = _ACTIVE.get(domain)
+        if other and other != run_id:
+            raise RunConflict(f"'{domain}' 은 이미 실행 중입니다 (run_id={other})")
+        _ACTIVE[domain] = run_id
+
+    _save_answer(run_id, gate_id, payload)
+    doc["status"] = "running"
+    doc.pop("gate", None)
+    _write_status(run_id, doc)
+    _spawn(run_id, domain, mode, _resume_index(mode, gate_id))
+    return doc
+
+
+def _q(questions: list[dict], kind: str, **key) -> dict:
+    """질문 목록에서 대상 하나를 찾는다. 없으면 400 — 조용히 무시하지 않는다."""
+    for q in questions:
+        if q["kind"] == kind and all(q.get(k) == v for k, v in key.items()):
+            return q
+    raise RunRequestError(f"게이트에 없는 대상입니다: {kind} {key}")
+
+
+def _int_in(v, lo: int, hi: int, what: str) -> int:
+    if isinstance(v, bool) or not isinstance(v, int):
+        raise RunRequestError(f"{what} 은 정수여야 합니다: {v!r}")
+    if not (lo <= v <= hi):
+        raise RunRequestError(f"{what} 범위는 {lo}~{hi} 입니다: {v}")
+    return v
+
+
+def _num_in(v, lo: float, hi: float, what: str) -> float:
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        raise RunRequestError(f"{what} 은 숫자여야 합니다: {v!r}")
+    if not (lo <= v <= hi):
+        raise RunRequestError(f"{what} 범위는 {lo}~{hi} 입니다: {v}")
+    return float(v)
+
+
+def _apply_audit(run_id: str, domain: str, questions: list[dict], payload: dict) -> None:
+    """게이트A 답을 reviewed.json 에 반영한다. **정본 함수를 그대로 부른다.**
+
+    🔴 `radius_m` 은 `null`(반경 없음으로 확정)과 **키 생략**(건너뜀 — 미확정 유지)이
+       다른 뜻이다. CLI 의 `n` 과 `s` 에 각각 대응한다.
+    """
+    # 늦은 import — 2,000행짜리 감리 모듈을 서버 기동 때 끌고 오지 않는다.
+    # (이 모듈 자체는 DB·네트워크를 안 건드린다. 실측 확인함)
+    from app.services import gam2_audit_judgment_test as A
+
+    for key in payload:
+        if key not in ("run_id", "exclusions", "intents", "code_prefixes"):
+            raise RunRequestError(f"알 수 없는 필드: {key!r}")
+
+    path = _reviewed_path(run_id, domain)
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    by_id = {r.get("dataset_id"): r for r in doc.get("results", [])}
+
+    # `save_to_exclusion_cache` 가 쓰는 캐시 경로를 도메인별로 확정한다.
+    # 안 부르면 다른 도메인의 캐시 파일에 쓴다(계약 7-7).
+    A.set_domain(domain)
+
+    for item in payload.get("exclusions") or []:
+        q = _q(questions, "exclusion", dataset_id=item.get("dataset_id"),
+               role_index=item.get("role_index"))
+        if not q["editable"]:
+            raise RunRequestError(
+                f"[{q['dataset_id']}] 배제반경은 이미 확정된 항목입니다(수정 불가).")
+        if "radius_m" not in item:
+            continue                    # 건너뜀 = 미확정 유지. CLI 의 's'
+        radius = item["radius_m"]
+        if radius is not None:
+            radius = _int_in(radius, 1, 5000, f"[{q['dataset_id']}] 배제반경(m)")
+        r = by_id[q["dataset_id"]]
+        flag = next(f for f in r["hitl_flags"]
+                    if f.get("type") == "exclusion_radius_missing"
+                    and f.get("role_index", 0) == q["role_index"])
+        A.apply_radius_answer(r, flag, radius)
+
+    for item in payload.get("intents") or []:
+        q = _q(questions, "intent", dataset_id=item.get("dataset_id"))
+        if not q["editable"]:
+            raise RunRequestError(
+                f"[{q['dataset_id']}] 데이터 용도는 이미 확정된 항목입니다(수정 불가).")
+        choice = _int_in(item.get("choice"), 1, 5, f"[{q['dataset_id']}] choice")
+        weight = item.get("weight")
+        if choice in (1, 2):
+            # 🔴 `apply_intent_answer` 는 abs(weight) 를 쓴다 — None 이면 TypeError 다.
+            #    부호는 choice 가 정하므로 여기서는 크기만 받는다.
+            weight = _num_in(weight, -1.0, 1.0, f"[{q['dataset_id']}] weight")
+            if weight == 0:
+                raise RunRequestError(
+                    f"[{q['dataset_id']}] 가점/감점인데 크기가 0 입니다. "
+                    "제외하려면 choice=5 를 쓰세요.")
+        elif weight is not None:
+            raise RunRequestError(
+                f"[{q['dataset_id']}] weight 는 choice 1·2 에서만 씁니다.")
+        A.apply_intent_answer(by_id[q["dataset_id"]], choice, weight)
+
+    for item in payload.get("code_prefixes") or []:
+        q = _q(questions, "code_prefix", dataset_id=item.get("dataset_id"),
+               op_index=item.get("op_index"))
+        if not q["editable"]:
+            raise RunRequestError(
+                f"[{q['dataset_id']}] 지역 코드는 이미 확정된 항목입니다(수정 불가).")
+        prefix = item.get("prefix")
+        if not isinstance(prefix, str) or not prefix.strip():
+            raise RunRequestError(f"[{q['dataset_id']}] prefix 가 비어 있습니다.")
+        op = by_id[q["dataset_id"]]["cleaning_ops"][q["op_index"]]
+        prm = op.setdefault("params", {})
+        prm["prefix"] = prefix.strip()
+        prm["prefix_confirmed"] = True
+        prm["prefix_confirmed_by"] = "human"
+
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _validate_weight(questions: list[dict], payload: dict) -> None:
+    """게이트B 답 검증. 적용은 `_stage_args` 가 `--radius`·`--weight` 로 넘긴다.
+
+    여기서 막는 것은 **하류에서 조용히 틀릴 것들**이다:
+      · 반경 누락 → run_weight_model 이 [R] HITL 로 내려가 stdin 없이 EOFError
+      · 충돌 지표 슬라이더 누락 → `--auto-weight` 가 `:352` 에서 ValueError
+        (그 자리에서 죽는 건 옳다. 다만 **게이트에서 400 으로 되돌리는 게 낫다** —
+         사람이 답을 고칠 수 있는 곳이 게이트뿐이다)
+      · 절대값 합 0 → `apply_weight_hitl:1108` ValueError → 전 후보 점수 0
+    """
+    for key in payload:
+        if key not in ("run_id", "radius", "slider"):
+            raise RunRequestError(f"알 수 없는 필드: {key!r}")
+    radius = payload.get("radius") or {}
+    slider = payload.get("slider") or {}
+    if not isinstance(radius, dict) or not isinstance(slider, dict):
+        raise RunRequestError("radius·slider 는 {지표ID: 값} 객체여야 합니다.")
+
+    known = {q["indicator_id"]: q for q in questions if q["kind"] == "weight"}
+    need_radius = {i for i, q in known.items() if q["radius_required"]}
+
+    unknown = sorted((set(radius) | set(slider)) - set(known))
+    if unknown:
+        raise RunRequestError(f"게이트에 없는 지표ID: {unknown}")
+    missing = sorted(need_radius - set(radius))
+    if missing:
+        raise RunRequestError(f"집계반경이 빠진 지표: {missing}")
+    extra = sorted(set(radius) - need_radius)
+    if extra:
+        raise RunRequestError(
+            f"행정동 단위 지표에는 집계반경이 없습니다: {extra}")
+    for iid, v in radius.items():
+        _int_in(v, 1, 5000, f"[{iid}] 집계반경(m)")
+
+    conflicted = sorted(i for i, q in known.items() if q.get("conflict"))
+    unresolved = sorted(set(conflicted) - set(slider))
+    if unresolved:
+        raise RunRequestError(
+            f"방향 판정이 충돌한 지표는 슬라이더 부호로 확정해야 합니다: {unresolved}")
+    merged = {i: q["slider_proposed"] for i, q in known.items()}
+    for iid, v in slider.items():
+        merged[iid] = _num_in(v, -1.0, 1.0, f"[{iid}] 슬라이더")
+    if sum(abs(v or 0.0) for v in merged.values()) == 0:
+        raise RunRequestError(
+            "전 지표 슬라이더 절대값 합이 0 입니다 — 모든 후보 점수가 0 이 됩니다.")
+
+
+def _stage_args(run_id: str, mode: str, stage: str) -> tuple[str | None, str | None]:
+    """단계에 넘길 `--radius`·`--weight`. 게이트B 답이 여기서 CLI 인자로 바뀐다.
+
+    🔴 사람 답을 코드로 다시 해석하지 않는다. 받은 값을 그대로 문자열로 옮긴다.
+       (`slider` 는 `-1~+1` 그대로 — 분해는 `apply_weight_hitl` 이 경계에서 한다)
+    """
+    if mode != MODE_HITL or stage != "3-2":
+        return (None, None)
+    ans = _read_answer(run_id, "weight")
+    if ans is None:                       # 게이트를 안 거치고 3-2 에 온 것 = 러너 버그
+        raise RuntimeError(f"게이트B 답변이 없습니다: {_answer_path(run_id, 'weight')}")
+    radius = ",".join(f"{k}={int(v)}" for k, v in (ans.get("radius") or {}).items())
+    weight = ",".join(f"{k}={v}" for k, v in (ans.get("slider") or {}).items())
+    return (radius or None, weight or None)
 
 
 # ══════════════════════════════════════════════════════════════════
