@@ -17,6 +17,8 @@
 >    엔드포인트 `POST /runs/{run_id}/hitl/{gate_id}` 신설 · `status` 에 `awaiting_hitl`
 >    추가 · 게이트B 답변 본문 확정(`{run_id, radius, slider}`, `weights` 아님) ·
 >    **폴링 종료 조건에 `awaiting_hitl` 이 추가된다**(7-3)
+> ⑥ **2026-08-05 — 진단·대조 스크립트 경로가 `검증용/` → `app/tools/` 로 바뀌었다**(5절·7-8절).
+>    계약 내용은 그대로다. 예전 판을 보고 `검증용\...` 을 치면 파일이 없다.
 
 ---
 
@@ -261,8 +263,9 @@ URL 이 트레이스백에 실릴 수 있고, **하필 그때가 로그를 제�
 - 서버 파이썬과 파이프라인 파이썬이 다르면 `OMNISITE_PYTHON` 으로 후자를 지정한다.
   파이프라인은 geopandas·shapely·pyarrow 를 요구한다.
 - `data_임시/흡연/` 에 쓰지 않는다. 회귀 픽스처가 거기 걸려 있다.
-- 작업 후 `python 검증용/check_fixture.py 흡연` 이 **57/57** 이어야 한다.
-  (스크립트는 저장소 루트가 아니라 `검증용/` 에 있다.)
+- 작업 후 `python app\tools\check_fixture.py 흡연` 이 **57/57** 이어야 한다.
+  (스크립트는 저장소 루트가 아니라 `app/tools/` 에 있다. 2026-08-05 에 `검증용/` 에서
+  옮겼다 — 그 폴더가 `.gitignore` 라 clone 에는 기준값만 있고 대조기가 없었다.)
   46 은 2026-08-03 판 항목 수다. S5(A) 계측이 들어가며 57 로 늘었다 —
   **숫자가 다르면 픽스처가 기준이다.** 여기 적힌 건 사본이다.
 
@@ -618,7 +621,7 @@ data_임시/search_cache/exclusion_radius_cache.json   키 = facility_type ("금
 
 두 가지를 확인했다. 둘 다 서버를 재시작하지 않고 러너를 **in-process** 로 불러 돌렸다.
 
-**① 게이트 로직 단위 — 37/37 통과** (`검증용\check_hitl_gate.py 흡연`, LLM 호출 0회)
+**① 게이트 로직 단위 — 37/37 통과** (`app\tools\check_hitl_gate.py 흡연`, LLM 호출 0회)
 
 - 계획 배열·재개 위치(`gate:` 칸에서 재개하지 않는다)
 - 게이트A 질문 — 기존 run 의 `reviewed.json` 에서 배제 3 · 의도 0 · 지역코드 1,
@@ -630,7 +633,7 @@ data_임시/search_cache/exclusion_radius_cache.json   키 = facility_type ("금
 - 답변 → CLI 인자 왕복. `_parse_radius_arg`·`_parse_weight_arg`(정본 파서)로 되읽어 일치
 
 **② 완주 무회귀 — fixture · hitl 두 모드가 같은 값에 도달**
-(`검증용\check_hitl_e2e.py 흡연`, 제안 패스 때문에 LLM 1회)
+(`app\tools\check_hitl_e2e.py 흡연`, 제안 패스 때문에 LLM 1회)
 
 비교 항목 **10개**: `w_human` · `w_critic` · `w_final` · `radius_m`(지표별 맵) ·
 `counts`(parcels·points·survive) · `spatial`(배제 union·내접폭 분포) ·
