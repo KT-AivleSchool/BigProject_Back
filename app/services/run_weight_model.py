@@ -185,7 +185,7 @@ SRC_WEIGHT = {"human": "human_confirmed", "fixture": "fixture", "cli": "cli"}
 HUMAN_SRC = {"human_confirmed", "hitl", "cli_fixed", "cli"}
 
 
-def build_hitl_record(radius_conf: dict, weight_sources: dict, value_source: str,
+def build_hitl_record(radius_conf: dict, weight_sources: dict, value_source: str | None,
                       radius_asked: bool, weight_asked: bool) -> dict:
     """`weight_set.json` 의 `hitl` 블록. **실행 방식이 아니라 값의 출처로 판정한다.**
 
@@ -201,6 +201,11 @@ def build_hitl_record(radius_conf: dict, weight_sources: dict, value_source: str
 
     `*_asked` 는 사람이 프롬프트를 본 경우다. **엔터로 제안값을 승인한 것도 확정**인데
     그때는 출처가 `llm` 그대로 남아서, 출처만 봐서는 안 잡힌다.
+
+    `value_source` 는 `--radius`/`--weight` **고정값의** 출처다. 고정값이 하나도
+    없는 완전 대화형 실행에서는 설명할 대상이 없으므로 `None` 이다 — 예전엔 그때도
+    `"cli"` 가 찍혀서 **CLI 에서 온 값이 없는데 CLI 라고** 적혔다.
+    그 경우의 근거는 `radius_sources`·`weight_sources` 쪽에 남는다(`hitl`·`llm`).
     """
     r_src = {v.get("source") for k, v in radius_conf.items()
              if not k.startswith("_") and isinstance(v, dict)}
@@ -262,11 +267,24 @@ def main():
     #   같은 `--radius 07+02=150` 이 (a) API 게이트B 에서 사람이 답한 값일 수도,
     #   (b) 회귀 픽스처를 재생한 값일 수도, (c) 사람이 명령줄에 직접 친 값일 수도 있다.
     #   추측하면 산출물이 거짓말한다(원칙 4·5) — 그래서 호출자가 알려준다.
-    ap.add_argument("--value-source", choices=["human", "fixture", "cli"], default="cli",
-                    help="--radius/--weight 값의 출처. "
+    #   🔴 기본값을 두지 않는다. 예전엔 `default="cli"` 였는데 `cli` 는 `HUMAN_SRC` 라
+    #   호출자가 인자를 빠뜨리면 **사람이 확정했다**로 조용히 샜다. 실제로 그렇게 샜다 —
+    #   `runs/r_20260805_017` 이 옛 러너에서 나와 `value_source: "cli"` 로 찍혔다.
+    #   추측하려면 안전한 쪽으로 해야 하는데 하필 가장 위험한 쪽이 기본값이었다(원칙 1).
+    ap.add_argument("--value-source", choices=["human", "fixture", "cli"], default=None,
+                    help="--radius/--weight 값의 출처. 고정값을 주면 **필수**다. "
                          "human=사람이 HITL 게이트에서 확정 · fixture=픽스처 재생(사람 개입 0) · "
-                         "cli=명령줄에서 직접 지정(기본)")
+                         "cli=명령줄에서 직접 지정")
     args = ap.parse_args()
+
+    # 고정값을 넘겼으면 그 출처를 반드시 선언하게 한다. 무거운 로드 전에 즉시 죽는다.
+    #   이 가드가 막는 건 사람의 오타가 아니라 **호출자(러너)의 미래 회귀**다.
+    #   새 호출 경로가 인자를 빠뜨리면 지금은 조용히 새지만, 여기서는 첫 실행에 터진다.
+    if (args.radius or args.weight) and args.value_source is None:
+        raise SystemExit(
+            "--radius/--weight 를 지정했으면 --value-source 로 그 값의 출처를 선언하세요.\n"
+            "  human=HITL 게이트에서 사람이 확정 · fixture=픽스처 재생 · cli=명령줄 직접 지정\n"
+            "  🔴 이 프로세스는 값만 봐서는 출처를 알 수 없습니다. 추측하면 산출물이 거짓말합니다.")
 
     # 사람이 실제로 프롬프트를 보고 승인했는가(엔터=승인도 확정이다).
     # 값의 출처만으로는 "제안값을 그대로 승인" 을 잡을 수 없어 따로 센다.
