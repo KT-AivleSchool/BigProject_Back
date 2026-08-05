@@ -75,6 +75,12 @@ API 로는 **게이트 2개**다 — 게이트A = STEP1 끝, 게이트B = STEP3 
   슬라이더 `-1~+1` 은 UI 표현이고 `apply_weight_hitl` 이 경계에서 분해한다.
   부호를 `seed_weight` 에 넣으면 `normalize_matrix` 의 cost 반전과 이중으로 걸려 조용히 뒤집힌다.
 - **출처 기록** 값마다 누가 정했는지 남긴다 — `radius_source` · `w_human_source` · `direction_source`
+  🔴 출처는 **실행 방식이 아니라 값이 어디서 왔는지**다. `--auto-weight` 로 유도하면
+  "대화형 루프를 건너뛴다"와 "사람이 확정 안 했다"가 섞인다 — 게이트 방식에선 앞만 참이다.
+  자식 프로세스는 `--radius 07+02=150` 이 사람 답인지 픽스처인지 **알 수 없다** →
+  호출자가 `--value-source {human,fixture,cli}` 로 선언한다. 어휘는 STEP1 의
+  `human_confirmed` 를 STEP3 도 그대로 쓴다. **엔터로 제안값 승인도 확정이다**
+  (그때 `source` 는 `llm` 로 남으므로 프롬프트를 띄웠는지 따로 센다).
 - **지역 데이터** `region_data/<지자체>/LSMD_CONT_LDREG_<시군구코드>_<연월>.shp`
   `find_region_file()` 이 **시군구코드로** 고른다(폴더명 아님). 지적도는 시군구 단위 배포.
 - **조례** STEP1 감리는 **발췌**(`select_articles`), STEP2 반경/설치가부는 **전문**.
