@@ -82,6 +82,12 @@ API 로는 **게이트 2개**다 — 게이트A = STEP1 끝, 게이트B = STEP3 
   호출자가 `--value-source {human,fixture,cli}` 로 선언한다. 어휘는 STEP1 의
   `human_confirmed` 를 STEP3 도 그대로 쓴다. **엔터로 제안값 승인도 확정이다**
   (그때 `source` 는 `llm` 로 남으므로 프롬프트를 띄웠는지 따로 센다).
+  🔴 `--radius`/`--weight` 를 주면 **`--value-source` 는 필수**다(없으면 `SystemExit`).
+  기본값을 두면 빠뜨렸을 때 조용히 새는데, 하필 `cli` 가 사람 취급이라
+  **"사람이 확정함"으로 과대 기록**됐다(`r_20260805_017` 실측). 고정값이 아예
+  없는 대화형 실행이면 `value_source` 는 `null` 이다 — CLI 에서 온 값이 없다.
+  ⚠ `cli`=가짜가 **아니다.** 사람이 직접 치면 `cli` 는 진짜 사람이다.
+  "`cli` 면 못 믿는다"는 **`runs/` 안에서만** 참이다(러너는 항상 인자를 넘기므로).
 - **지역 데이터** `region_data/<지자체>/LSMD_CONT_LDREG_<시군구코드>_<연월>.shp`
   `find_region_file()` 이 **시군구코드로** 고른다(폴더명 아님). 지적도는 시군구 단위 배포.
 - **조례** STEP1 감리는 **발췌**(`select_articles`), STEP2 반경/설치가부는 **전문**.
@@ -127,6 +133,10 @@ python app\services\run_weight_model.py <도메인> --candidates 후보_지적�
        --auto-radius --auto-weight --no-diag --bootstrap 0
 python app\services\gam4_site_select.py <도메인>
 ```
+
+🔴 `run_weight_model.py` 에 `--radius`·`--weight` 로 값을 고정할 때는
+**`--value-source cli` 를 같이 준다.** 없으면 `SystemExit` 이다(2026-08-05 `d2b780b`).
+위 표준 명령에는 고정값이 없어 그대로 쓰면 된다.
 
 도메인 폴더: `data_임시/<도메인>/data/`(원본) · `data_임시/<도메인>/law/`(조례 txt·md·pdf)
 
