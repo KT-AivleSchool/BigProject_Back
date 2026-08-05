@@ -42,6 +42,8 @@ MVP: 용산구 흡연부스 / 2차: 성동구 재활용정거장.
 | **타임아웃을 "무한"으로 읽음** | 위 건을 240초 타임아웃으로 재고 "끝나지 않는다"고 단정했다. 실제로는 525.7초에 **성공**했다. 게다가 `simulations` 의 진짜 사유는 DB 가 아니라 15행 `pdf_service` 부재였는데, 12행 DB 대기에 가려 240초 안에 안 드러났다 | 타임아웃은 "여기까진 안 끝났다"만 증명한다. **"끝나지 않는다"는 다른 주장이다**(원칙 5). 끝까지 돌려보고 말할 것. import 실패는 **첫 에러가 진짜 원인이 아닐 수 있다** — 앞 줄이 느리면 뒷줄 에러가 안 보인다 |
 | **응답 Content-Type** | `.gpkg` 25MB 바이너리가 `text/plain; charset=utf-8` 로 나갔다. `FileResponse` 에 `media_type` 미지정 → `mimetypes` 가 모르면 텍스트로 떨어진다. `res.text()` 쓰면 조용히 깨짐 | 파일 응답에 `media_type` 을 **명시**한다. 모르면 `text/plain` 이 아니라 `application/octet-stream` — 틀린 단정보다 참인 진술이 낫다 |
 | **전이 의존 버전 이동** | `pip install langchain-openai` 가 `openai` 를 2.44→2.53 으로 말없이 올렸다. `sse-starlette` 은 `starlette` 0.37→1.3 을 시도(막힘). **감시 목록 밖이라 안 보인다** | `pip install -c constraints.txt` + `--dry-run` 선행. 사후엔 `pip freeze` **전체 diff** — 5개만 보면 놓친다 |
+| **시각 정밀도 불일치** | `_SERVER_BOOT` 는 마이크로초인데 `started_at` 은 `timespec="seconds"` → 부팅과 **같은 초**에 시작된 run 을 `_reap_orphans` 가 "이전 서버의 고아"로 보고 실행 중에 `failed` 로 닫았다. uvicorn 으로는 부팅·요청 간격 때문에 **한 번도 안 나타난다** | 비교하는 두 값의 **절삭 단위를 맞춘다**. "실서버에서 안 나오니 없는 버그"가 아니다 — in-process 로도 돌려본다 |
+| **대조기가 없는 키를 읽음** | `report.json` 실제 키는 `counts`·`data_gap`·`topn` 인데 `후보수`·`gap`·`topN` 으로 읽어 `None == None`·`[] == []` 로 **전 항목 통과**. 아무것도 안 본 채 초록불이 떴다 | 비교 항목이 **비면 멈춘다**(`SystemExit`). 가짜 초록불은 회귀보다 나쁘다 — 그 뒤 모든 판단의 근거가 된다 |
 
 ---
 
@@ -59,6 +61,8 @@ STEP4  입지 선정(MCLP)      gam4_site_select.py · gam4_spatial_ops.py · ga
 ```
 
 HITL 위치: STEP1(배제반경·데이터의도·지역코드) · STEP3 `[R]`(집계반경) `[W]`(가중치)
+API 로는 **게이트 2개**다 — 게이트A = STEP1 끝, 게이트B = STEP3 중간(`[R]`+`[W]` 합침).
+`input()` 실측: `gam2_audit_judgment_test` 4개 · `run_weight_model` 3개 · **나머지 전부 0개.**
 
 ---
 
@@ -79,14 +83,16 @@ HITL 위치: STEP1(배제반경·데이터의도·지역코드) · STEP3 `[R]`(�
 ## 실행
 
 ```bat
-:: 진단 (LLM 호출 0회) — 전부 검증용\ 아래다. 루트에는 없다.
-python 검증용\check_loader_health.py <도메인>     :: 좌표계·행정동 조인키
-python 검증용\check_ordinance_select.py <도메인>  :: 조례 조문 선별
-python 검증용\check_exclusion_state.py <도메인>   :: 배제 레이어 면적
-python 검증용\check_fixture.py <도메인>           :: 회귀 픽스처 대조 (S12) [--restore]
-python 검증용\check_postgis_parity.py <도메인>    :: S5 — geopandas ↔ PostGIS 술어 **값** 대조
-python 검증용\bench_postgis.py <도메인>          :: S5 — 같은 술어 **속도** 대조
-                                                 :: (둘 다 도커 필요. PGIS_DSN 으로 접속지 지정)
+:: 진단 (LLM 호출 0회) — 전부 app\tools\ 아래다. 루트에는 없다.
+python app\tools\check_loader_health.py <도메인>     :: 좌표계·행정동 조인키
+python app\tools\check_ordinance_select.py <도메인>  :: 조례 조문 선별
+python app\tools\check_exclusion_state.py <도메인>   :: 배제 레이어 면적
+python app\tools\check_fixture.py <도메인>           :: 회귀 픽스처 대조 (S12) [--restore]
+python app\tools\check_hitl_gate.py <도메인>         :: A2 — HITL 게이트 단위 37항목 (runs/ 불필요)
+python app\tools\check_hitl_e2e.py <도메인>          :: A2 — fixture ↔ hitl 완주 대조 (🔴 LLM 1회)
+python app\tools\check_postgis_parity.py <도메인>    :: S5 — geopandas ↔ PostGIS 술어 **값** 대조
+python app\tools\bench_postgis.py <도메인>           :: S5 — 같은 술어 **속도** 대조
+                                                     :: (둘 다 도커 필요. PGIS_DSN 으로 접속지 지정)
 
 :: 파이프라인
 python app\services\gam2_run_pipeline.py <도메인> "<지역> <시설> 부지 선정"
@@ -100,14 +106,24 @@ python app\services\gam4_site_select.py <도메인>
 
 도메인 폴더: `data_임시/<도메인>/data/`(원본) · `data_임시/<도메인>/law/`(조례 txt·md·pdf)
 
+🔴 **`data_임시/*/data/`·`region_data/` 는 `.gitignore` 대상이라 clone 에 안 들어온다.**
+원본 데이터·지적도는 받는 사람이 따로 구해야 한다. 코드를 처음 받은 사람에게는
+`01_설계결정\실행_가이드_인수인계.md` 를 준다.
+
+진단·대조 스크립트는 **`app/tools/` 로 옮겨 추적한다**(2026-08-05, 사람 지시).
+예전엔 `검증용/` 에 있었고 그 폴더가 gitignore 라 **픽스처(기준값)는 리포에 있는데
+대조기가 없었다** — 재는 자가 없는 자였다. `검증용/` 에는 일회성 분석기
+(`analyze_clean_perf.py`) 하나만 남는다.
+스크립트는 `__file__` 에서 **두 단계 위**를 저장소 루트로 잡는다(옮기면서 같이 고쳤다).
+
 ### 흡연 회귀 기준 (고정 조건에서만 유효)
 
 **기준은 픽스처다** — `data_임시/흡연_FIX/` (2026-08-04 재고정, S5(A) 계측 추가).
 **여기 적힌 숫자는 사본이다. 다르면 픽스처가 맞다.**
 
 ```bat
-python 검증용\check_fixture.py 흡연      :: 57항목 대조 (읽기 전용). --restore 로 reviewed.json 복원
-python 검증용\make_fixture.py  흡연 --write  :: 기준선 이동. 수기값(--spacing·--cli) 필수
+python app\tools\check_fixture.py 흡연      :: 57항목 대조 (읽기 전용). --restore 로 reviewed.json 복원
+python app\tools\make_fixture.py  흡연 --write  :: 기준선 이동. 수기값(--spacing·--cli) 필수
 ```
 
 배제 union·커버 쌍·내접폭 분포는 이제 `report.json`(`spatial`·`coverage`)에서 **자동으로 읽는다**.
@@ -159,7 +175,7 @@ LLM 이 달라진 것과 코드가 회귀한 것을 섞어서 보여주면 진�
 3. **실행 조건** — `--spacing 20`. 후보점이 절반 이하가 된 주된 원인이며 회귀가 아니다.
    구 픽스처는 spacing 을 기록조차 안 했다(그래서 안 걸렸다). 지금은 `조건.spacing` 에 남는다.
 
-**레이어별 실측** — `검증용\check_exclusion_state.py 흡연` (LLM 호출 0회, 픽스처와 자동 대조)
+**레이어별 실측** — `app\tools\check_exclusion_state.py 흡연` (LLM 호출 0회, 픽스처와 자동 대조)
 
 | ID | 시설 | 감리 | S9판정 | 반경 | 건수 | 기존 | S9 |
 |---|---|---|---|---|---|---|---|
@@ -209,7 +225,10 @@ S9 증가분의 출처: `01 금연구역` 0.0245→0.6325(학·공 55점이 면 
 ```
 D:\obsidian_claude\10_OmniSite\
   남은 작업들\00_남은작업.md          ← S1~S12 전체. 여기부터
-  02_작업일지\2026-08-04c.md          ← 최근 작업 (라우터 표면 확정 · 폐기 스캐폴딩 삭제 · 의존성 핀)
+  02_작업일지\2026-08-05c.md          ← 최근 작업 (프런트: 화면 1~4 완주 확인 · 하이드레이션 사고)
+  02_작업일지\2026-08-05b.md          ← A2 HITL 게이트 구현 완료
+  02_작업일지\2026-08-05.md
+  02_작업일지\2026-08-04c.md          ← 라우터 표면 확정 · 폐기 스캐폴딩 삭제 · 의존성 핀
   02_작업일지\2026-08-04b.md          ← S5 선행 검증 (계측 + PostGIS 정합성 실측)
   02_작업일지\2026-08-04.md           ← 파이프라인 실행 API 신설
   02_작업일지\2026-08-03b.md          ← S4·S6·S12 완료
@@ -221,6 +240,8 @@ D:\obsidian_claude\10_OmniSite\
   01_설계결정\STEP3_가중치_설계.md
   01_설계결정\STEP4_위치선정_설계.md
   01_설계결정\의존패키지_외부자원.md    ← 설치·API키·참조데이터
+  01_설계결정\실행_가이드_인수인계.md   ← **코드를 처음 받은 사람용** (백엔드+프런트 · 2026-08-05)
+  01_설계결정\프런트_설계.md            ← 프런트 세션이 쓴다. 화면↔산출물 대응·rewrite 경계
   작업 노트\배제구역_점면판정_지목배수.md  ← S9
   작업 노트\S10_조례_단서조항_설치가부.md ← S10
 ```
@@ -230,35 +251,20 @@ D:\obsidian_claude\10_OmniSite\
 
 ---
 
-## 현재 우선순위 (2026-08-04)
+## 현재 우선순위 (2026-08-05)
+
+**1차 목표는 화면 1~4 다.** 화면 5(공청회)·6(PDF)은 다른 팀원에게 넘어갔다 —
+먼저 손대지 않는다. 아래 🔴 는 그 인계 사실을 반영한 잔여분이다.
 
 ```
-🔴 화면5 (/simulation)   pdf_service 폐기 → 재작성. /simulation·/simulations 두 prefix 로
-                        같은 라우터를 두 번 등록하고 있었다 — 한쪽만 살리면 조용히 404.
-                        PDF 호출부는 simulations.py:500 한 곳뿐이라 화면6 없이 먼저 낼 수 있다
 🔴 화면1 (/upload)       폐기 아님. 선행조건은 기능이 아니라 구조 —
                         RagVectorStorage() 를 모듈 최상단이 아니라 요청 시점에 만들 것.
                         그다음 gam2_doc_extract.py + gam2_ordinance_select.py (#203)
-🔴 A2 HITL API           **게이트 방식**으로 확정(2026-08-05 사람 승인). 계약 7절.
-                        HITL 은 파이프라인이 멈춰서 사람을 기다리는 게이트다 —
-                        게이트A(STEP1 끝: 배제반경·데이터의도·지역코드) ·
-                        게이트B(STEP3 중간: [R] 집계반경·[W] 가중치 -1~+1).
-                        `status: awaiting_hitl` + `gate` 로 멈추고 POST 로 이어간다.
-                        **재실행 0회.** STEP4 는 안 넣는다(`input()` 0개, 설계와 일치)
-                        🔴 "다 돌린 뒤 뒤집고 재실행" 으로 설계했던 건 **틀렸다.**
-                           재실행범위·reused 상태·부분재실행이 전부 그 전제에서 나온
-                           가짜 문제였다. 원인 — 그때 mode 가 fixture(무입력 완주)
-                           하나뿐이라 **내가 만든 것을 파이프라인의 모습으로 착각**했다.
-                           `stdin=DEVNULL` 은 러너가 박은 것이지 파이프라인의 성질이 아니다.
-                           실측하면 바로 보였다: `input()` 은 gam2_audit_judgment_test 4개 ·
-                           run_weight_model 3개 · 나머지 전부 0개
-                        배선은 거의 없다 — `apply_radius_answer`·`apply_intent_answer`·
-                        `apply_weight_hitl` 이 이미 순수 함수이고, run_weight_model 에
-                        `--radius`·`--weight` 인자가 이미 있다. 정본 수정 불필요
+                        지금 화면1 에서 되는 것은 "실행 생성"뿐이다
 ⬜ 이슈 #205 되묻기      admin_crosswalk `region_code` 가 통계청/행자부 중 뭔지 ·
                         adm_dong 3,559 ↔ crosswalk 3,555 = 4건 차이 ·
                         경계는 통계청 코드인데 우리는 행자부 → 크로스워크 경유 강제
-⬜ 조문 선별 검증        검증용\check_ordinance_select.py 재활용 — 누락 조문 확인
+⬜ 조문 선별 검증        app\tools\check_ordinance_select.py 재활용 — 누락 조문 확인
 ⬜ 인용 법령 한정        규제 조문에서만 추출 (한 줄, 크레딧 절약)
 ⬜ 성동구 완주           OpenAI 크레딧 충전 후
 
@@ -280,7 +286,26 @@ D:\obsidian_claude\10_OmniSite\
        run.log 는 우리가 뭘 찍을지 통제하지 않는 자식 stdout 이라 마스킹 후 내보낸다:
        `<repo>`·`<home>`(OS 계정명)·`<python>`·`<마스킹:KEY이름>`. 지운 자리는 표시를
        남긴다 — 조용히 없애면 원본인 척한다(원칙 4)
-✅ 라우터 표면 확정  /api 경로 8개(auth 2·audit 2·pipeline 4)  2026-08-04
+✅ A2  HITL API — **게이트 방식**  2026-08-05 완료 (사람 승인 · 계약 7절)
+       HITL 은 파이프라인이 멈춰서 사람을 기다리는 게이트다. **재실행 0회.**
+       `mode: "hitl"` · `POST /runs/{id}/hitl/{audit,weight}` ·
+       `status: awaiting_hitl` + `gate` 로 멈추고 POST 로 이어간다
+       게이트A(STEP1 끝: 배제반경·데이터의도·지역코드 — 확정분은 **읽기 전용**) ·
+       게이트B(STEP3 중간: [R] 집계반경 + [W] 슬라이더 -1~+1 을 **한 게이트로**).
+       게이트B 앞에 `--propose-only` 제안 패스 1회(9.6초, LLM mini 1회)를 둔다 —
+       제안값은 돌려봐야 나오고, API 쪽에서 다시 구현하면 CLI 와 갈라진다
+       STEP4 는 게이트가 없다(`input()` 0개, 설계와 일치)
+       🔴 "다 돌린 뒤 뒤집고 재실행" 으로 설계했던 건 **틀렸다.** 재실행범위·
+          reused 상태·부분재실행이 전부 그 전제에서 나온 가짜 문제였다.
+          원인 — 그때 mode 가 fixture(무입력 완주) 하나뿐이라 **내가 만든 것을
+          파이프라인의 모습으로 착각**했다. `stdin=DEVNULL` 은 러너가 박은 것이지
+          파이프라인의 성질이 아니다. 실측하니 바로 보였다: `input()` 은
+          gam2_audit_judgment_test 4개 · run_weight_model 3개 · 나머지 전부 0개
+       정본(`gam2_*`) 수정 없음. 답변 적용은 `apply_radius_answer`·
+       `apply_intent_answer`·`apply_weight_hitl` **정본 함수로만** 한다
+       검증 — `check_hitl_gate.py` 37/37 · `check_hitl_e2e.py` 로
+       fixture ↔ hitl **10항목 전부 일치**(같은 답을 넣으면 같은 값이 나온다)
+✅ 라우터 표면 확정  /api 경로 **9개**(auth 2·audit 2·pipeline 5)  2026-08-05 갱신
        services/dummy(4248ff3) · api/v1/{ahp,lands}.py(7f66fd9) 삭제.
        gis_service·ahp_service 는 **미구현이 아니라 폐기** — 만들면 안 된다.
        🔴 pdf_service·simulations 를 여기 같이 넣었던 건 **틀렸다**(정정 2026-08-04).
@@ -291,7 +316,7 @@ D:\obsidian_claude\10_OmniSite\
 S10  조례 단서 조항 "금연구역 ≠ 설치 불가"           설계 확정
 S11  조례 없을 때 상위법 직접 검색 + x좌표→4326
 🔴 S5  공간 연산 PostGIS 전환 — **실측하고 중단했다 (2026-08-04)**
-     `검증용\bench_postgis.py 흡연` — 정합성은 맞았지만 **6~10배 느리다.**
+     `app\tools\bench_postgis.py 흡연` — 정합성은 맞았지만 **6~10배 느리다.**
        neighbors_within  geopandas 1.24s ↔ PostGIS 12.9s (**0.10x**, 쌍 7.0M)
        inscribed_width   8.41s ↔ 9.6s (0.87x) · buffer_union 은 비김
      반증 2건 다 실패 — work_mem 4MB→1GB 무변화 · SQL 안에서 집계해 전송 0 으로
