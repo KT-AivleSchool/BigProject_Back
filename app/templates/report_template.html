@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <style>
+        @page {
+            size: A4;
+            margin: 20mm;
+            @bottom-right {
+                content: counter(page) " / " counter(pages);
+                font-size: 9pt;
+                color: #777;
+            }
+        }
+        body {
+            font-family: 'NanumGothic', 'Malgun Gothic', sans-serif;
+            color: #333;
+            line-height: 1.6;
+        }
+        h1 {
+            text-align: center;
+            font-size: 24pt;
+            color: #1e3a8a;
+            margin-bottom: 30px;
+        }
+        .section {
+            margin-bottom: 25px;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 10px;
+        }
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        .table th, .table td {
+            border: 1px solid #ccc;
+            padding: 8px;
+            text-align: left;
+        }
+        .table th {
+            background-color: #f3f4f6;
+        }
+        .log-box {
+            background-color: #f9fafb;
+            border: 1px solid #e5e7eb;
+            padding: 15px;
+            font-size: 10pt;
+            max-height: 400px;
+            overflow: hidden;
+        }
+    </style>
+</head>
+<body>
+    <h1>스마트시티 입지 타당성 및 갈등 분석 보고서</h1>
+    
+    <div class="section">
+        <h3>1. 대상 후보지 정보</h3>
+        <table class="table">
+            <tr><th>지번 주소</th><td>{{ candidate_jibun }}</td></tr>
+            <tr><th>위도 / 경도</th><td>{{ candidate_lat }} / {{ candidate_lng }}</td></tr>
+            <tr><th>대상 인프라</th><td>{{ facility_type }}</td></tr>
+            <tr><th>갈등 민감도 점수</th><td>{{ conflict_sensitivity_score }} / 10.0</td></tr>
+        </table>
+    </div>
+
+    <div class="section">
+        <h3>2. AHP 입지 가중치 설정 락(Lock) 명세</h3>
+        <table class="table">
+            <thead>
+                <tr><th>평가 인자</th><th>가중치 강도</th></tr>
+            </thead>
+            <tbody>
+                {% for k, v in ahp_weights.items() %}
+                <tr><td>{{ k }}</td><td>{{ v }}</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="section" style="page-break-before: always;">
+        <h3>3. AI 에이전트 3자 모의 심의 토론 로그</h3>
+        <div class="log-box">
+            {% for log in debate_logs %}
+            <p><strong>[{{ log.sender }}]</strong>: {{ log.text }}</p>
+            {% endfor %}
+        </div>
+    </div>
+</body>
+</html>

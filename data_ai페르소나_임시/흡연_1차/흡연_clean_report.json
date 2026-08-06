@@ -1,0 +1,4502 @@
+{
+  "_schema": {
+    "설명": "STEP3 정제 실행 리포트. dataset별 정제 결과·flag·op로그.",
+    "gis_input": "위치선정 GIS 입력 대상 여부(reference_only면 false)",
+    "whitelists_생산": {
+      "bus_station_whitelist": 336,
+      "서울시 역사마스터 정보": 13
+    }
+  },
+  "facility": "흡연부스",
+  "region": "용산구",
+  "results": [
+    {
+      "dataset_id": "04",
+      "filename": "B1_서울특별시_용산구_금연구역_20260131.csv",
+      "roles": [
+        "hard_exclusion"
+      ],
+      "reference_only": false,
+      "gis_input": true,
+      "rows_before": 90,
+      "rows_after": 90,
+      "drop_ratio": 0.0,
+      "n_ops": 2,
+      "n_flags": 0,
+      "flags": [],
+      "op_logs": [
+        {
+          "seq": 0,
+          "op_id": "spatial_join_admin",
+          "params": {
+            "coord_cols": [
+              "경도",
+              "위도"
+            ],
+            "code_col": "ADM_CD",
+            "name_col": "ADM_NM"
+          },
+          "rows_before": 90,
+          "rows_after": 90,
+          "n_flags": 0,
+          "elapsed_sec": 0.73
+        },
+        {
+          "seq": 1,
+          "op_id": "filter_by_value",
+          "params": {
+            "col": "SIGUNGU_NM",
+            "allowed": [
+              "용산구"
+            ]
+          },
+          "rows_before": 90,
+          "rows_after": 90,
+          "n_flags": 0,
+          "elapsed_sec": 0.0
+        }
+      ],
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_04.gpkg",
+      "format": "gpkg",
+      "params_autofilled": [],
+      "whitelist_resolved": [],
+      "unknown_ops": [],
+      "status": "ok"
+    },
+    {
+      "dataset_id": "10",
+      "filename": "LOCAL_PEOPLE_DONG_202605.csv",
+      "roles": [
+        "positive_factor"
+      ],
+      "reference_only": false,
+      "gis_input": true,
+      "rows_before": 315456,
+      "rows_after": 11904,
+      "drop_ratio": 0.9623,
+      "n_ops": 2,
+      "n_flags": 0,
+      "flags": [],
+      "op_logs": [
+        {
+          "seq": 0,
+          "op_id": "filter_by_code_prefix",
+          "params": {
+            "col": "행정동코드",
+            "prefix": "11170",
+            "prefix_confirmed": true
+          },
+          "rows_before": 315456,
+          "rows_after": 11904,
+          "n_flags": 0,
+          "elapsed_sec": 0.01
+        },
+        {
+          "seq": 1,
+          "op_id": "cast_numeric",
+          "params": {
+            "cols": [
+              "총생활인구수",
+              "남자0세부터9세생활인구수",
+              "남자10세부터14세생활인구수",
+              "남자15세부터19세생활인구수",
+              "남자20세부터24세생활인구수",
+              "남자25세부터29세생활인구수",
+              "남자30세부터34세생활인구수",
+              "남자35세부터39세생활인구수",
+              "남자40세부터44세생활인구수",
+              "남자45세부터49세생활인구수",
+              "남자50세부터54세생활인구수",
+              "남자55세부터59세생활인구수",
+              "남자60세부터64세생활인구수",
+              "남자65세부터69세생활인구수",
+              "남자70세이상생활인구수",
+              "여자0세부터9세생활인구수",
+              "여자10세부터14세생활인구수",
+              "여자15세부터19세생활인구수",
+              "여자20세부터24세생활인구수",
+              "여자25세부터29세생활인구수",
+              "여자30세부터34세생활인구수",
+              "여자35세부터39세생활인구수",
+              "여자40세부터44세생활인구수",
+              "여자45세부터49세생활인구수",
+              "여자50세부터54세생활인구수",
+              "여자55세부터59세생활인구수",
+              "여자60세부터64세생활인구수",
+              "여자65세부터69세생활인구수",
+              "여자70세이상생활인구수"
+            ]
+          },
+          "rows_before": 11904,
+          "rows_after": 11904,
+          "n_flags": 0,
+          "elapsed_sec": 0.1
+        }
+      ],
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_10.parquet",
+      "format": "parquet",
+      "params_autofilled": [],
+      "whitelist_resolved": [],
+      "unknown_ops": [],
+      "status": "ok"
+    },
+    {
+      "dataset_id": "05",
+      "filename": "서울시 어린이집 정보(표준 데이터).csv",
+      "roles": [
+        "hard_exclusion"
+      ],
+      "reference_only": false,
+      "gis_input": true,
+      "rows_before": 9483,
+      "rows_after": 173,
+      "drop_ratio": 0.9818,
+      "n_ops": 2,
+      "n_flags": 630,
+      "flags": [
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 501,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 2040,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 2078,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 2160,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 2163,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 2171,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 2283,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 2495,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 2625,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 2645,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 2832,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3120,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3153,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3172,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3185,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3216,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3313,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3390,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3403,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3424,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3485,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3522,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3544,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3571,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3587,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3596,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3613,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3618,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3630,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3641,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3648,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3653,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3663,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3703,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3707,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3715,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3716,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3719,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3727,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3775,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3786,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3791,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3848,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3852,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3857,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3864,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3887,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3906,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3911,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3927,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3943,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3954,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3956,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3957,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 3977,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4025,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4026,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4042,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4046,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4049,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4054,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4103,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4114,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4118,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4127,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4134,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4167,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4172,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4176,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4183,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4204,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4228,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4242,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4262,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4268,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4269,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4295,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4303,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4315,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4325,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4338,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4340,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4352,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4354,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4369,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4379,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4380,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4383,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4399,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4401,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4408,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4414,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4419,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4432,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4449,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4460,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4482,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4495,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4502,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4512,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4516,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4522,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4556,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4567,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4586,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4598,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4612,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4622,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4623,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4629,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4635,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4667,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4672,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4676,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4688,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4692,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4696,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4706,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4713,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4725,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4738,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4751,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4778,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4791,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4811,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4821,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4826,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4840,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4859,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4860,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4863,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4876,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4882,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4912,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4924,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4925,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4934,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4940,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4949,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4953,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4965,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4969,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4971,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4980,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 4983,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5003,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5020,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5023,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5032,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5041,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5042,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5068,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5083,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5127,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5146,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5155,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5159,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5167,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5173,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5184,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5194,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5214,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5238,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5268,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5273,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5274,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5284,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5294,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5309,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5321,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5323,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5341,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5345,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5360,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5362,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5363,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5369,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5375,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5386,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5407,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5416,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5417,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5436,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5439,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5455,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5458,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5471,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5476,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5489,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5490,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5498,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5499,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5507,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5510,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5516,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5539,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5544,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5546,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5547,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5548,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5554,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5557,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5561,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5562,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5568,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5580,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5586,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5589,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5590,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5593,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5596,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5610,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5623,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5629,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5631,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5642,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5643,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5656,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5658,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5662,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5670,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5671,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5691,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5724,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5730,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5736,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5738,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5740,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5745,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5756,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5780,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5800,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5824,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5827,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5842,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5866,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5867,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5878,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5879,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5891,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5892,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5895,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5910,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5914,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5938,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5940,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5950,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5969,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 5990,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6002,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6007,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6038,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6064,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6080,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6088,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6108,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6124,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6126,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6135,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6137,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6145,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6165,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6169,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6175,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6188,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6195,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6203,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6226,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6232,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6233,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6241,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6254,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6256,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6271,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6278,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6286,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6306,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6325,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6329,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6346,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6347,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6354,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6356,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6372,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6373,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6377,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6391,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6393,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6403,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6412,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6423,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6424,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6440,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6448,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6453,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6469,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6477,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6479,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6493,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6499,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6502,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6507,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6512,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6534,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6541,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6543,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6553,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6563,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6565,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6573,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6585,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6589,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6615,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6621,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6624,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6625,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6628,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6648,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6649,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6650,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6651,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6652,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6657,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6662,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6669,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6690,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6695,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6707,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6710,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6722,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6747,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6755,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6762,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6764,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6771,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6780,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6782,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6783,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6792,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6809,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6823,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6828,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6835,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6837,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6854,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6861,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6874,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6886,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6891,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6895,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6904,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6922,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6926,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6928,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6931,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6934,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6941,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6947,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6948,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6964,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6965,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6971,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6972,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 6987,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7027,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7028,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7029,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7058,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7067,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7072,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7075,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7093,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7095,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7104,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7106,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7110,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7113,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7114,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7122,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7127,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7129,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7147,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7158,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7183,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7186,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7198,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7202,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7209,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7212,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7228,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7232,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7235,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7239,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7242,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7243,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7245,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7252,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7270,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7281,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7291,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7293,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7296,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7310,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7324,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7327,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7339,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7344,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7351,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7357,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7358,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7361,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7365,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7372,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7380,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7398,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7402,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7405,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7431,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7436,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7462,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7464,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7466,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7471,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7474,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7475,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7481,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7486,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7496,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7500,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7503,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7509,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7510,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7512,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7518,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7521,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7527,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7530,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7532,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7538,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7562,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7577,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7590,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7594,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7600,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7611,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7614,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7615,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7620,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7644,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7657,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7682,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7700,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7712,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7715,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7717,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7735,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7750,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7758,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7770,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7771,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7784,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7788,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7790,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7792,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7805,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7809,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7813,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7815,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7818,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7820,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7832,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7836,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7842,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7843,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7859,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7873,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7893,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7900,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7929,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7950,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7955,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7963,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7965,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7972,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 7976,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8002,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8006,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8011,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8018,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8024,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8034,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8038,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8041,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8069,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8075,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8079,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8102,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8108,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8124,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8129,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8140,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8148,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8149,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8152,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8154,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8161,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8169,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8197,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8206,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8217,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8234,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8256,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8259,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8267,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8282,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8287,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8288,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8296,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8300,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8311,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8316,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8318,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8319,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8321,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8322,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8331,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8334,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8342,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8348,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8351,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8354,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8387,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8398,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8409,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8415,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8431,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8442,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8444,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8447,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8455,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8460,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8476,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8480,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8489,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8496,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8534,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8543,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8551,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8553,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8554,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8576,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8578,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8586,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8587,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8605,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8609,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8617,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8639,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8660,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8667,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8671,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8682,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8684,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8694,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8696,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8715,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8723,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8734,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8735,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8738,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8760,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8768,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8769,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8805,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8812,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8840,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8849,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8861,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8862,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8872,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8887,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8890,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8903,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8909,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8913,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8930,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8950,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8955,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8990,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 8993,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9007,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9010,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9016,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9071,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9086,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9119,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9125,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9132,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9145,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9161,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9162,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9171,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9177,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9183,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9192,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9194,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9223,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9225,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9227,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9244,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9263,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9271,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9273,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9285,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9293,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9398,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9467,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9468,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9469,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9470,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9471,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9473,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9474,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9475,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9476,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9477,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9478,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9479,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9481,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 9482,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        }
+      ],
+      "op_logs": [
+        {
+          "seq": 0,
+          "op_id": "spatial_join_admin",
+          "params": {
+            "coord_cols": [
+              "시설 경도(좌표값)",
+              "시설 위도(좌표값)"
+            ]
+          },
+          "rows_before": 9483,
+          "rows_after": 9483,
+          "n_flags": 630,
+          "elapsed_sec": 0.68
+        },
+        {
+          "seq": 1,
+          "op_id": "filter_by_value",
+          "params": {
+            "col": "SIGUNGU_NM",
+            "allowed": [
+              "용산구"
+            ]
+          },
+          "rows_before": 9483,
+          "rows_after": 173,
+          "n_flags": 0,
+          "elapsed_sec": 0.0
+        }
+      ],
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_05.gpkg",
+      "format": "gpkg",
+      "params_autofilled": [],
+      "whitelist_resolved": [],
+      "unknown_ops": [],
+      "status": "ok"
+    },
+    {
+      "dataset_id": "07",
+      "filename": "서울시 역사마스터 정보.csv",
+      "roles": [
+        "hard_exclusion",
+        "positive_factor"
+      ],
+      "reference_only": false,
+      "gis_input": true,
+      "rows_before": 784,
+      "rows_after": 17,
+      "drop_ratio": 0.9783,
+      "n_ops": 2,
+      "n_flags": 0,
+      "flags": [],
+      "op_logs": [
+        {
+          "seq": 0,
+          "op_id": "spatial_join_admin",
+          "params": {
+            "coord_cols": [
+              "경도",
+              "위도"
+            ],
+            "code_col": "ADM_CD",
+            "name_col": "ADM_NM"
+          },
+          "rows_before": 784,
+          "rows_after": 784,
+          "n_flags": 0,
+          "elapsed_sec": 0.63
+        },
+        {
+          "seq": 1,
+          "op_id": "filter_by_value",
+          "params": {
+            "col": "SIGUNGU_NM",
+            "allowed": [
+              "용산구"
+            ]
+          },
+          "rows_before": 784,
+          "rows_after": 17,
+          "n_flags": 0,
+          "elapsed_sec": 0.0
+        }
+      ],
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_07.gpkg",
+      "format": "gpkg",
+      "params_autofilled": [],
+      "whitelist_resolved": [],
+      "unknown_ops": [],
+      "status": "ok"
+    },
+    {
+      "dataset_id": "06",
+      "filename": "서울시버스정류소위치정보(20260602).xlsx",
+      "roles": [
+        "positive_factor",
+        "hard_exclusion"
+      ],
+      "reference_only": false,
+      "gis_input": true,
+      "rows_before": 11253,
+      "rows_after": 314,
+      "drop_ratio": 0.9701,
+      "n_ops": 2,
+      "n_flags": 0,
+      "flags": [],
+      "op_logs": [
+        {
+          "seq": 0,
+          "op_id": "spatial_join_admin",
+          "params": {
+            "coord_cols": [
+              "X좌표",
+              "Y좌표"
+            ],
+            "code_col": "ADM_CD",
+            "name_col": "ADM_NM"
+          },
+          "rows_before": 11253,
+          "rows_after": 11253,
+          "n_flags": 0,
+          "elapsed_sec": 0.63
+        },
+        {
+          "seq": 1,
+          "op_id": "filter_by_value",
+          "params": {
+            "col": "SIGUNGU_NM",
+            "allowed": [
+              "용산구"
+            ]
+          },
+          "rows_before": 11253,
+          "rows_after": 336,
+          "n_flags": 0,
+          "elapsed_sec": 0.0
+        }
+      ],
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_06.gpkg",
+      "format": "gpkg",
+      "params_autofilled": [],
+      "whitelist_resolved": [],
+      "unknown_ops": [],
+      "status": "ok",
+      "pruned_by": {
+        "consumer": "08",
+        "dropped": 22,
+        "reason": "08 에 대응 데이터가 없는 키"
+      }
+    },
+    {
+      "dataset_id": "12",
+      "filename": "서울특별시 용산구_가로휴지통_20240630.csv",
+      "roles": [
+        "positive_factor"
+      ],
+      "reference_only": false,
+      "gis_input": true,
+      "rows_before": 281,
+      "rows_after": 281,
+      "drop_ratio": 0.0,
+      "n_ops": 4,
+      "n_flags": 2,
+      "flags": [
+        {
+          "type": "geocode_failed",
+          "severity": "high",
+          "row_id": 225,
+          "message": "주소→좌표 변환 실패",
+          "raw_text": "서울특별시 용산구 이태원동 666"
+        },
+        {
+          "type": "admin_join_miss",
+          "severity": "high",
+          "row_id": 225,
+          "message": "행정동 공간조인 실패(경계 밖)"
+        }
+      ],
+      "op_logs": [
+        {
+          "seq": 0,
+          "op_id": "trim_whitespace",
+          "params": {
+            "cols": [
+              "설치주소",
+              "상세위치"
+            ]
+          },
+          "rows_before": 281,
+          "rows_after": 281,
+          "n_flags": 0,
+          "elapsed_sec": 0.0
+        },
+        {
+          "seq": 1,
+          "op_id": "run_geocode",
+          "params": {
+            "address_cols": [
+              "설치주소",
+              "상세위치"
+            ],
+            "type_order": [
+              "road",
+              "parcel"
+            ],
+            "out_cols": [
+              "위도",
+              "경도"
+            ]
+          },
+          "rows_before": 281,
+          "rows_after": 281,
+          "n_flags": 1,
+          "elapsed_sec": 242.89
+        },
+        {
+          "seq": 2,
+          "op_id": "spatial_join_admin",
+          "params": {
+            "coord_cols": [
+              "경도",
+              "위도"
+            ],
+            "code_col": "ADM_CD",
+            "name_col": "ADM_NM"
+          },
+          "rows_before": 281,
+          "rows_after": 281,
+          "n_flags": 1,
+          "elapsed_sec": 0.64
+        },
+        {
+          "seq": 3,
+          "op_id": "filter_by_value",
+          "params": {
+            "col": "시군구명",
+            "allowed": [
+              "용산구"
+            ]
+          },
+          "rows_before": 281,
+          "rows_after": 281,
+          "n_flags": 0,
+          "elapsed_sec": 0.0
+        }
+      ],
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_12.gpkg",
+      "format": "gpkg",
+      "params_autofilled": [],
+      "whitelist_resolved": [],
+      "unknown_ops": [],
+      "status": "ok"
+    },
+    {
+      "dataset_id": "01",
+      "filename": "서울특별시_용산구_담배꽁초상습무단투기지역현황_20250806.csv",
+      "roles": [
+        "positive_factor"
+      ],
+      "reference_only": false,
+      "gis_input": true,
+      "rows_before": 8,
+      "rows_after": 8,
+      "drop_ratio": 0.0,
+      "n_ops": 3,
+      "n_flags": 0,
+      "flags": [],
+      "op_logs": [
+        {
+          "seq": 0,
+          "op_id": "run_geocode",
+          "params": {
+            "address_cols": [
+              "도로명주소",
+              "지번주소",
+              "상세위치"
+            ],
+            "type_order": [
+              "road",
+              "parcel"
+            ],
+            "out_cols": [
+              "위도",
+              "경도"
+            ]
+          },
+          "rows_before": 8,
+          "rows_after": 8,
+          "n_flags": 0,
+          "elapsed_sec": 5.35
+        },
+        {
+          "seq": 1,
+          "op_id": "spatial_join_admin",
+          "params": {
+            "coord_cols": [
+              "경도",
+              "위도"
+            ],
+            "code_col": "ADM_CD",
+            "name_col": "ADM_NM"
+          },
+          "rows_before": 8,
+          "rows_after": 8,
+          "n_flags": 0,
+          "elapsed_sec": 0.59
+        },
+        {
+          "seq": 2,
+          "op_id": "filter_by_value",
+          "params": {
+            "col": "SIGUNGU_NM",
+            "allowed": [
+              "용산구"
+            ]
+          },
+          "rows_before": 8,
+          "rows_after": 8,
+          "n_flags": 0,
+          "elapsed_sec": 0.0
+        }
+      ],
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_01.gpkg",
+      "format": "gpkg",
+      "params_autofilled": [],
+      "whitelist_resolved": [],
+      "unknown_ops": [],
+      "status": "ok"
+    },
+    {
+      "dataset_id": "02",
+      "filename": "소상공인시장진흥공단_상가(상권)정보_서울_202603.csv",
+      "roles": [
+        "positive_factor"
+      ],
+      "reference_only": false,
+      "gis_input": true,
+      "rows_before": 537489,
+      "rows_after": 15722,
+      "drop_ratio": 0.9707,
+      "n_ops": 2,
+      "n_flags": 0,
+      "flags": [],
+      "op_logs": [
+        {
+          "seq": 0,
+          "op_id": "spatial_join_admin",
+          "params": {
+            "coord_cols": [
+              "경도",
+              "위도"
+            ]
+          },
+          "rows_before": 537489,
+          "rows_after": 537489,
+          "n_flags": 0,
+          "elapsed_sec": 3.59
+        },
+        {
+          "seq": 1,
+          "op_id": "filter_by_value",
+          "params": {
+            "col": "SIGUNGU_NM",
+            "allowed": [
+              "용산구"
+            ]
+          },
+          "rows_before": 537489,
+          "rows_after": 15722,
+          "n_flags": 0,
+          "elapsed_sec": 0.07
+        }
+      ],
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_02.gpkg",
+      "format": "gpkg",
+      "params_autofilled": [],
+      "whitelist_resolved": [],
+      "unknown_ops": [],
+      "status": "ok"
+    },
+    {
+      "dataset_id": "03",
+      "filename": "전국어린이보호구역표준데이터.csv",
+      "roles": [
+        "hard_exclusion"
+      ],
+      "reference_only": false,
+      "gis_input": true,
+      "rows_before": 14581,
+      "rows_after": 31,
+      "drop_ratio": 0.9979,
+      "n_ops": 2,
+      "n_flags": 0,
+      "flags": [],
+      "op_logs": [
+        {
+          "seq": 0,
+          "op_id": "spatial_join_admin",
+          "params": {
+            "coord_cols": [
+              "경도",
+              "위도"
+            ],
+            "code_col": "ADM_CD",
+            "name_col": "ADM_NM"
+          },
+          "rows_before": 14581,
+          "rows_after": 14581,
+          "n_flags": 0,
+          "elapsed_sec": 1.49
+        },
+        {
+          "seq": 1,
+          "op_id": "filter_by_value",
+          "params": {
+            "col": "SIGUNGU_NM",
+            "allowed": [
+              "용산구"
+            ]
+          },
+          "rows_before": 14581,
+          "rows_after": 31,
+          "n_flags": 0,
+          "elapsed_sec": 0.0
+        }
+      ],
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_03.gpkg",
+      "format": "gpkg",
+      "params_autofilled": [],
+      "whitelist_resolved": [],
+      "unknown_ops": [],
+      "status": "ok"
+    },
+    {
+      "dataset_id": "08",
+      "filename": "BUS_STATION_BOARDING_MONTH_202605.csv",
+      "roles": [
+        "positive_factor"
+      ],
+      "reference_only": false,
+      "gis_input": true,
+      "rows_before": 1272569,
+      "rows_after": 34769,
+      "drop_ratio": 0.9727,
+      "n_ops": 2,
+      "n_flags": 1,
+      "flags": [
+        {
+          "type": "join_key_uncovered",
+          "severity": "low",
+          "row_id": -1,
+          "message": "화이트리스트 일부 키가 데이터에 없음",
+          "raw_text": "미매칭 키 22개: ['102000255', '102000256', '102000257', '102000262', '102000263', '102000272', '102000273', '102000274', '102000275', '102000276']"
+        }
+      ],
+      "op_logs": [
+        {
+          "seq": 0,
+          "op_id": "filter_by_join_key",
+          "params": {
+            "key_col": "표준버스정류장ID",
+            "whitelist": "bus_station_whitelist",
+            "normalize": "none"
+          },
+          "rows_before": 1272569,
+          "rows_after": 34769,
+          "n_flags": 1,
+          "elapsed_sec": 0.08
+        },
+        {
+          "seq": 1,
+          "op_id": "cast_numeric",
+          "params": {
+            "cols": [
+              "승차총승객수",
+              "하차총승객수"
+            ]
+          },
+          "rows_before": 34769,
+          "rows_after": 34769,
+          "n_flags": 0,
+          "elapsed_sec": 0.03
+        }
+      ],
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_08.parquet",
+      "format": "parquet",
+      "params_autofilled": [],
+      "whitelist_resolved": [
+        {
+          "from_dataset": "06",
+          "from_column": "NODE_ID",
+          "key_col": "표준버스정류장ID",
+          "normalize": "none",
+          "normalize_changed": false,
+          "matched_keys": 336,
+          "cover": 0.935,
+          "whitelist": "bus_station_whitelist"
+        }
+      ],
+      "unknown_ops": [],
+      "status": "ok"
+    },
+    {
+      "dataset_id": "09",
+      "filename": "CARD_SUBWAY_MONTH_202605.csv",
+      "roles": [
+        "positive_factor"
+      ],
+      "reference_only": false,
+      "gis_input": true,
+      "rows_before": 19131,
+      "rows_after": 620,
+      "drop_ratio": 0.9676,
+      "n_ops": 2,
+      "n_flags": 0,
+      "flags": [],
+      "op_logs": [
+        {
+          "seq": 0,
+          "op_id": "filter_by_join_key",
+          "params": {
+            "key_col": "역명",
+            "whitelist": "서울시 역사마스터 정보",
+            "normalize": "strip_paren"
+          },
+          "rows_before": 19131,
+          "rows_after": 620,
+          "n_flags": 0,
+          "elapsed_sec": 0.02
+        },
+        {
+          "seq": 1,
+          "op_id": "cast_numeric",
+          "params": {
+            "cols": [
+              "승차총승객수",
+              "하차총승객수"
+            ]
+          },
+          "rows_before": 620,
+          "rows_after": 620,
+          "n_flags": 0,
+          "elapsed_sec": 0.0
+        }
+      ],
+      "output": "D:\\B_P\\BigProject_Back\\data_임시\\step2_output\\흡연_clean_09.parquet",
+      "format": "parquet",
+      "params_autofilled": [],
+      "whitelist_resolved": [
+        {
+          "from_dataset": "07",
+          "from_column": "역사명",
+          "key_col": "역명",
+          "normalize": "strip_paren",
+          "normalize_changed": true,
+          "matched_keys": 13,
+          "cover": 1.0,
+          "whitelist": "서울시 역사마스터 정보"
+        }
+      ],
+      "unknown_ops": [],
+      "status": "ok"
+    }
+  ]
+}

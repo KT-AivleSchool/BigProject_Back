@@ -648,8 +648,14 @@ def clean_domain(domain_dir: str, csv_preview: bool = False, prune: bool = True)
         except Exception as e:  # 한 데이터셋 실패가 전체를 멈추지 않음
             _sec = _time.perf_counter() - _t0
             print(f"  [실패] {did}: {e}  [{_sec:.1f}s]")
-            report.append({"dataset_id": did, "status": "error", "error": str(e),
-                           "sec": round(_sec, 2)})
+            report.append(
+                {
+                    "dataset_id": did,
+                    "status": "error",
+                    "error": str(e),
+                    "sec": round(_sec, 2),
+                }
+            )
             laps.append((f"{did} (실패)", _sec))
 
     # ── 후처리: 생산자에서 '소비자에 실제 데이터가 없는' 행 제거 ───────────────
@@ -701,7 +707,7 @@ def clean_domain(domain_dir: str, csv_preview: bool = False, prune: bool = True)
     # whitelist 요약(생산된 것)
     wl_summary = {k: len(v) for k, v in wl.items()}
 
-# 산출물 배열을 dataset_id 기준 정렬 (처리순 → id순).
+    # 산출물 배열을 dataset_id 기준 정렬 (처리순 → id순).
     #   report 는 _order_datasets(whitelist 의존 데이터셋 후순위)로 쌓여 배열 순서가
     #   id 순이 아니다. 소비 측에서 위치 인덱스로 접근할 때의 오정렬을 막기 위해 정렬해 저장.
     report.sort(key=lambda r: r.get("dataset_id", ""))

@@ -42,7 +42,10 @@ from app.config import CSV_ENCODINGS, COORD_COL_CANDIDATES
 
 # ── 프로파일 파라미터 (추후 config 로 이동 가능) ──
 PROFILE_MAX_ROWS = 50000  # 대용량 파일은 이만큼만 표본으로 읽어 프로파일
-_SKIP_PREFIXES = ("_", ".")  # '_'·'.' 로 시작하는 파일은 데이터가 아님(부속·숨김·macOS 잔재)
+_SKIP_PREFIXES = (
+    "_",
+    ".",
+)  # '_'·'.' 로 시작하는 파일은 데이터가 아님(부속·숨김·macOS 잔재)
 ADDR_COL_KEYWORDS = ("주소", "소재지", "상세위치", "설치위치")  # 실주소 텍스트 컬럼
 ADDR_COL_EXCLUDE = ("홈페이지", "이메일", "전자우편", "url", "코드")  # 오탐 제외
 DATA_EXTENSIONS = (".csv", ".xlsx", ".xls", ".shp", ".json")
@@ -51,9 +54,11 @@ _NON_VALUE_COLS = ("geometry",)  # 샘플/중복에서 제외(shp geometry 등)
 # 값 분포(value_dist) 파라미터 — 저카디널리티 컬럼만 값 목록을 통째로 싣는다.
 #   sample_rows(2행)로는 카테고리 컬럼의 값 집합을 알 수 없다. 감리 AI 가
 #   filter_by_value 의 allowed 를 '본 값'으로만 채워 조용히 행을 잃는다.
-CATEGORY_MAX_UNIQUE = 30    # 고유값이 이보다 많으면 카테고리로 보지 않는다(자유 텍스트·ID)
-CATEGORY_MAX_COLS = 25      # 프롬프트 비대화 방지
-CATEGORY_VAL_MAXLEN = 40    # 값 하나라도 이보다 길면 그 컬럼은 싣지 않는다(자유 텍스트)
+CATEGORY_MAX_UNIQUE = (
+    30  # 고유값이 이보다 많으면 카테고리로 보지 않는다(자유 텍스트·ID)
+)
+CATEGORY_MAX_COLS = 25  # 프롬프트 비대화 방지
+CATEGORY_VAL_MAXLEN = 40  # 값 하나라도 이보다 길면 그 컬럼은 싣지 않는다(자유 텍스트)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -414,7 +419,7 @@ def _value_dist(df, max_unique: int = CATEGORY_MAX_UNIQUE) -> dict:
         s = df[c]
         try:
             nun = int(s.nunique(dropna=True))
-        except TypeError:                      # 해시 불가 타입(list 등)
+        except TypeError:  # 해시 불가 타입(list 등)
             continue
         if nun == 0 or nun > max_unique:
             continue
@@ -447,9 +452,18 @@ def _assign_id(filename: str) -> str:
 
 # 지역 접두어·출처기관·접미어는 '이름 정리용 불용어'다(지역 하드코딩 아님).
 _GEO_PREFIX = ["서울특별시", "서울시", "전국", "경기도", "인천광역시", "부산광역시"]
-_STOP_TAIL = ["표준데이터", "표준 데이터", "위치정보", "기본정보", "세대현황",
-              "현황", "정보", "데이터", "서울", "마스터"]
-
+_STOP_TAIL = [
+    "표준데이터",
+    "표준 데이터",
+    "위치정보",
+    "기본정보",
+    "세대현황",
+    "현황",
+    "정보",
+    "데이터",
+    "서울",
+    "마스터",
+]
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -501,13 +515,15 @@ def profile_folder(folder: str, max_rows: int = PROFILE_MAX_ROWS) -> dict:
         paths += glob.glob(os.path.join(folder, f"*{ext}"))
     # 데이터 파일만, 파일명 가나다순으로 확정(실행 간 번호 안정성 — OS 나열 순서 의존 X)
     data_paths = sorted(
-        pp for pp in set(paths)
-        if not os.path.basename(pp).startswith(_SKIP_PREFIXES))
+        pp for pp in set(paths) if not os.path.basename(pp).startswith(_SKIP_PREFIXES)
+    )
 
     print("[profile] dataset_id — 파일명 가나다순으로 01,02… 부여")
-    print("           ⚠ 파일을 추가/삭제하면 뒤 번호가 밀립니다. "
-          "이미 감리·정제를 돌렸다면 step1_output 의 reviewed.json·캐시와 "
-          "번호가 어긋나므로 재프로파일 → 재감리하세요.")
+    print(
+        "           ⚠ 파일을 추가/삭제하면 뒤 번호가 밀립니다. "
+        "이미 감리·정제를 돌렸다면 step1_output 의 reviewed.json·캐시와 "
+        "번호가 어긋나므로 재프로파일 → 재감리하세요."
+    )
 
     profiles: dict[str, dict] = {}
     for seq, path in enumerate(data_paths, 1):
@@ -515,7 +531,7 @@ def profile_folder(folder: str, max_rows: int = PROFILE_MAX_ROWS) -> dict:
         did = f"{seq:02d}"  # 가나다순 2자리 번호
         try:
             prof = profile_file(path, dataset_id=did, max_rows=max_rows)
-        except Exception as e:                        # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
             print(f"[profile] 건너뜀 {fname}: {e}")
             continue
         if did in profiles:

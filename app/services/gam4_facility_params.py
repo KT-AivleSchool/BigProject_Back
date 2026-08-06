@@ -20,6 +20,7 @@ OmniSite 시설 파라미터 판정 (STEP 4)
   ※ 이 값들은 **점수를 바꾸지 않는다.** 필터와 선정 규칙에만 쓰이므로
     결과화면에서 조절해도 점수 재계산이 필요 없다.
 """
+
 from __future__ import annotations
 
 import json
@@ -27,9 +28,8 @@ import os
 from datetime import datetime
 
 try:
-    from app.config import (OPENAI_API_KEY, AUDIT_LLM_MODEL,
-                            FACILITY_PARAM_CACHE_PATH)
-except Exception:                                   # 단독 실행 폴백
+    from app.config import OPENAI_API_KEY, AUDIT_LLM_MODEL, FACILITY_PARAM_CACHE_PATH
+except Exception:  # 단독 실행 폴백
     OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
     AUDIT_LLM_MODEL = "gpt-4o"
     FACILITY_PARAM_CACHE_PATH = os.path.join(".", "facility_params_cache.json")
@@ -67,11 +67,13 @@ def _call_llm(facility: str, model: str) -> dict:
     if not OPENAI_API_KEY:
         raise RuntimeError(
             "OPENAI_API_KEY 없음 — 시설 파라미터 판정 불가.\n"
-            "  키를 설정하거나 CLI 인자(--min-width/--r-cover/--dmin)로 직접 지정하세요.")
+            "  키를 설정하거나 CLI 인자(--min-width/--r-cover/--dmin)로 직접 지정하세요."
+        )
     from openai import OpenAI
 
-    spec = "\n".join(f"  {k}: {d} (범위 {lo:g}~{hi:g})"
-                     for k, (lo, hi, _, d) in PARAM_SPEC.items())
+    spec = "\n".join(
+        f"  {k}: {d} (범위 {lo:g}~{hi:g})" for k, (lo, hi, _, d) in PARAM_SPEC.items()
+    )
     prompt = (
         f"공공시설 '{facility}' 의 입지 선정에 쓸 물리적 파라미터를 정하라.\n\n"
         f"[요청 항목]\n{spec}\n\n"
@@ -87,9 +89,11 @@ def _call_llm(facility: str, model: str) -> dict:
     )
     client = OpenAI(api_key=OPENAI_API_KEY)
     resp = client.chat.completions.create(
-        model=model, temperature=0,
+        model=model,
+        temperature=0,
         response_format={"type": "json_object"},
-        messages=[{"role": "user", "content": prompt}])
+        messages=[{"role": "user", "content": prompt}],
+    )
     return json.loads(resp.choices[0].message.content)
 
 
@@ -118,13 +122,20 @@ def _validate(raw: dict) -> tuple[dict, list]:
     # 일관성: 이격 > 서비스반경이면 시설 사이에 사각지대가 생긴다.
     #   틀렸다고 단정하지 않고 플래그만 남긴다 — 정책적으로 선택할 수도 있다.
     if out["최소_이격_m"] > out["서비스_반경_m"]:
-        flags.append(f"[일관성] 최소이격({out['최소_이격_m']:g}m) > "
-                     f"서비스반경({out['서비스_반경_m']:g}m) — 사각지대 발생 가능")
+        flags.append(
+            f"[일관성] 최소이격({out['최소_이격_m']:g}m) > "
+            f"서비스반경({out['서비스_반경_m']:g}m) — 사각지대 발생 가능"
+        )
     return out, flags
 
 
-def judge(facility: str, model: str | None = None, path: str | None = None,
-          force: bool = False, verbose: bool = True) -> dict:
+def judge(
+    facility: str,
+    model: str | None = None,
+    path: str | None = None,
+    force: bool = False,
+    verbose: bool = True,
+) -> dict:
     """시설 파라미터 판정. 캐시가 있으면 LLM 호출 없이 반환.
 
     캐시 키는 시설명 + 모델. 모델이 바뀌면 재판정한다
@@ -138,19 +149,26 @@ def judge(facility: str, model: str | None = None, path: str | None = None,
     if hit and not force:
         if hit.get("model") == m and set(hit.get("params", {})) == set(PARAM_SPEC):
             if verbose:
-                print(f"  [시설 파라미터] 캐시 사용 ({hit.get('judged_at','')[:19]}, {m})")
+                print(
+                    f"  [시설 파라미터] 캐시 사용 ({hit.get('judged_at', '')[:19]}, {m})"
+                )
             return hit
         if verbose:
-            print(f"  [시설 파라미터] 캐시 불일치 → 재판정")
+            print("  [시설 파라미터] 캐시 불일치 → 재판정")
 
     if verbose:
         print(f"  [시설 파라미터] {m} 호출")
     raw = _call_llm(facility, m)
     params, flags = _validate(raw)
 
-    rec = {"judged_at": datetime.now().isoformat(timespec="seconds"),
-           "model": m, "facility": facility, "params": params,
-           "근거": str(raw.get("근거", ""))[:200], "flags": flags}
+    rec = {
+        "judged_at": datetime.now().isoformat(timespec="seconds"),
+        "model": m,
+        "facility": facility,
+        "params": params,
+        "근거": str(raw.get("근거", ""))[:200],
+        "flags": flags,
+    }
     cache[facility] = rec
     _save_cache(p, cache)
     if verbose:
@@ -161,7 +179,7 @@ def judge(facility: str, model: str | None = None, path: str | None = None,
 def print_params(rec: dict) -> None:
     ps = rec.get("params", {})
     print("\n" + "=" * 66)
-    print(f"[시설 파라미터] {rec.get('facility','')} · {rec.get('model','')}")
+    print(f"[시설 파라미터] {rec.get('facility', '')} · {rec.get('model', '')}")
     print("=" * 66)
     for k, (lo, hi, _, desc) in PARAM_SPEC.items():
         print(f"  {k:<16} {ps.get(k, 0):>8,.1f}   {desc}")

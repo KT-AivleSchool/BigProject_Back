@@ -14,8 +14,9 @@ from app.core.sim_ai.prompts import (
     EVALUATOR_PROMPT,
     REPORTER_PROMPT,
 )
-from app.core.sim_ai.vector_db import RagVectorStorage
-from app.config import settings
+from app.config import settings, PERSONA_SETTINGS
+from app.db.session import AsyncSessionLocal
+from app.db.models.rag_feedback import RagFeedbackLog
 
 
 # [동현님 담당] LangGraph에서 노드 간에 전송될 대화 상태 객체 정의
@@ -40,6 +41,7 @@ class AgentState(TypedDict):
     timestamp: str
 
     common_rag: str  # 공통으로 공유되는 RAG 컨텍스트
+    rag_docs: list  # [추가] 피드백 저장을 위해 유지되는 메타데이터
     audit_context: str  # 프론트엔드에서 전달받은 감리 결과 정제 텍스트
     evaluations: dict  # 내부 평가 결과 (수용도)
     final_scenarios: dict  # 도출된 최종 시나리오 결과 객체
@@ -47,14 +49,16 @@ class AgentState(TypedDict):
     next_speaker: str  # 라우터가 결정한 다음 발화자
 
 
-# LLM 및 Vector DB 전역 인스턴스 (온도는 창의적 역할극을 위해 0.7 유지)
-llm = ChatOpenAI(
-    api_key=settings.OPENAI_API_KEY,
-    model="gpt-4o-mini",
-    temperature=0.7,
-    streaming=True,
-)
-vector_db = RagVectorStorage()
+# [수정] 글로벌 llm 인스턴스 대신 Config 기반 동적 생성 함수 도입
+def get_persona_llm(role: str) -> ChatOpenAI:
+    """Config에서 해당 역할(role)의 LLM 설정을 불러와 인스턴스 반환"""
+    persona_config = PERSONA_SETTINGS.get(role, {})
+    return ChatOpenAI(
+        api_key=settings.OPENAI_API_KEY,
+        model=persona_config.get("model_name", "gpt-4o-mini"),
+        temperature=persona_config.get("temperature", 0.7),
+        streaming=persona_config.get("streaming", True),
+    )
 
 
 def _format_chat_history(messages: Sequence[str]) -> str:
@@ -118,11 +122,21 @@ async def pro_node(state: AgentState) -> dict:
         ahp_weights=state.get("ahp_weights", {}),
         rag_context=rag_context,
         audit_context=state.get("audit_context", "감리 데이터 없음"),
-        discussion_history=history_text,
+        discussion_history="",  # 히스토리는 별도 메시지로 주입
         css_level=css_level,
     )
 
-    response = await llm.ainvoke([SystemMessage(content=prompt)])
+    messages = [SystemMessage(content=prompt)]
+    for msg in state.get("messages", []):
+        messages.append(HumanMessage(content=msg))
+    messages.append(
+        HumanMessage(
+            content="[당신의 차례입니다. 대본을 작성하지 말고, 찬성측 페르소나로서 이번 턴의 짧고 핵심적인 단일 발언만(화자 태그 없이) 출력하세요. 발언 중 POI, 조례(RAG), 감리 데이터 등에서 인용한 중요한 사실이나 근거는 반드시 **굵게(마크다운)** 표시하세요.]"
+        )
+    )
+
+    llm = get_persona_llm("pro")
+    response = await llm.ainvoke(messages)
     spoken = state.get("spoken_this_round", [])
     return {
         "messages": [f"찬성: {response.content}"],
@@ -148,11 +162,21 @@ async def con_node(state: AgentState) -> dict:
         ahp_weights=state.get("ahp_weights", {}),
         rag_context=rag_context,
         audit_context=state.get("audit_context", "감리 데이터 없음"),
-        discussion_history=history_text,
+        discussion_history="",  # 히스토리는 별도 메시지로 주입
         css_level=css_level,
     )
 
-    response = await llm.ainvoke([SystemMessage(content=prompt)])
+    messages = [SystemMessage(content=prompt)]
+    for msg in state.get("messages", []):
+        messages.append(HumanMessage(content=msg))
+    messages.append(
+        HumanMessage(
+            content="[당신의 차례입니다. 대본을 작성하지 말고, 반대측 페르소나로서 이번 턴의 짧고 핵심적인 단일 발언만(화자 태그 없이) 출력하세요. 발언 중 POI, 조례(RAG), 감리 데이터 등에서 인용한 중요한 사실이나 근거는 반드시 **굵게(마크다운)** 표시하세요.]"
+        )
+    )
+
+    llm = get_persona_llm("con")
+    response = await llm.ainvoke(messages)
     spoken = state.get("spoken_this_round", [])
     return {
         "messages": [f"반대: {response.content}"],
@@ -178,22 +202,29 @@ async def gov_node(state: AgentState) -> dict:
         ahp_weights=state.get("ahp_weights", {}),
         rag_context=rag_context,
         audit_context=state.get("audit_context", "감리 데이터 없음"),
-        discussion_history=history_text,
+        discussion_history="",  # 히스토리는 별도 메시지로 주입
         css_level="LOW",  # 정부는 객관적 중재를 위해 LOW 유지
     )
 
+    messages = [SystemMessage(content=prompt)]
+    for msg in state.get("messages", []):
+        messages.append(HumanMessage(content=msg))
+
     if spoken == ["gov", "pro", "con"]:
-        system_msg = (
-            prompt
-            + "\n\n현재 상황: 정부의 중재안에 대한 양측의 입장을 들었습니다. 토론을 최종 마무리하는 발언을 짧게 하십시오."
+        messages.append(
+            HumanMessage(
+                content="[현재 상황: 정부의 중재안에 대한 양측의 입장을 들었습니다. 대본을 작성하지 말고, 토론을 최종 마무리하는 단일 발언을 짧게 출력하세요. 발언 중 POI, 조례(RAG), 감리 데이터 등에서 인용한 중요한 사실이나 근거는 반드시 **굵게(마크다운)** 표시하세요.]"
+            )
         )
     else:
-        system_msg = (
-            prompt
-            + "\n\n현재 상황: 3라운드의 찬반 토론이 종료되거나 합의점이 도달하여 정부가 개입할 차례입니다. 양측 의견을 수렴하여 공정한 중재안을 제시하십시오."
+        messages.append(
+            HumanMessage(
+                content="[당신의 차례입니다. 대본을 작성하지 말고, 정부 페르소나로서 양측의 입장을 조율하는 단일 발언만(화자 태그 없이) 출력하세요. 발언 중 POI, 조례(RAG), 감리 데이터 등에서 인용한 중요한 사실이나 근거는 반드시 **굵게(마크다운)** 표시하세요.]"
+            )
         )
 
-    response = await llm.ainvoke([SystemMessage(content=system_msg)])
+    llm = get_persona_llm("gov")
+    response = await llm.ainvoke(messages)
     return {
         "messages": [f"정부: {response.content}"],
         "spoken_this_round": spoken + ["gov"],
@@ -210,6 +241,7 @@ async def evaluator_node(state: AgentState) -> dict:
     prev_pro_acc = prev_evals.get("pro_acceptance", 0.0)
     prev_con_acc = prev_evals.get("con_acceptance", 0.0)
 
+    llm = get_persona_llm("evaluator")
     llm_json = llm.bind(response_format={"type": "json_object"})
     response = await llm_json.ainvoke(
         [
@@ -265,21 +297,54 @@ async def reporter_node(state: AgentState) -> dict:
     """토론 종료 후 최종 시나리오 도출 노드"""
     history_text = _format_chat_history(state.get("messages", []))
     eval_score = state.get("eval_score", 0.0)
+    common_rag = state.get("common_rag", "조례 데이터 없음")
 
+    llm = get_persona_llm("reporter")
     llm_json = llm.bind(response_format={"type": "json_object"})
     response = await llm_json.ainvoke(
         [
             SystemMessage(content=REPORTER_PROMPT),
             HumanMessage(
-                content=f"전체 토론 내용:\n{history_text}\n\n[최종 수용도 점수(0.0~1.0)]: {eval_score}\n\n위 대화 내용과 수용도 점수를 바탕으로 1개의 최종 시나리오 JSON을 도출하세요."
+                content=f"[참고 조례 데이터 (DOC_ID 확인용)]\n{common_rag}\n\n전체 토론 내용:\n{history_text}\n\n[최종 수용도 점수(0.0~1.0)]: {eval_score}\n\n위 참고 조례 데이터와 대화 내용, 수용도 점수를 바탕으로 1개의 최종 시나리오 JSON을 도출하세요."
             ),
         ]
     )
 
     try:
         final_scenarios = _extract_json(response.content)
+
+        # --- [신규 기능] LLM 암묵적 피드백(Implicit Feedback) 로깅 ---
+        raw_used = final_scenarios.get("used_doc_ids", [])
+        # 문자열로 들어올 경우를 대비해 정수형으로 변환 가능한 것만 추출
+        if isinstance(raw_used, list):
+            used_doc_ids = [int(x) for x in raw_used if str(x).strip().isdigit()]
+        else:
+            used_doc_ids = []
+
+        print(f"[디버그] AI가 반환한 used_doc_ids: {used_doc_ids}")
+
+        rag_docs = state.get("rag_docs", [])
+
+        if rag_docs:
+            async with AsyncSessionLocal() as session:
+                for doc in rag_docs:
+                    doc_id = doc.get("doc_id")
+                    label = 1 if doc_id in used_doc_ids else 0
+
+                    feedback = RagFeedbackLog(
+                        query_text=doc.get("query", "알 수 없음"),
+                        chunk_text=doc.get("text", ""),
+                        vector_score=doc.get("vector_score", 0.0),
+                        label=label,
+                    )
+                    session.add(feedback)
+                await session.commit()
+                print(
+                    f"✅ RAG Implicit Feedback DB 저장 완료 (사용된 문서 ID: {used_doc_ids})"
+                )
+
     except Exception as e:
-        print(f"JSON Parsing Error: {e}")
+        print(f"JSON Parsing or DB Logging Error: {e}")
         final_scenarios = {}
 
     return {"final_scenarios": final_scenarios, "is_finished": True}

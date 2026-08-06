@@ -8,6 +8,7 @@
    나중에 오케스트레이터로 갈아끼울 때 라우터를 건드리지 않기 위해서다.
    status.json 과 산출물은 **가공하지 않고 그대로** 내보낸다(계약 4절).
 """
+
 from fastapi import APIRouter, Body, HTTPException, Query
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
@@ -117,8 +118,10 @@ def get_artifact(run_id: str, name: str):
     """
     path = runner.artifact_path(run_id, name)
     if path is None:
-        raise HTTPException(status_code=404,
-                            detail=f"산출물이 아직 없거나 허용되지 않는 이름입니다: {name}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"산출물이 아직 없거나 허용되지 않는 이름입니다: {name}",
+        )
     return FileResponse(
         str(path),
         filename=path.name,

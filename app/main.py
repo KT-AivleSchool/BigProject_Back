@@ -1,6 +1,12 @@
+import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
+
+# DB & Redis 커넥션 인프라 수거 객체
+from app.db.session import engine
+from app.api.deps import redis_pool
 
 # 라우터 Import (v1 하위 라우터 연동)
 #
@@ -31,12 +37,13 @@ from app.api.v1 import auth, audit, pipeline
 #    ※ 화면6(PDF)은 별건이다. `pdf_service.py`(9be3851) ·
 #      `report_template.html`(2bd69ef 에서 삭제) 복구 + weasyprint(GTK3) 가 필요하다.
 #      재작성이 아니라 **복구 + 환경**이며, 그 사정은 그 함수 주석에 적어뒀다.
-# from app.api.v1 import simulations
+from app.api.v1 import simulations
+
 #
 # 🔴 upload 도 폐기가 아니다 — **앞으로 쓸 것**이다. 이슈 #203 대로
 #    gam2_doc_extract.py(문서→텍스트) + gam2_ordinance_select.py(조문 분할·규제 선별)를
 #    붙이는 업로드 경로가 여기로 들어온다.
-# from app.api.v1 import upload
+from app.api.v1 import upload
 #
 # ── ⏱ 둘의 공통 차단 요인 — import 가 **525.7초** 걸린다 (2026-08-04 실측) ────
 #    `upload.py:10` 과 `core/sim_ai/graph.py:57` 이 **모듈 최상단에서**
@@ -52,12 +59,46 @@ from app.api.v1 import auth, audit, pipeline
 #       우리가 고치지 않고 **이슈로 넘긴다** — 인계 문서:
 #       obsidian 10_OmniSite/04_이슈/2026-08-04_GH이슈_import시점_외부접속.md
 
+# Uvicorn 콘솔 로거 인스턴스 획득 (터미널에 INFO 로그가 바로 노출되도록 설정)
+logger = logging.getLogger("uvicorn.error")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    [FastAPI Lifespan 생명주기 관리자]
+    서버 구동(Startup) 시 DB/Redis 커넥션 풀 웜업 및 상태 체크
+    서버 종료(Shutdown) 시 SQLAlchemy 엔진 및 Redis 풀의 비동기 커넥션을 안전하게 해제합니다.
+    """
+    logger.info("🚀 [Startup] OmniSite Backend Server starting up...")
+    logger.info(
+        f"🔗 [DB Engine] SQLAlchemy async engine initialized ({settings.PROJECT_NAME})"
+    )
+    logger.info("⚡ [Redis Pool] Redis connection pool initialized.")
+
+    yield
+
+    logger.info("🛑 [Shutdown] Server shutting down... Cleaning up connection pools.")
+    try:
+        await engine.dispose()
+        logger.info("✅ [DB Engine] SQLAlchemy async engine disposed successfully.")
+    except Exception as e:
+        logger.error(f"❌ [DB Engine Error] Engine dispose failed: {e}")
+
+    try:
+        await redis_pool.disconnect()
+        logger.info("✅ [Redis Pool] Redis connection pool disconnected successfully.")
+    except Exception as e:
+        logger.error(f"❌ [Redis Pool Error] Redis disconnect failed: {e}")
+
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     description="OmniSite 스마트시티 입지선정 및 공공갈등 예측 플랫폼 통합 백엔드 API",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # CORS 미들웨어 설정 (프론트엔드 Next.js 개발 서버 연동 허용)
@@ -79,24 +120,24 @@ app.include_router(
 #    (/lands · /ahp 는 성격이 다르다 — 그건 폐기라서 라우터 파일째 삭제했다)
 #    /simulation 과 /simulations 두 prefix 로 **같은 라우터를 두 번** 등록하고 있었다 —
 #    되살릴 때 한쪽만 살리면 프런트 경로가 조용히 404 가 된다. 둘 다 같이 처리할 것.
-# app.include_router(
-#     simulations.router,
-#     prefix=settings.API_V1_STR + "/simulation",
-#     tags=["AI Simulation"],
-# )
-# app.include_router(
-#     simulations.router,
-#     prefix=settings.API_V1_STR + "/simulations",
-#     tags=["AI Simulation"],
-# )
+app.include_router(
+    simulations.router,
+    prefix=settings.API_V1_STR + "/simulation",
+    tags=["AI Simulation"],
+)
+app.include_router(
+    simulations.router,
+    prefix=settings.API_V1_STR + "/simulations",
+    tags=["AI Simulation"],
+)
 app.include_router(
     audit.router, prefix=settings.API_V1_STR + "/audit", tags=["Audit AI"]
 )
-# app.include_router(
-#     upload.router,
-#     prefix=settings.API_V1_STR + "/upload",
-#     tags=["Regulation & File Upload"],
-# )
+app.include_router(
+    upload.router,
+    prefix=settings.API_V1_STR + "/upload",
+    tags=["Regulation & File Upload"],
+)
 app.include_router(
     pipeline.router,
     prefix=settings.API_V1_STR + "/pipeline",

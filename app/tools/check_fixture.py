@@ -23,6 +23,7 @@
     일부만 덮는 실행에서는 여전히 호출된다.
   · 배제 union 은 이 스크립트가 재계산하지 않는다 — `app/tools/check_exclusion_state.py` 의 몫이다.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -38,8 +39,14 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 try:
-    from app.config import (STEP1_OUTPUT_DIR, STEP2_OUTPUT_DIR, STEP3_OUTPUT_DIR,
-                            STEP4_OUTPUT_DIR, DOMAIN_ROOT, domain_prefix)
+    from app.config import (
+        STEP1_OUTPUT_DIR,
+        STEP2_OUTPUT_DIR,
+        STEP3_OUTPUT_DIR,
+        STEP4_OUTPUT_DIR,
+        DOMAIN_ROOT,
+        domain_prefix,
+    )
 except Exception:  # 단독 실행 폴백
     DOMAIN_ROOT = "data_임시"
     STEP1_OUTPUT_DIR = os.path.join(DOMAIN_ROOT, "step1_output")
@@ -76,8 +83,11 @@ def _cmp(label: str, exp, got, out: list) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("domain")
-    ap.add_argument("--restore", action="store_true",
-                    help="고정본 reviewed.json 을 step1_output 에 덮어쓴다")
+    ap.add_argument(
+        "--restore",
+        action="store_true",
+        help="고정본 reviewed.json 을 step1_output 에 덮어쓴다",
+    )
     a = ap.parse_args()
 
     pre = domain_prefix(a.domain)
@@ -113,8 +123,12 @@ def main() -> int:
         print(f"     고정본 {base['reviewed_sha256'][:16]}…")
         print(f"     현재   {live_sha[:16]}…")
         print("     STEP1 을 재실행했거나 HITL 로 값을 바꿨다. 둘 중 하나를 해라:")
-        print(f"       · 코드 회귀를 보려면 : python app/tools/check_fixture.py {a.domain} --restore")
-        print(f"       · 새 기준으로 삼으려면: 파이프라인 완주 후 픽스처를 **명시적으로** 갱신")
+        print(
+            f"       · 코드 회귀를 보려면 : python app/tools/check_fixture.py {a.domain} --restore"
+        )
+        print(
+            "       · 새 기준으로 삼으려면: 파이프라인 완주 후 픽스처를 **명시적으로** 갱신"
+        )
         print("=" * 88)
         return 1  # 값 비교는 하지 않는다. 여기서 비교하면 원인이 섞인다.
     print(f"  ✅ 감리 입력 일치  sha256 {live_sha[:16]}…")
@@ -147,12 +161,21 @@ def main() -> int:
     if os.path.exists(p4):
         rp = _load(p4)
         e4 = base["STEP4"]
-        _cmp("STEP4 parcels", base["STEP3_후보"]["parcels"], rp["counts"]["parcels"], rows)
+        _cmp(
+            "STEP4 parcels",
+            base["STEP3_후보"]["parcels"],
+            rp["counts"]["parcels"],
+            rows,
+        )
         _cmp("STEP4 points", e4["points"], rp["counts"]["points"], rows)
         _cmp("STEP4 survive", e4["survive"], rp["counts"]["survive"], rows)
         _cmp("STEP4 gap 건수", e4["gap_n"], len(rp["data_gap"]), rows)
-        _cmp("STEP4 gap 종류", e4["gap_kinds"],
-             sorted({g["kind"] for g in rp["data_gap"]}), rows)
+        _cmp(
+            "STEP4 gap 종류",
+            e4["gap_kinds"],
+            sorted({g["kind"] for g in rp["data_gap"]}),
+            rows,
+        )
         cur_top = [r.get("PNU") for r in rp["topn"][:20]]
         _cmp("STEP4 topN20 PNU", e4["topN20_PNU"], cur_top, rows)
 
@@ -165,14 +188,17 @@ def main() -> int:
         #   픽스처를 갱신 안 한 채로 "무회귀"가 뜬다.
         sp = rp.get("spatial") or {}
         cv = rp.get("coverage") or {}
-        _cmp("STEP4 배제 union km²", e4.get("배제_union_km2"),
-             sp.get("exclusion_union_km2"), rows)
+        _cmp(
+            "STEP4 배제 union km²",
+            e4.get("배제_union_km2"),
+            sp.get("exclusion_union_km2"),
+            rows,
+        )
         _cmp("STEP4 커버 쌍", e4.get("cover_pairs"), cv.get("cover_pairs"), rows)
         _cmp("STEP4 수요점", e4.get("n_demand"), cv.get("n_demand"), rows)
         e_w = e4.get("width_m") or {}
         g_w = sp.get("width_m") or {}
-        for k in ("n", "min", "p05", "median", "p95", "max", "sum",
-                  "pass_min_width"):
+        for k in ("n", "min", "p05", "median", "p95", "max", "sum", "pass_min_width"):
             _cmp(f"STEP4 내접폭.{k}", e_w.get(k), g_w.get(k), rows)
     else:
         rows.append((False, "STEP4 report", "있어야 함", "없음"))
@@ -182,7 +208,9 @@ def main() -> int:
         if not ok:
             print(f"  ❌ {label}\n       기준 {exp}\n       현재 {got}")
     print("-" * 88)
-    print(f"  대조 {len(rows)}항목  ·  일치 {len(rows) - len(bad)}  ·  불일치 {len(bad)}")
+    print(
+        f"  대조 {len(rows)}항목  ·  일치 {len(rows) - len(bad)}  ·  불일치 {len(bad)}"
+    )
     if bad:
         print("  🔴 감리 입력은 같은데 값이 달라졌다 → **코드 변경의 결과다.**")
     else:

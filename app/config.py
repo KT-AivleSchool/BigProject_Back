@@ -48,6 +48,36 @@ FACILITY_LLM_MODEL = os.environ.get("FACILITY_LLM_MODEL", "gpt-4o-mini")
 # 배제반경 서핑용 모델(web_search). 검색·추출이라 mini 로 충분(비용).
 SEARCH_LLM_MODEL = os.environ.get("SEARCH_LLM_MODEL", "gpt-4o-mini")
 
+# ══════════════════════════════════════════════════════════════════
+# 1c. AI 페르소나별 상세 설정 (토론용 LLM 모델, Temperature 등)
+# ══════════════════════════════════════════════════════════════════
+PERSONA_SETTINGS: dict = {
+    "pro": {
+        "model_name": os.environ.get("PERSONA_PRO_MODEL", "gpt-4o-mini"),
+        "temperature": 0.7,
+        "streaming": True,
+    },
+    "con": {
+        "model_name": os.environ.get("PERSONA_CON_MODEL", "gpt-4o-mini"),
+        "temperature": 0.7,
+        "streaming": True,
+    },
+    "gov": {
+        "model_name": os.environ.get("PERSONA_GOV_MODEL", "gpt-4o-mini"),
+        "temperature": 0.5,  # 중재자로서 약간 더 차분하게
+        "streaming": True,
+    },
+    "evaluator": {
+        "model_name": os.environ.get("PERSONA_EVAL_MODEL", "gpt-4o-mini"),
+        "temperature": 0.0,  # 평가자는 일관성을 위해 0.0
+        "streaming": False,
+    },
+    "reporter": {
+        "model_name": os.environ.get("PERSONA_REPORTER_MODEL", "gpt-4o-mini"),
+        "temperature": 0.2,
+        "streaming": True,
+    },
+}
 
 # ══════════════════════════════════════════════════════════════════
 # 2. 외부 API 엔드포인트
@@ -162,11 +192,11 @@ LAW_DIR = os.environ.get("OMNISITE_LAW_DIR", str(DATA_ROOT / "law"))
 #   import 시점에는 아무 일도 하지 않는다 — 부르는 쪽이 언제 점검할지 정한다.
 #   (FastAPI 기동 로그를 오염시키지 않기 위해서다)
 REFERENCE_FILES = {
-    "행정동 경계 SHP":       (ADM_DONG_SHP, True),
-    "시군구 경계 SHP":       (SIGUNGU_SHP, True),
-    "행정동 크로스워크":      (ADMIN_CROSSWALK_PATH, True),
-    "엑셀 코드표(죽은 폴백)":  (ADM_CODE_MAP, False),
-    "국유부동산(최후 폴백)":   (NATIONAL_PROPERTY_CSV, False),
+    "행정동 경계 SHP": (ADM_DONG_SHP, True),
+    "시군구 경계 SHP": (SIGUNGU_SHP, True),
+    "행정동 크로스워크": (ADMIN_CROSSWALK_PATH, True),
+    "엑셀 코드표(죽은 폴백)": (ADM_CODE_MAP, False),
+    "국유부동산(최후 폴백)": (NATIONAL_PROPERTY_CSV, False),
 }
 
 
@@ -269,8 +299,9 @@ CANDIDATE_GPKG_NAME = "후보_지적도필지.gpkg"
 def candidate_gpkg_path(domain: str) -> str:
     """도메인별 후보 gpkg 경로. 예: step3_output/흡연_후보_지적도필지.gpkg"""
     p = domain_prefix(domain)
-    return os.path.join(STEP3_OUTPUT_DIR,
-                        f"{p + '_' if p else ''}{CANDIDATE_GPKG_NAME}")
+    return os.path.join(
+        STEP3_OUTPUT_DIR, f"{p + '_' if p else ''}{CANDIDATE_GPKG_NAME}"
+    )
 
 
 def resolve_domain_dir(domain: str) -> str:

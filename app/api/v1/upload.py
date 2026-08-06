@@ -1,3 +1,4 @@
+import logging
 import os
 import urllib.parse
 from typing import List
@@ -5,9 +6,10 @@ from fastapi import APIRouter, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 
 from app.core.sim_ai.document_loader import statute_document_loader
-from app.core.sim_ai.vector_db import RagVectorStorage
+from app.core.sim_ai.vector_db import get_vector_db
 
-vector_db = RagVectorStorage()
+logger = logging.getLogger("uvicorn.error")
+
 
 router = APIRouter()
 
@@ -84,6 +86,7 @@ async def upload_regulation(files: List[UploadFile] = File(...)):
 
         # RAG 텍스트 추출 및 청킹
         try:
+            vector_db = get_vector_db()
             chunks = statute_document_loader.process_document(file_bytes, ext)
             if chunks:
                 metadatas = [
@@ -91,8 +94,11 @@ async def upload_regulation(files: List[UploadFile] = File(...)):
                 ]
                 await vector_db.add_statute_chunks(chunks, metadatas=metadatas)
         except Exception as e:
-            # 텍스트 파싱 실패 시 경고 로그만 남기고 파일 저장은 유지
-            print(f"[Regulation RAG Warning] {filename} 텍스트 추출/임베딩 실패: {e}")
+            # 텍스트 파싱 실패 시 경고 로그만 남기지 않고 명확히 예외 발생 (이슈 #208)
+            logger.error(
+                f"[Regulation RAG Error] {filename} 텍스트 추출/임베딩 실패: {e}"
+            )
+            raise HTTPException(status_code=500, detail=f"RAG DB 적재 실패: {str(e)}")
 
         saved_files.append(filename)
 

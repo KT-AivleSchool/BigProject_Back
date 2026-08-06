@@ -15,6 +15,7 @@
     추측해서 EPSG:4326 으로 읽으면 공간조인이 조용히 0건이 된다.
   · 행정동코드 후보가 0개/2개 이상이면 → 조인 키가 확정되지 않는다.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -55,8 +56,11 @@ def main() -> None:
         out = r.get("output")
         if not out:
             continue
-        p = out if os.path.isfile(out) else os.path.join(
-            STEP2_OUTPUT_DIR, os.path.basename(out))
+        p = (
+            out
+            if os.path.isfile(out)
+            else os.path.join(STEP2_OUTPUT_DIR, os.path.basename(out))
+        )
         if os.path.isfile(p):
             files[r["dataset_id"]] = p
 
@@ -75,8 +79,10 @@ def main() -> None:
             g = gpd.read_file(f)
             gt = ",".join(sorted(set(g.geom_type.dropna())))[:20]
             print(f"\n[{did}] {base}")
-            print(f"      gpkg  {len(g):>7,}행  geom={gt}  "
-                  f"CRS={g.crs.to_epsg() if g.crs else '없음'}")
+            print(
+                f"      gpkg  {len(g):>7,}행  geom={gt}  "
+                f"CRS={g.crs.to_epsg() if g.crs else '없음'}"
+            )
             continue
 
         # ── parquet: ① 좌표계 판정
@@ -89,7 +95,7 @@ def main() -> None:
             g = W.as_geodataframe(df, did, verbose=False)
         except ValueError as e:
             n_fail += 1
-            print(f"      🔴 좌표계 판정 중단")
+            print("      🔴 좌표계 판정 중단")
             for ln in str(e).splitlines():
                 print(f"         {ln}")
             continue
@@ -107,13 +113,17 @@ def main() -> None:
             try:
                 col, kind, rate, hits = W._detect_admin_key_col(df, did)
                 n_admin_auto += 1
-                print(f"      ✅ 행정동 조인키 자동판정 → '{col}' ({kind}, 크로스워크 매칭 {rate:.0%})")
+                print(
+                    f"      ✅ 행정동 조인키 자동판정 → '{col}' ({kind}, 크로스워크 매칭 {rate:.0%})"
+                )
                 if len(hits) > 1:
-                    print(f"         다른 코드형 컬럼: "
-                          f"{ {c: f'{v[0]} {v[1]:.0%}' for c, v in hits.items() if c != col} }")
+                    print(
+                        f"         다른 코드형 컬럼: "
+                        f"{ {c: f'{v[0]} {v[1]:.0%}' for c, v in hits.items() if c != col} }"
+                    )
             except ValueError as e:
                 n_admin_fail += 1
-                print(f"      🔴 행정동 조인키 판정 실패")
+                print("      🔴 행정동 조인키 판정 실패")
                 for ln in str(e).splitlines():
                     print(f"         {ln}")
                 continue
@@ -122,10 +132,14 @@ def main() -> None:
         print(f"      값 컬럼 후보: {vcols if vcols else '없음 🔴'}")
 
     print("\n" + "=" * 88)
-    print(f"  geometry 복원 {n_geo_restored}건 · 좌표계 중단 {n_fail}건 · "
-          f"행정동코드 자동판정 {n_admin_auto}건 · 판정 실패 {n_admin_fail}건")
+    print(
+        f"  geometry 복원 {n_geo_restored}건 · 좌표계 중단 {n_fail}건 · "
+        f"행정동코드 자동판정 {n_admin_auto}건 · 판정 실패 {n_admin_fail}건"
+    )
     if n_fail:
-        print("  🔴 좌표계 중단 — 원본 좌표계를 확인하세요. 추측하면 조인이 조용히 0건이 됩니다.")
+        print(
+            "  🔴 좌표계 중단 — 원본 좌표계를 확인하세요. 추측하면 조인이 조용히 0건이 됩니다."
+        )
     if n_admin_fail:
         print("  🔴 행정동코드 판정 실패 — 조인 키가 확정되지 않습니다.")
     if not (n_fail or n_admin_fail):
