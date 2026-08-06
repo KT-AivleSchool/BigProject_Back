@@ -346,7 +346,15 @@ D:\obsidian_claude\10_OmniSite\
        fixture ↔ hitl **10항목 전부 일치**(같은 답을 넣으면 같은 값이 나온다)
 ✅ 라우터 표면 확정  /api 경로 **9개**(auth 2·audit 2·pipeline 5)  2026-08-05 갱신
        services/dummy(4248ff3) · api/v1/{ahp,lands}.py(7f66fd9) 삭제.
-       gis_service·ahp_service 는 **미구현이 아니라 폐기** — 만들면 안 된다.
+       ahp_service 는 **미구현이 아니라 폐기** — 만들면 안 된다.
+       🔴 `gis_service` 를 여기 같이 넣었던 건 **틀렸다**(정정 2026-08-06, 사람 지시).
+          폐기가 아니라 **STEP5 가 쓰는 코드**다 — `simulations.py:23` 이 최상단에서
+          import 하고 `:247` 이 `get_poi_context_from_db` 로 후보 주변 POI 문맥을
+          LLM 프롬프트에 넣는다. 빼면 공청회 시뮬레이션이 안 돈다.
+          `/lands`·`/ahp` 라우터를 지울 때 **그 라우터가 부르던 서비스**라는 이유로
+          같이 묶었다 — 호출자 하나가 죽었다고 피호출자까지 죽는 게 아니다.
+          S5 결론(PostGIS 가 6~10배 느리다)은 **파이프라인 공간연산** 얘기이고
+          `gis_service` 의 단건 POI 조회와는 다른 문제다. 같이 판단하지 말 것
        🔴 pdf_service·simulations 를 여기 같이 넣었던 건 **틀렸다**(정정 2026-08-04).
           simulations = 공청회 시뮬레이션(512행+graph.py 335행) · pdf_service =
           화면6 PDF 빌더(42행). 둘 다 폐기가 아니라 **배선 대기**이고 담당이 넘어갔다.
