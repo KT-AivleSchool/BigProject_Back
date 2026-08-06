@@ -12,7 +12,12 @@ from app.schemas.simulations import SimulationResultResponse, StreamRequest
 from app.core.sim_ai.graph import build_discussion_graph, vector_db
 from app.api.deps import get_db, get_redis
 from app.db.models.simulation import Parcel, ConflictSimulation
-from app.services.pdf_service import pdf_builder
+
+# 🔴 `from app.services.pdf_service import pdf_builder` 를 여기서 뺐다 (2026-08-04).
+#    이 모듈 전체가 그 한 줄 때문에 import 불가였다 — PDF 내보내기(화면6) 하나 때문에
+#    공청회 토론(화면5) 라우터 512행이 통째로 못 떴다.
+#    실사용은 `download_feasibility_report_pdf` **한 곳뿐**이라 그 함수 안으로 옮겼다.
+#    화면6 을 붙이는 사람이 볼 것: 이 파일이 아니라 그 함수의 주석이다.
 from app.db.session import AsyncSessionLocal
 from app.utils.redis_pubsub import RedisPubSubManager
 from app.core.security_limiter import rate_limiter
@@ -689,7 +694,21 @@ async def download_feasibility_report_pdf(
     }
 
     # 3. PDF 빌더 기동 및 스트리밍 파일 전송
+    #
+    # 🔴 지역 import 다 — 최상단이 아니라 여기서 부른다 (2026-08-04).
+    #    이 한 줄 때문에 모듈 전체가 import 불가였고, 그래서 화면5(토론)까지 못 떴다.
+    #    화면6 만 이걸 쓴다. 모듈 전체가 한 기능의 의존성에 인질로 잡히면 안 된다.
+    #
+    # ⚠ 지금 이 함수는 **동작하지 않는다.** 세 가지가 다 필요하다(2026-08-04 실측):
+    #      (1) app/services/pdf_service.py     — 삭제됨. `git show 9be3851:app/services/pdf_service.py`
+    #      (2) app/templates/report_template.html — 삭제됨(`2bd69ef report_template삭제`). 같은 커밋에 있다
+    #      (3) weasyprint                       — 이 Windows 에서 GTK3 부재로 import 실패
+    #    (1)(2)는 되돌리기 한 줄이고 (3)은 환경 문제다. 재작성이 아니라 **복구 + 환경**이다.
+    #    붙이는 사람에게: 세 개를 다 채우기 전엔 이 엔드포인트가 500 을 낸다.
+    #    조용히 빈 PDF 를 주지 않는다 — 아래 except 가 사유를 그대로 실어 보낸다(원칙 1).
     try:
+        from app.services.pdf_service import pdf_builder
+
         pdf_file = pdf_builder.generate_feasibility_pdf(report_data)
     except Exception as e:
         raise HTTPException(
