@@ -169,131 +169,167 @@ class GisService:
         """
         from app.db.models.simulation import Parcel
         from app.db.models.spatial import (
-            ChildcareCenter,
-            TrashBin,
-            TransitStation,
-            RestrictedZone,
+            BusStop,
+            StreetTrashBin,
+            Park,
+            CigaretteLitterHotspot,
+            FireWaterFacility,
+            SmokingArea
         )
         from sqlalchemy import select, func
 
         try:
-            result = await db.execute(select(Parcel).where(Parcel.id == parcel_id))
-            parcel = result.scalar()
-            if not parcel:
+            # geom에서 위경도를 추출합니다.
+            result = await db.execute(
+                select(Parcel, func.ST_Y(Parcel.geom).label('lat'), func.ST_X(Parcel.geom).label('lng'))
+                .where(Parcel.id == parcel_id)
+            )
+            row = result.first()
+            if not row:
                 return "필지 정보를 찾을 수 없습니다."
+            
+            parcel = row[0]
+            lng = row.lng
+            lat = row.lat
 
             # 타겟 포인트 지오메트리 생성 (경도, 위도) EPSG:4326 -> 3857 투영
             target_geom_3857 = func.ST_Transform(
-                func.ST_SetSRID(func.ST_MakePoint(parcel.lng, parcel.lat), 4326), 3857
+                func.ST_SetSRID(func.ST_MakePoint(lng, lat), 4326), 3857
             )
 
             context_lines = []
             search_radius_m = 300
 
-            # 1. 어린이집/학교 검색 (단점)
-            stmt_school = (
+            # 1. 버스정류장
+            stmt_bus = (
                 select(
-                    ChildcareCenter.center_name,
+                    BusStop.stop_name,
                     func.ST_Distance(
-                        func.ST_Transform(ChildcareCenter.geom, 3857), target_geom_3857
+                        func.ST_Transform(BusStop.geom, 3857), target_geom_3857
                     ).label("dist"),
                 )
                 .where(
                     func.ST_DWithin(
-                        func.ST_Transform(ChildcareCenter.geom, 3857),
+                        func.ST_Transform(BusStop.geom, 3857),
                         target_geom_3857,
                         search_radius_m,
                     )
                 )
                 .order_by("dist")
-                .limit(3)
+                .limit(1)
             )
+            for row in (await db.execute(stmt_bus)).all():
+                context_lines.append(f"📍 대중교통: 가장 가까운 버스정류장({row.stop_name})까지 약 {int(row.dist)}m 거리")
 
-            for row in (await db.execute(stmt_school)).all():
-                context_lines.append(
-                    f"🔴 단점: 가장 가까운 {row.center_name}까지 약 {int(row.dist)}m 거리"
+            # 2. 공원
+            stmt_park = (
+                select(
+                    Park.facility_name,
+                    func.ST_Distance(
+                        func.ST_Transform(Park.geom, 3857), target_geom_3857
+                    ).label("dist"),
                 )
+                .where(
+                    func.ST_DWithin(
+                        func.ST_Transform(Park.geom, 3857),
+                        target_geom_3857,
+                        search_radius_m,
+                    )
+                )
+                .order_by("dist")
+                .limit(1)
+            )
+            for row in (await db.execute(stmt_park)).all():
+                context_lines.append(f"📍 시민공간: 가장 가까운 공원({row.facility_name})까지 약 {int(row.dist)}m 거리")
 
-            # 2. 쓰레기통 검색 (장점)
+            # 3. 쓰레기통
             stmt_trash = (
                 select(
-                    TrashBin.bin_name,
                     func.ST_Distance(
-                        func.ST_Transform(TrashBin.geom, 3857), target_geom_3857
+                        func.ST_Transform(StreetTrashBin.geom, 3857), target_geom_3857
                     ).label("dist"),
                 )
                 .where(
                     func.ST_DWithin(
-                        func.ST_Transform(TrashBin.geom, 3857),
+                        func.ST_Transform(StreetTrashBin.geom, 3857),
                         target_geom_3857,
                         search_radius_m,
                     )
                 )
                 .order_by("dist")
-                .limit(3)
+                .limit(1)
             )
-
             for row in (await db.execute(stmt_trash)).all():
-                name = row.bin_name or "쓰레기통"
-                context_lines.append(
-                    f"🟢 장점: 가장 가까운 {name}까지 약 {int(row.dist)}m 거리"
-                )
+                context_lines.append(f"📍 기존인프라: 가장 가까운 가로 쓰레기통까지 약 {int(row.dist)}m 거리")
 
-            # 3. 버스/지하철역 (장점)
-            stmt_transit = (
+            # 4. 상습 무단투기 구역
+            stmt_litter = (
                 select(
-                    TransitStation.station_name,
                     func.ST_Distance(
-                        func.ST_Transform(TransitStation.geom, 3857), target_geom_3857
+                        func.ST_Transform(CigaretteLitterHotspot.geom, 3857), target_geom_3857
                     ).label("dist"),
                 )
                 .where(
                     func.ST_DWithin(
-                        func.ST_Transform(TransitStation.geom, 3857),
+                        func.ST_Transform(CigaretteLitterHotspot.geom, 3857),
                         target_geom_3857,
                         search_radius_m,
                     )
                 )
                 .order_by("dist")
-                .limit(3)
+                .limit(1)
             )
-
-            for row in (await db.execute(stmt_transit)).all():
-                context_lines.append(
-                    f"🟢 장점: 가장 가까운 대중교통역({row.station_name})까지 약 {int(row.dist)}m 거리"
-                )
-
-            # 4. 금연구역/제한구역 (단점)
-            stmt_restricted = (
+            for row in (await db.execute(stmt_litter)).all():
+                context_lines.append(f"📍 현장상황: 가장 가까운 상습 무단투기 구역까지 약 {int(row.dist)}m 거리")
+                
+            # 5. 기존 흡연구역
+            stmt_smoking = (
                 select(
-                    RestrictedZone.zone_name,
                     func.ST_Distance(
-                        func.ST_Transform(RestrictedZone.geom, 3857), target_geom_3857
+                        func.ST_Transform(SmokingArea.geom, 3857), target_geom_3857
                     ).label("dist"),
                 )
                 .where(
                     func.ST_DWithin(
-                        func.ST_Transform(RestrictedZone.geom, 3857),
+                        func.ST_Transform(SmokingArea.geom, 3857),
                         target_geom_3857,
                         search_radius_m,
                     )
                 )
                 .order_by("dist")
-                .limit(3)
+                .limit(1)
             )
+            for row in (await db.execute(stmt_smoking)).all():
+                context_lines.append(f"📍 기존흡연구역: 가장 가까운 기존 흡연구역까지 약 {int(row.dist)}m 거리")
 
-            for row in (await db.execute(stmt_restricted)).all():
-                name = row.zone_name or "금연구역"
-                context_lines.append(
-                    f"🔴 단점: 가장 가까운 {name}까지 약 {int(row.dist)}m 거리"
+            # 6. 소방용수시설
+            stmt_fire = (
+                select(
+                    func.ST_Distance(
+                        func.ST_Transform(FireWaterFacility.geom, 3857), target_geom_3857
+                    ).label("dist"),
                 )
+                .where(
+                    func.ST_DWithin(
+                        func.ST_Transform(FireWaterFacility.geom, 3857),
+                        target_geom_3857,
+                        search_radius_m,
+                    )
+                )
+                .order_by("dist")
+                .limit(1)
+            )
+            for row in (await db.execute(stmt_fire)).all():
+                context_lines.append(f"📍 소방/안전: 가장 가까운 소방용수시설까지 약 {int(row.dist)}m 거리")
 
             if context_lines:
                 return "\n".join([f"- {msg}" for msg in context_lines])
-            return "반경 300m 이내에 특별한 POI 제약/가점 요인이 없습니다."
+            return "반경 300m 이내에 인접한 주요 POI(대중교통, 공원, 쓰레기통 등)가 없습니다."
 
         except Exception as e:
             print(f"POI Context Load Error (DB): {e}")
+            import traceback
+            traceback.print_exc()
             await db.rollback()
             return ""
 

@@ -11,23 +11,39 @@ CREATE EXTENSION IF NOT EXISTS postgis;
 -- -----------------------------------------------------------------------------
 
 DROP TABLE IF EXISTS bus_stop_passenger_stats CASCADE;
-DROP TABLE IF EXISTS street_trash_bins CASCADE;
-DROP TABLE IF EXISTS subway_station_passenger_stats CASCADE;
-DROP TABLE IF EXISTS living_population_stats CASCADE;
-DROP TABLE IF EXISTS candidate_lands CASCADE;
-DROP TABLE IF EXISTS parks CASCADE;
-DROP TABLE IF EXISTS cigarette_litter_hotspots CASCADE;
-DROP TABLE IF EXISTS smoking_area_polygons CASCADE;
-DROP TABLE IF EXISTS smoking_areas CASCADE;
-DROP TABLE IF EXISTS commercial_shops CASCADE;
-DROP TABLE IF EXISTS cctv_locations CASCADE;
-DROP TABLE IF EXISTS public_wifi_locations CASCADE;
-DROP TABLE IF EXISTS public_toilets CASCADE;
-DROP TABLE IF EXISTS fire_water_facilities CASCADE;
-DROP TABLE IF EXISTS cultural_event_locations CASCADE;
-DROP TABLE IF EXISTS public_parking_lots CASCADE;
-DROP TABLE IF EXISTS national_owned_properties CASCADE;  -- 신규 추가
 
+DROP TABLE IF EXISTS street_trash_bins CASCADE;
+
+DROP TABLE IF EXISTS subway_station_passenger_stats CASCADE;
+
+DROP TABLE IF EXISTS living_population_stats CASCADE;
+
+DROP TABLE IF EXISTS candidate_lands CASCADE;
+
+DROP TABLE IF EXISTS parks CASCADE;
+
+DROP TABLE IF EXISTS cigarette_litter_hotspots CASCADE;
+
+DROP TABLE IF EXISTS smoking_area_polygons CASCADE;
+
+DROP TABLE IF EXISTS smoking_areas CASCADE;
+
+DROP TABLE IF EXISTS commercial_shops CASCADE;
+
+DROP TABLE IF EXISTS cctv_locations CASCADE;
+
+DROP TABLE IF EXISTS public_wifi_locations CASCADE;
+
+DROP TABLE IF EXISTS public_toilets CASCADE;
+
+DROP TABLE IF EXISTS fire_water_facilities CASCADE;
+
+DROP TABLE IF EXISTS cultural_event_locations CASCADE;
+
+DROP TABLE IF EXISTS public_parking_lots CASCADE;
+
+DROP TABLE IF EXISTS national_owned_properties CASCADE;
+-- 신규 추가
 
 -- =============================================================================
 -- 01. 버스정류소 유동인구
@@ -41,16 +57,13 @@ CREATE TABLE bus_stop_passenger_stats (
     longitude DOUBLE PRECISION NOT NULL,
     latitude DOUBLE PRECISION NOT NULL,
     avg_floating_population NUMERIC,
-    geom GEOMETRY(Point, 4326),
+    geom GEOMETRY (Point, 4326),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_bus_stop_passenger_stats_geom
-ON bus_stop_passenger_stats USING GIST (geom);
+CREATE INDEX idx_bus_stop_passenger_stats_geom ON bus_stop_passenger_stats USING GIST (geom);
 
-CREATE INDEX idx_bus_stop_passenger_stats_name
-ON bus_stop_passenger_stats (stop_name);
-
+CREATE INDEX idx_bus_stop_passenger_stats_name ON bus_stop_passenger_stats (stop_name);
 
 -- =============================================================================
 -- 02. 가로휴지통
@@ -63,13 +76,11 @@ CREATE TABLE street_trash_bins (
     installation_address VARCHAR(300) NOT NULL,
     longitude DOUBLE PRECISION NOT NULL,
     latitude DOUBLE PRECISION NOT NULL,
-    geom GEOMETRY(Point, 4326),
+    geom GEOMETRY (Point, 4326),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_street_trash_bins_geom
-ON street_trash_bins USING GIST (geom);
-
+CREATE INDEX idx_street_trash_bins_geom ON street_trash_bins USING GIST (geom);
 
 -- =============================================================================
 -- 03. 지하철역 유동인구
@@ -84,9 +95,7 @@ CREATE TABLE subway_station_passenger_stats (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_subway_station_passenger_stats_name
-ON subway_station_passenger_stats (station_name);
-
+CREATE INDEX idx_subway_station_passenger_stats_name ON subway_station_passenger_stats (station_name);
 
 -- =============================================================================
 -- 04. 생활인구
@@ -104,9 +113,7 @@ CREATE TABLE living_population_stats (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_living_population_stats_row_label
-ON living_population_stats (row_label);
-
+CREATE INDEX idx_living_population_stats_row_label ON living_population_stats (row_label);
 
 -- =============================================================================
 -- 05. 흡연부스 후보 부지
@@ -117,13 +124,11 @@ ON living_population_stats (row_label);
 CREATE TABLE candidate_lands (
     id SERIAL PRIMARY KEY,
     land_wkt TEXT NOT NULL,
-    geom GEOMETRY(Polygon, 4326),
+    geom GEOMETRY (Polygon, 4326),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_candidate_lands_geom
-ON candidate_lands USING GIST (geom);
-
+CREATE INDEX idx_candidate_lands_geom ON candidate_lands USING GIST (geom);
 
 -- =============================================================================
 -- 06. 용산구 공원
@@ -136,16 +141,13 @@ CREATE TABLE parks (
     facility_name VARCHAR(200) NOT NULL,
     longitude DOUBLE PRECISION NOT NULL,
     latitude DOUBLE PRECISION NOT NULL,
-    geom GEOMETRY(Point, 4326),
+    geom GEOMETRY (Point, 4326),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_parks_geom
-ON parks USING GIST (geom);
+CREATE INDEX idx_parks_geom ON parks USING GIST (geom);
 
-CREATE INDEX idx_parks_name
-ON parks (facility_name);
-
+CREATE INDEX idx_parks_name ON parks (facility_name);
 
 -- =============================================================================
 -- 07. 담배꽁초 상습 무단투기
@@ -158,13 +160,11 @@ CREATE TABLE cigarette_litter_hotspots (
     parcel_address VARCHAR(300) NOT NULL,
     longitude DOUBLE PRECISION NOT NULL,
     latitude DOUBLE PRECISION NOT NULL,
-    geom GEOMETRY(Point, 4326),
+    geom GEOMETRY (Point, 4326),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_cigarette_litter_hotspots_geom
-ON cigarette_litter_hotspots USING GIST (geom);
-
+CREATE INDEX idx_cigarette_litter_hotspots_geom ON cigarette_litter_hotspots USING GIST (geom);
 
 -- =============================================================================
 -- 08. 용산구 전체 흡연 제한구역 폴리곤
@@ -177,16 +177,13 @@ CREATE TABLE smoking_area_polygons (
     facility_type VARCHAR(100) NOT NULL,
     restriction_standard VARCHAR(100),
     gate_wkt TEXT NOT NULL,
-    geom GEOMETRY(Polygon, 4326),
+    geom GEOMETRY (Polygon, 4326),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_smoking_area_polygons_geom
-ON smoking_area_polygons USING GIST (geom);
+CREATE INDEX idx_smoking_area_polygons_geom ON smoking_area_polygons USING GIST (geom);
 
-CREATE INDEX idx_smoking_area_polygons_type
-ON smoking_area_polygons (facility_type);
-
+CREATE INDEX idx_smoking_area_polygons_type ON smoking_area_polygons (facility_type);
 
 -- =============================================================================
 -- 09. 용산구 기존 흡연구역
@@ -199,13 +196,11 @@ CREATE TABLE smoking_areas (
     installation_location VARCHAR(300) NOT NULL,
     longitude DOUBLE PRECISION NOT NULL,
     latitude DOUBLE PRECISION NOT NULL,
-    geom GEOMETRY(Point, 4326),
+    geom GEOMETRY (Point, 4326),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_smoking_areas_geom
-ON smoking_areas USING GIST (geom);
-
+CREATE INDEX idx_smoking_areas_geom ON smoking_areas USING GIST (geom);
 
 -- =============================================================================
 -- 10. 소상공인시장진흥공단 상가
@@ -219,16 +214,13 @@ CREATE TABLE commercial_shops (
     business_category VARCHAR(150),
     longitude DOUBLE PRECISION NOT NULL,
     latitude DOUBLE PRECISION NOT NULL,
-    geom GEOMETRY(Point, 4326),
+    geom GEOMETRY (Point, 4326),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_commercial_shops_geom
-ON commercial_shops USING GIST (geom);
+CREATE INDEX idx_commercial_shops_geom ON commercial_shops USING GIST (geom);
 
-CREATE INDEX idx_commercial_shops_category
-ON commercial_shops (business_category);
-
+CREATE INDEX idx_commercial_shops_category ON commercial_shops (business_category);
 
 -- =============================================================================
 -- 11. 용산구 CCTV
@@ -241,13 +233,11 @@ CREATE TABLE cctv_locations (
     location_description VARCHAR(300) NOT NULL,
     latitude DOUBLE PRECISION NOT NULL,
     longitude DOUBLE PRECISION NOT NULL,
-    geom GEOMETRY(Point, 4326),
+    geom GEOMETRY (Point, 4326),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_cctv_locations_geom
-ON cctv_locations USING GIST (geom);
-
+CREATE INDEX idx_cctv_locations_geom ON cctv_locations USING GIST (geom);
 
 -- =============================================================================
 -- 12. 용산구 공공와이파이
@@ -260,13 +250,11 @@ CREATE TABLE public_wifi_locations (
     location_description VARCHAR(300) NOT NULL,
     latitude DOUBLE PRECISION NOT NULL,
     longitude DOUBLE PRECISION NOT NULL,
-    geom GEOMETRY(Point, 4326),
+    geom GEOMETRY (Point, 4326),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_public_wifi_locations_geom
-ON public_wifi_locations USING GIST (geom);
-
+CREATE INDEX idx_public_wifi_locations_geom ON public_wifi_locations USING GIST (geom);
 
 -- =============================================================================
 -- 13. 용산구 공중화장실
@@ -279,13 +267,11 @@ CREATE TABLE public_toilets (
     location_description VARCHAR(300) NOT NULL,
     latitude DOUBLE PRECISION NOT NULL,
     longitude DOUBLE PRECISION NOT NULL,
-    geom GEOMETRY(Point, 4326),
+    geom GEOMETRY (Point, 4326),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_public_toilets_geom
-ON public_toilets USING GIST (geom);
-
+CREATE INDEX idx_public_toilets_geom ON public_toilets USING GIST (geom);
 
 -- =============================================================================
 -- 14. 용산구 소방용수시설
@@ -298,13 +284,11 @@ CREATE TABLE fire_water_facilities (
     road_address VARCHAR(300) NOT NULL,
     longitude DOUBLE PRECISION NOT NULL,
     latitude DOUBLE PRECISION NOT NULL,
-    geom GEOMETRY(Point, 4326),
+    geom GEOMETRY (Point, 4326),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_fire_water_facilities_geom
-ON fire_water_facilities USING GIST (geom);
-
+CREATE INDEX idx_fire_water_facilities_geom ON fire_water_facilities USING GIST (geom);
 
 -- =============================================================================
 -- 15. 용산구 문화행사
@@ -317,16 +301,13 @@ CREATE TABLE cultural_event_locations (
     place_name VARCHAR(300) NOT NULL,
     latitude DOUBLE PRECISION NOT NULL,
     longitude DOUBLE PRECISION NOT NULL,
-    geom GEOMETRY(Point, 4326),
+    geom GEOMETRY (Point, 4326),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_cultural_event_locations_geom
-ON cultural_event_locations USING GIST (geom);
+CREATE INDEX idx_cultural_event_locations_geom ON cultural_event_locations USING GIST (geom);
 
-CREATE INDEX idx_cultural_event_locations_name
-ON cultural_event_locations (place_name);
-
+CREATE INDEX idx_cultural_event_locations_name ON cultural_event_locations (place_name);
 
 -- =============================================================================
 -- 16. 용산구 공영주차장
@@ -341,16 +322,13 @@ CREATE TABLE public_parking_lots (
     parcel_address VARCHAR(300),
     latitude DOUBLE PRECISION NOT NULL,
     longitude DOUBLE PRECISION NOT NULL,
-    geom GEOMETRY(Point, 4326),
+    geom GEOMETRY (Point, 4326),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_public_parking_lots_geom
-ON public_parking_lots USING GIST (geom);
+CREATE INDEX idx_public_parking_lots_geom ON public_parking_lots USING GIST (geom);
 
-CREATE INDEX idx_public_parking_lots_name
-ON public_parking_lots (parking_lot_name);
-
+CREATE INDEX idx_public_parking_lots_name ON public_parking_lots (parking_lot_name);
 
 -- =============================================================================
 -- 17. 국유부동산  (신규 추가)
@@ -365,82 +343,209 @@ CREATE TABLE national_owned_properties (
     registered_area_sqm NUMERIC,
     longitude DOUBLE PRECISION NOT NULL,
     latitude DOUBLE PRECISION NOT NULL,
-    geom GEOMETRY(Point, 4326),
+    geom GEOMETRY (Point, 4326),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_national_owned_properties_geom
-ON national_owned_properties USING GIST (geom);
+CREATE INDEX idx_national_owned_properties_geom ON national_owned_properties USING GIST (geom);
 
-CREATE INDEX idx_national_owned_properties_category
-ON national_owned_properties (land_category);
+CREATE INDEX idx_national_owned_properties_category ON national_owned_properties (land_category);
 
+-- =============================================================================
+-- 18. RAG 피드백 자동 수집 테이블 (XGBoost 학습용)
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS rag_feedback_log (
+    id SERIAL PRIMARY KEY,
+    query_text TEXT NOT NULL, -- 검색했던 질문/상황
+    chunk_text TEXT NOT NULL, -- PGVector가 가져왔던 조례 원문
+    vector_score NUMERIC NOT NULL, -- 당시의 벡터 점수
+    label INT NOT NULL, -- LLM이 실제로 인용했으면 1, 안 했으면 0
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =============================================================================
+-- 19. Audit 규칙 (감리 AI 산출물 대체용) 테이블
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS audit_rules (
+    id SERIAL PRIMARY KEY,
+    dataset_id VARCHAR(50),
+    facility_type VARCHAR(100),
+    role_type VARCHAR(50), -- "positive_factor", "negative_factor", "hard_exclusion"
+    weight NUMERIC, -- 가점/감점 가중치
+    rationale TEXT, -- 판정 근거
+    source VARCHAR(250), -- 출처 (조항 등)
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
 -- =============================================================================
 -- CSV 적재 후 Point geom 생성
 -- =============================================================================
 
 UPDATE bus_stop_passenger_stats
-SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
-WHERE geom IS NULL AND longitude IS NOT NULL AND latitude IS NOT NULL;
+SET
+    geom = ST_SetSRID (
+        ST_MakePoint (longitude, latitude),
+        4326
+    )
+WHERE
+    geom IS NULL
+    AND longitude IS NOT NULL
+    AND latitude IS NOT NULL;
 
 UPDATE street_trash_bins
-SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
-WHERE geom IS NULL AND longitude IS NOT NULL AND latitude IS NOT NULL;
+SET
+    geom = ST_SetSRID (
+        ST_MakePoint (longitude, latitude),
+        4326
+    )
+WHERE
+    geom IS NULL
+    AND longitude IS NOT NULL
+    AND latitude IS NOT NULL;
 
 UPDATE parks
-SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
-WHERE geom IS NULL AND longitude IS NOT NULL AND latitude IS NOT NULL;
+SET
+    geom = ST_SetSRID (
+        ST_MakePoint (longitude, latitude),
+        4326
+    )
+WHERE
+    geom IS NULL
+    AND longitude IS NOT NULL
+    AND latitude IS NOT NULL;
 
 UPDATE cigarette_litter_hotspots
-SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
-WHERE geom IS NULL AND longitude IS NOT NULL AND latitude IS NOT NULL;
+SET
+    geom = ST_SetSRID (
+        ST_MakePoint (longitude, latitude),
+        4326
+    )
+WHERE
+    geom IS NULL
+    AND longitude IS NOT NULL
+    AND latitude IS NOT NULL;
 
 UPDATE smoking_areas
-SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
-WHERE geom IS NULL AND longitude IS NOT NULL AND latitude IS NOT NULL;
+SET
+    geom = ST_SetSRID (
+        ST_MakePoint (longitude, latitude),
+        4326
+    )
+WHERE
+    geom IS NULL
+    AND longitude IS NOT NULL
+    AND latitude IS NOT NULL;
 
 UPDATE commercial_shops
-SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
-WHERE geom IS NULL AND longitude IS NOT NULL AND latitude IS NOT NULL;
+SET
+    geom = ST_SetSRID (
+        ST_MakePoint (longitude, latitude),
+        4326
+    )
+WHERE
+    geom IS NULL
+    AND longitude IS NOT NULL
+    AND latitude IS NOT NULL;
 
 UPDATE cctv_locations
-SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
-WHERE geom IS NULL AND longitude IS NOT NULL AND latitude IS NOT NULL;
+SET
+    geom = ST_SetSRID (
+        ST_MakePoint (longitude, latitude),
+        4326
+    )
+WHERE
+    geom IS NULL
+    AND longitude IS NOT NULL
+    AND latitude IS NOT NULL;
 
 UPDATE public_wifi_locations
-SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
-WHERE geom IS NULL AND longitude IS NOT NULL AND latitude IS NOT NULL;
+SET
+    geom = ST_SetSRID (
+        ST_MakePoint (longitude, latitude),
+        4326
+    )
+WHERE
+    geom IS NULL
+    AND longitude IS NOT NULL
+    AND latitude IS NOT NULL;
 
 UPDATE public_toilets
-SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
-WHERE geom IS NULL AND longitude IS NOT NULL AND latitude IS NOT NULL;
+SET
+    geom = ST_SetSRID (
+        ST_MakePoint (longitude, latitude),
+        4326
+    )
+WHERE
+    geom IS NULL
+    AND longitude IS NOT NULL
+    AND latitude IS NOT NULL;
 
 UPDATE fire_water_facilities
-SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
-WHERE geom IS NULL AND longitude IS NOT NULL AND latitude IS NOT NULL;
+SET
+    geom = ST_SetSRID (
+        ST_MakePoint (longitude, latitude),
+        4326
+    )
+WHERE
+    geom IS NULL
+    AND longitude IS NOT NULL
+    AND latitude IS NOT NULL;
 
 UPDATE cultural_event_locations
-SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
-WHERE geom IS NULL AND longitude IS NOT NULL AND latitude IS NOT NULL;
+SET
+    geom = ST_SetSRID (
+        ST_MakePoint (longitude, latitude),
+        4326
+    )
+WHERE
+    geom IS NULL
+    AND longitude IS NOT NULL
+    AND latitude IS NOT NULL;
 
 UPDATE public_parking_lots
-SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
-WHERE geom IS NULL AND longitude IS NOT NULL AND latitude IS NOT NULL;
+SET
+    geom = ST_SetSRID (
+        ST_MakePoint (longitude, latitude),
+        4326
+    )
+WHERE
+    geom IS NULL
+    AND longitude IS NOT NULL
+    AND latitude IS NOT NULL;
 
 UPDATE national_owned_properties
-SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
-WHERE geom IS NULL AND longitude IS NOT NULL AND latitude IS NOT NULL;
-
+SET
+    geom = ST_SetSRID (
+        ST_MakePoint (longitude, latitude),
+        4326
+    )
+WHERE
+    geom IS NULL
+    AND longitude IS NOT NULL
+    AND latitude IS NOT NULL;
 
 -- =============================================================================
 -- WKT geom 생성
 -- =============================================================================
 
 UPDATE candidate_lands
-SET geom = ST_SetSRID(ST_GeomFromText(land_wkt), 4326)
-WHERE geom IS NULL AND land_wkt IS NOT NULL;
+SET
+    geom = ST_SetSRID (
+        ST_GeomFromText(land_wkt),
+        4326
+    )
+WHERE
+    geom IS NULL
+    AND land_wkt IS NOT NULL;
 
 UPDATE smoking_area_polygons
-SET geom = ST_SetSRID(ST_GeomFromText(gate_wkt), 4326)
-WHERE geom IS NULL AND gate_wkt IS NOT NULL;
+SET
+    geom = ST_SetSRID (
+        ST_GeomFromText(gate_wkt),
+        4326
+    )
+WHERE
+    geom IS NULL
+    AND gate_wkt IS NOT NULL;

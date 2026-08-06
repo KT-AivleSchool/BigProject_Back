@@ -112,9 +112,8 @@ class RagVectorStorage:
             recall_k = max(top_k * 3, 15)
             search_kwargs = {"k": recall_k}
 
-            # [A-2] facility_type 쿼리 prefix 제거 및 필터(filter) 적용
-            if facility_type:
-                search_kwargs["filter"] = {"facility_type": facility_type}
+            # [A-2] 시설 종류별 조례가 metadata로 분류되어 있지 않으므로 강제 필터링 제거
+            # (대신 query 텍스트 자체에 facility_type이 포함되어 있어 의미론적 검색으로 충분히 커버됨)
 
             # [A-3] 유사도 임계치 검사 및 점수 포함 검색
             docs_with_scores = (

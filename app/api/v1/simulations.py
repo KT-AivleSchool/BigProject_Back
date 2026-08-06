@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
+from sqlalchemy import select, func
 
 from app.schemas.simulations import SimulationResultResponse, StreamRequest
 from app.core.sim_ai.graph import build_discussion_graph
@@ -29,10 +29,10 @@ from app.core.security_limiter import rate_limiter
 router = APIRouter()
 
 # 임시 DB 우회용 스위치 (Mock 데이터 모드 활성화 여부)
-USE_MOCK_DB = True
+USE_MOCK_DB = False
 
 
-async def _fetch_and_parse_audit_rules_from_db(db: AsyncSession) -> str:
+async def _fetch_and_parse_audit_rules_from_db(db: AsyncSession, facility_type: str) -> str:
     """DB에서 AuditRule을 가져와 포맷팅된 문자열로 반환"""
     if USE_MOCK_DB:
         try:
@@ -91,7 +91,7 @@ async def _fetch_and_parse_audit_rules_from_db(db: AsyncSession) -> str:
     return "\n\n".join(lines)
 
 
-async def _extract_dynamic_meta_from_audit_rules(db: AsyncSession) -> dict:
+async def _extract_dynamic_meta_from_audit_rules(db: AsyncSession, facility_type: str) -> dict:
     """DB에서 AuditRule을 가져와 동적 메타데이터 반환"""
     if USE_MOCK_DB:
         facility = "흡연부스"
@@ -168,24 +168,29 @@ async def run_debate_and_publish(
     pubsub_manager = RedisPubSubManager(redis)
     async with AsyncSessionLocal() as db:
         try:
-            audit_context = await _fetch_and_parse_audit_rules_from_db(db)
-            audit_meta = await _extract_dynamic_meta_from_audit_rules(db)
-            if audit_meta.get("facility_type"):
-                facility_type = audit_meta["facility_type"]
+            audit_context = await _fetch_and_parse_audit_rules_from_db(db, facility_type)
+            audit_meta = await _extract_dynamic_meta_from_audit_rules(db, facility_type)
+            
+            # (기존에 DB의 facility_type으로 강제 덮어씌우던 로직 제거: 클라이언트 요청 facility_type 유지)
 
             try:
-                # DB에서 parcel_id로 GIS 데이터를 조회합니다.
-                result = await db.execute(select(Parcel).where(Parcel.id == parcel_id))
-                parcel = result.scalar()
+                # DB에서 parcel_id로 GIS 데이터를 조회하며, geom에서 실제 위경도를 추출합니다.
+                result = await db.execute(
+                    select(Parcel, func.ST_Y(Parcel.geom).label('lat'), func.ST_X(Parcel.geom).label('lng'))
+                    .where(Parcel.id == parcel_id)
+                )
+                row = result.first()
 
-                if parcel:
+                if row:
+                    parcel = row[0]
+                    # booth_candidates 테이블에는 직접적인 지번 컬럼이 없습니다.
+                    # 위경도는 ST_Y, ST_X로 추출한 실제 값을 사용합니다.
                     gis_data = {
-                        "lat": parcel.lat,
-                        "lng": parcel.lng,
-                        "jibun": parcel.jibun,
-                        "intensity_level": parcel.intensity_level,
-                        "ahp_weights": parcel.ahp_weights
-                        or audit_meta.get("ahp_weights", {}),
+                        "lat": row.lat,
+                        "lng": row.lng,
+                        "jibun": f"후보지 #{parcel.id} (실제 위치 기반)",
+                        "intensity_level": "보통", # Fallback default
+                        "ahp_weights": audit_meta.get("ahp_weights", {}),
                     }
                 else:
                     raise ValueError("Parcel DB record not found")

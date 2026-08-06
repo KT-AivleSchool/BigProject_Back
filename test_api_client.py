@@ -6,14 +6,8 @@ import sys
 def main():
     url = "http://localhost:8000/api/v1/simulation/stream"
 
-    try:
-        with open("dummy_audit.json", "r", encoding="utf-8") as f:
-            audit_data = json.load(f)
-    except FileNotFoundError:
-        print("❌ 'dummy_audit.json' 파일을 찾을 수 없습니다.")
-        sys.exit(1)
-
-    payload = {"parcel_id": 1, "facility_type": "흡연부스", "audit_data": audit_data}
+    # 이제 백엔드가 DB에서 직접 데이터를 가져오므로 더미 파일(dummy_audit.json)이 필요 없습니다!
+    payload = {"parcel_id": 1, "facility_type": "흡연부스", "audit_data": {}}
 
     print(f"📡 FastAPI 서버({url})로 POST 스트리밍 요청을 보냅니다...\n")
     print("-" * 50)
