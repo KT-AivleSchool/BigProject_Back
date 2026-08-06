@@ -50,12 +50,15 @@ async def main():
         query, top_k=5, facility_type=FACILITY_TYPE
     )
     if retrieved:
-        common_rag = "\n".join(retrieved)
+        # retrieve_similar_statutes()가 dict 리스트를 반환함(A-4 XGBoost Re-ranking 이후 형식)
+        common_rag = "\n\n".join(
+            f"[DOC_ID: {d['doc_id']}] {d['text']}" for d in retrieved
+        )
         print(
             f"✅ 조례 검색 {len(retrieved)}건 (filter={FACILITY_TYPE}, 임계치 통과분):\n"
         )
         for d in retrieved:
-            print("   •", d.split("\n")[0])
+            print("   •", d["text"].split("\n")[0])
     else:
         common_rag = "관련 조례 없음"
         print(
