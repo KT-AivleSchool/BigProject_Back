@@ -56,6 +56,15 @@ tests/test_geocoder.py
 # Dynamic Uploads & Media Files
 uploads/
 
+# Claude Code 로컬 설정
+.claude/
+
+# DB 덤프 (대용량, 각자 로컬 생성분)
+omnisite_backup.sql
+
+# 적재 제외 문서 보관함 (지침류 등 — 임베딩 부적합)
+seeds_excluded/
+
 # 순수 일회성 스크립트만 남은 로컬 폴더 (analyze_clean_perf.py 하나).
 # 🔴 회귀 대조기·진단기 9개는 2026-08-05 에 `app/tools/` 로 옮겨 **추적한다.**
 #    픽스처(기준값)는 리포에 있는데 대조기가 없으면 재는 자가 없는 자다.
