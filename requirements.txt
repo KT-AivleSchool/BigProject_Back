@@ -31,4 +31,6 @@ redis>=4.2.0
 requests>=2.30.0
 pandas>=2.0.0
 geopandas>=0.13.0
+# parquet 엔진 (필수) — 없으면 to_parquet가 csv로 무음 폴백되어 행정동코드 앞자리 0 유실 → 조인 깨짐 (#208)
+pyarrow>=15.0.0
 shapely>=2.0.0

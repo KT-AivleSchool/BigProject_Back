@@ -14,6 +14,9 @@ services:
       POSTGRES_DB: omnisite
     volumes:
       - omnisite_postgres_data:/var/lib/postgresql/data
+      # 빈 볼륨 최초 기동 시에만 자동 복원(경계 3종 제외, 스크립트로 별도 적재).
+      # 이미 데이터 있는 볼륨엔 실행 안 됨 → 기존 데이터 안전.
+      - ./omnisite_seed.sql.gz:/docker-entrypoint-initdb.d/01_seed.sql.gz:ro
     restart: always
 
   redis:
@@ -21,9 +24,26 @@ services:
     container_name: omnisite-redis-cache
     ports:
       - "6379:6379"
-    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    # 캐시 영속화(#203 ①): AOF(유실 거의 0) + RDB(스냅샷 백업) + 볼륨(컨테이너 삭제에도 보존)
+    # volatile-lru: TTL 있는 키만 evict → 무TTL 캐시(지오코딩 12분·지목 LLM)는 보존됨
+    command:
+      - redis-server
+      - --maxmemory
+      - 512mb
+      - --maxmemory-policy
+      - volatile-lru
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --save
+      - 3600 1 300 100 60 10000
+    volumes:
+      - omnisite_redis_data:/data
     restart: always
 
 volumes:
   omnisite_postgres_data:
+    driver: local
+  omnisite_redis_data:
     driver: local
