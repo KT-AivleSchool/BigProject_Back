@@ -38,6 +38,7 @@ from app.api.v1 import auth, audit, pipeline
 #      `report_template.html`(2bd69ef 에서 삭제) 복구 + weasyprint(GTK3) 가 필요하다.
 #      재작성이 아니라 **복구 + 환경**이며, 그 사정은 그 함수 주석에 적어뒀다.
 from app.api.v1 import simulations
+
 #
 # 🔴 upload 도 폐기가 아니다 — **앞으로 쓸 것**이다. 이슈 #203 대로
 #    gam2_doc_extract.py(문서→텍스트) + gam2_ordinance_select.py(조문 분할·규제 선별)를

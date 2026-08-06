@@ -24,6 +24,7 @@ OmniSite 조례 조문 분할·선별
    거기서는 조문 하나가 빠지면 근거가 사라지고, 호출 횟수도 배제 건수뿐이라 싸다.
    선별은 **감리 프롬프트(데이터셋 수만큼 반복)** 에만 적용한다.
 """
+
 from __future__ import annotations
 
 import re
@@ -40,10 +41,17 @@ _REF = re.compile(r"제\s*(\d+)\s*조(?:의\s*(\d+))?")
 #   표지판 설치·교육 홍보·과태료 조문에도 다 나와 전문의 86% 가 남았다.
 #   조문을 규제로 만드는 것은 단어가 아니라 **거리·금지·열거** 세 구조다.
 DIST = ("미터", "ｍ", "m 이내", "이격", "반경", "직선거리")
-PROHIBIT = ("할 수 없다", "아니 된다", "금지한다", "설치할 수 없다",
-            "설치·운영할 수 없다", "제한한다", "배제")
-_ENUM = re.compile(r"^\s*\d+\.\s", re.M)      # 각 호 열거 (1. 2. 3. …)
-ENUM_MIN = 3                                    # 3개 이상이면 대상 목록으로 본다
+PROHIBIT = (
+    "할 수 없다",
+    "아니 된다",
+    "금지한다",
+    "설치할 수 없다",
+    "설치·운영할 수 없다",
+    "제한한다",
+    "배제",
+)
+_ENUM = re.compile(r"^\s*\d+\.\s", re.M)  # 각 호 열거 (1. 2. 3. …)
+ENUM_MIN = 3  # 3개 이상이면 대상 목록으로 본다
 
 
 def split_articles(text: str) -> list[dict]:
@@ -66,15 +74,22 @@ def split_articles(text: str) -> list[dict]:
         no = re.sub(r"\s+", "", m.group(1))
         n = int(re.search(r"\d+", no).group())
         sub = re.search(r"의(\d+)", no)
-        body = text[m.start():end].strip()
+        body = text[m.start() : end].strip()
         # 같은 조문이 두 번 나오면(PDF 머리말 반복 등) 긴 쪽을 남긴다
         prev = next((o for o in out if o["no"] == no), None)
         if prev:
             if len(body) > len(prev["text"]):
                 prev["text"] = body
             continue
-        out.append({"no": no, "num": n, "sub": int(sub.group(1)) if sub else 0,
-                    "title": m.group(2).strip(), "text": body})
+        out.append(
+            {
+                "no": no,
+                "num": n,
+                "sub": int(sub.group(1)) if sub else 0,
+                "title": m.group(2).strip(),
+                "text": body,
+            }
+        )
     return out
 
 
@@ -133,8 +148,9 @@ def has_siting_provision(text: str) -> tuple[bool, list]:
     return bool(hits), hits
 
 
-def select_articles(text: str, keywords=(), max_chars: int = 6000,
-                    verbose: bool = False) -> str:
+def select_articles(
+    text: str, keywords=(), max_chars: int = 6000, verbose: bool = False
+) -> str:
     """감리 프롬프트용 조례 발췌.
 
     keywords : 이 데이터셋을 나타내는 말(파일명·컬럼명에서 추출). 매칭 조문을 포함한다.
@@ -150,7 +166,7 @@ def select_articles(text: str, keywords=(), max_chars: int = 6000,
     kws = [str(k).strip() for k in keywords if str(k).strip()]
     keep: set[str] = set()
     for a in arts:
-        if a["no"] is None:                       # 서두(제명·시행일)는 항상
+        if a["no"] is None:  # 서두(제명·시행일)는 항상
             keep.add("__head__")
             continue
         if is_regulatory(a)[0]:
@@ -160,7 +176,7 @@ def select_articles(text: str, keywords=(), max_chars: int = 6000,
 
     # 참조 확장 — 선택된 조문이 가리키는 조문을 끌어온다(단서 해석용)
     by_key = {(a["num"], a["sub"]): a for a in arts if a["no"]}
-    for _ in range(2):                            # 2단계까지(참조의 참조)
+    for _ in range(2):  # 2단계까지(참조의 참조)
         add = set()
         for a in arts:
             if a["no"] not in keep:
@@ -173,8 +189,9 @@ def select_articles(text: str, keywords=(), max_chars: int = 6000,
             break
         keep |= add
 
-    sel = [a for a in arts
-           if (a["no"] is None and "__head__" in keep) or a["no"] in keep]
+    sel = [
+        a for a in arts if (a["no"] is None and "__head__" in keep) or a["no"] in keep
+    ]
     if not sel:
         return text
 
@@ -190,8 +207,10 @@ def select_articles(text: str, keywords=(), max_chars: int = 6000,
 
     out = "\n\n".join(parts)
     if verbose:
-        print(f"  ⓘ 조례 발췌: 조문 {len(arts)}개 중 {len(sel)}개 · "
-              f"{len(text):,}자 → {len(out):,}자 ({len(out)/max(len(text),1):.0%})")
+        print(
+            f"  ⓘ 조례 발췌: 조문 {len(arts)}개 중 {len(sel)}개 · "
+            f"{len(text):,}자 → {len(out):,}자 ({len(out) / max(len(text), 1):.0%})"
+        )
     return out
 
 

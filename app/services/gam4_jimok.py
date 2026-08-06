@@ -19,6 +19,7 @@ OmniSite 지목 판정 (STEP 4)
   규제 배제는 사용자 데이터 + 감리(reviewed.json) 경로에서만 나와야 한다.
   지적도에서 규제를 파생시키면 감리 경로를 우회하게 된다.
 """
+
 from __future__ import annotations
 
 import json
@@ -27,7 +28,7 @@ from datetime import datetime
 
 try:
     from app.config import OPENAI_API_KEY, SEARCH_LLM_MODEL, JIMOK_CACHE_PATH
-except Exception:                                   # 단독 실행 폴백
+except Exception:  # 단독 실행 폴백
     OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
     SEARCH_LLM_MODEL = "gpt-4o-mini"
     JIMOK_CACHE_PATH = os.path.join(".", "jimok_role_cache.json")
@@ -36,13 +37,34 @@ except Exception:                                   # 단독 실행 폴백
 # 법정 표준이다. 시설 종류와 무관하게 고정 — 도메인 지식이 아니라 참조 데이터다.
 #   (LLM 에 '대','도' 같은 한 글자만 주면 오독하므로 명칭을 함께 넘긴다)
 JIMOK_NAMES = {
-    "전": "전(밭)", "답": "답(논)", "과": "과수원", "목": "목장용지",
-    "임": "임야", "광": "광천지", "염": "염전", "대": "대(대지)",
-    "장": "공장용지", "학": "학교용지", "차": "주차장", "주": "주유소용지",
-    "창": "창고용지", "도": "도로", "철": "철도용지", "제": "제방",
-    "천": "하천", "구": "구거(수로)", "유": "유지(연못)", "양": "양어장",
-    "수": "수도용지", "공": "공원", "체": "체육용지", "원": "유원지",
-    "종": "종교용지", "사": "사적지", "묘": "묘지", "잡": "잡종지",
+    "전": "전(밭)",
+    "답": "답(논)",
+    "과": "과수원",
+    "목": "목장용지",
+    "임": "임야",
+    "광": "광천지",
+    "염": "염전",
+    "대": "대(대지)",
+    "장": "공장용지",
+    "학": "학교용지",
+    "차": "주차장",
+    "주": "주유소용지",
+    "창": "창고용지",
+    "도": "도로",
+    "철": "철도용지",
+    "제": "제방",
+    "천": "하천",
+    "구": "구거(수로)",
+    "유": "유지(연못)",
+    "양": "양어장",
+    "수": "수도용지",
+    "공": "공원",
+    "체": "체육용지",
+    "원": "유원지",
+    "종": "종교용지",
+    "사": "사적지",
+    "묘": "묘지",
+    "잡": "잡종지",
 }
 
 VALID_ROLES = {"candidate", "unusable"}
@@ -98,7 +120,8 @@ def _call_llm(facility: str, stats: dict, model: str) -> dict:
         raise RuntimeError(
             "OPENAI_API_KEY 없음 — 지목 판정 불가.\n"
             "  키를 설정하거나, 캐시를 미리 만들어 두거나,\n"
-            "  make_parcel_candidates.py --jimok 로 직접 지정하세요.")
+            "  make_parcel_candidates.py --jimok 로 직접 지정하세요."
+        )
     from openai import OpenAI
 
     items = [{"부호": k, "명칭": JIMOK_NAMES.get(k, k), **v} for k, v in stats.items()]
@@ -121,9 +144,11 @@ def _call_llm(facility: str, stats: dict, model: str) -> dict:
     )
     client = OpenAI(api_key=OPENAI_API_KEY)
     resp = client.chat.completions.create(
-        model=model, temperature=0,
+        model=model,
+        temperature=0,
         response_format={"type": "json_object"},
-        messages=[{"role": "user", "content": prompt}])
+        messages=[{"role": "user", "content": prompt}],
+    )
     return json.loads(resp.choices[0].message.content)
 
 
@@ -143,13 +168,16 @@ def _apply_gate(raw: dict, stats: dict) -> tuple[dict, list]:
         #   규제성 role(hard_exclusion)도 여기서 걸린다 — 지적도에서 규제를
         #   파생시키면 감리 경로를 우회하게 되므로 받지 않는다.
         if role not in VALID_ROLES:
-            flags.append(f"[{jm}] 허용 밖 role '{role}' → unknown (후보 제외) {why[:40]}")
+            flags.append(
+                f"[{jm}] 허용 밖 role '{role}' → unknown (후보 제외) {why[:40]}"
+            )
             role = UNKNOWN
         # 게이트 ②: 반경 숫자를 냈다면 규제 판정 시도로 본다
         for k in ("배제반경_m", "radius_m", "반경"):
             if r.get(k) not in (None, ""):
-                flags.append(f"[{jm}] 반경값 {r[k]} 제안됨 → 무시 "
-                             f"(규제 배제는 감리 경로 전용)")
+                flags.append(
+                    f"[{jm}] 반경값 {r[k]} 제안됨 → 무시 (규제 배제는 감리 경로 전용)"
+                )
         roles[jm] = {"role": role, "이유": why}
     # 응답에만 있고 실제 데이터엔 없는 지목
     for jm in set(raw) - set(stats):
@@ -157,9 +185,14 @@ def _apply_gate(raw: dict, stats: dict) -> tuple[dict, list]:
     return roles, flags
 
 
-def judge(facility: str, stats: dict, model: str | None = None,
-          path: str | None = None, force: bool = False,
-          verbose: bool = True) -> dict:
+def judge(
+    facility: str,
+    stats: dict,
+    model: str | None = None,
+    path: str | None = None,
+    force: bool = False,
+    verbose: bool = True,
+) -> dict:
     """지목 판정. 캐시가 있으면 LLM 호출 없이 반환.
 
     캐시 무효화(설계 확정 Q-j3 (가)): **시설명 기준**.
@@ -182,11 +215,15 @@ def judge(facility: str, stats: dict, model: str | None = None,
             # 모델이 바뀌면 판정 품질이 달라진다 — 캐시를 그대로 쓰면
             # "4o 로 돌렸다" 고 믿으면서 실제로는 mini 결과를 쓰게 된다.
             if verbose:
-                print(f"  [지목 판정] 캐시 모델 불일치 ({cached_model} != {m}) → 재판정")
+                print(
+                    f"  [지목 판정] 캐시 모델 불일치 ({cached_model} != {m}) → 재판정"
+                )
         else:
             if verbose:
-                print(f"  [지목 판정] 캐시 사용 ({hit.get('judged_at','')[:19]}, "
-                      f"{cached_model})")
+                print(
+                    f"  [지목 판정] 캐시 사용 ({hit.get('judged_at', '')[:19]}, "
+                    f"{cached_model})"
+                )
             return hit
 
     if verbose:
@@ -194,8 +231,13 @@ def judge(facility: str, stats: dict, model: str | None = None,
     raw = _call_llm(facility, stats, m)
     roles, flags = _apply_gate(raw, stats)
 
-    rec = {"judged_at": datetime.now().isoformat(timespec="seconds"),
-           "model": m, "facility": facility, "roles": roles, "flags": flags}
+    rec = {
+        "judged_at": datetime.now().isoformat(timespec="seconds"),
+        "model": m,
+        "facility": facility,
+        "roles": roles,
+        "flags": flags,
+    }
     cache[facility] = rec
     _save_cache(p, cache)
     if verbose:
@@ -215,10 +257,13 @@ def print_judgment(rec: dict, stats: dict) -> None:
     """판정 결과 표시. HITL 은 아니지만 눈으로 확인할 수 있게 출력한다."""
     roles = rec.get("roles", {})
     print("\n" + "=" * 66)
-    print(f"[지목 판정] {rec.get('facility','')} · {rec.get('model','')}")
+    print(f"[지목 판정] {rec.get('facility', '')} · {rec.get('model', '')}")
     print("=" * 66)
-    for want, label in (("candidate", "설치 가능"), ("unusable", "설치 불가"),
-                        (UNKNOWN, "판정 실패 → 후보 제외")):
+    for want, label in (
+        ("candidate", "설치 가능"),
+        ("unusable", "설치 불가"),
+        (UNKNOWN, "판정 실패 → 후보 제외"),
+    ):
         sel = [(k, v) for k, v in roles.items() if v.get("role") == want]
         if not sel:
             continue
@@ -227,12 +272,16 @@ def print_judgment(rec: dict, stats: dict) -> None:
         print(f"\n  {want:<10} {label}   {n:,}필지")
         for k, v in sel:
             s = stats.get(k, {})
-            print(f"    {k} {JIMOK_NAMES.get(k,k):<10} {s.get('필지수',0):>7,}필지  "
-                  f"{v.get('이유','')[:44]}")
+            print(
+                f"    {k} {JIMOK_NAMES.get(k, k):<10} {s.get('필지수', 0):>7,}필지  "
+                f"{v.get('이유', '')[:44]}"
+            )
     n_unk = sum(1 for v in roles.values() if v.get("role") == UNKNOWN)
     if n_unk:
-        print(f"\n  ⚠ 판정 실패 {n_unk}종 — 후보에서 제외했습니다. "
-              f"재실행하려면 --force-jimok")
+        print(
+            f"\n  ⚠ 판정 실패 {n_unk}종 — 후보에서 제외했습니다. "
+            f"재실행하려면 --force-jimok"
+        )
     flags = rec.get("flags") or []
     if flags:
         print(f"\n  ⚠ 게이트 {len(flags)}건 — 자동 수용하지 않음")

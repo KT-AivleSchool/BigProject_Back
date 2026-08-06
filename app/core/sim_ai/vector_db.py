@@ -83,7 +83,9 @@ class RagVectorStorage:
             )
 
         if not self.statutes_store:
-            raise RuntimeError("RAG Vector DB (PGVector) is not initialized. Database connection is required.")
+            raise RuntimeError(
+                "RAG Vector DB (PGVector) is not initialized. Database connection is required."
+            )
 
         try:
             if metadatas is None:
@@ -104,7 +106,9 @@ class RagVectorStorage:
         '기본 조례 콜렉션(statutes_collection)'에서 비동기로 검색합니다.
         """
         if not self.statutes_store:
-            raise RuntimeError("RAG Vector DB (PGVector) is not initialized. Database connection is required.")
+            raise RuntimeError(
+                "RAG Vector DB (PGVector) is not initialized. Database connection is required."
+            )
 
         try:
             # LangChain의 비동기 유사도 검색 (asimilarity_search_with_relevance_scores) 사용
@@ -138,7 +142,7 @@ class RagVectorStorage:
             from app.services.xgboost_rag_service import xgboost_rag_service
 
             print("\n" + "=" * 60)
-            print(f"🔍 [XGBoost Re-ranking 전/후 비교 로그] (Query: {query})")
+            print(f"[XGBoost Re-ranking 전/후 비교 로그] (Query: {query})")
             print("-" * 60)
             print(
                 f"▶ 1. PGVector 원본 검색 결과 (총 {len(candidate_chunks)}건 중 상위 3건 미리보기)"
@@ -169,7 +173,9 @@ class RagVectorStorage:
             logger.error(f"[RAG Error] 유사도 검색 및 Re-ranking 실패: {e}")
             raise e
 
+
 _vector_db_instance = None
+
 
 def get_vector_db() -> RagVectorStorage:
     """RagVectorStorage 싱글톤 인스턴스를 지연 생성(Lazy Load)하여 반환합니다."""

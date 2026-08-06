@@ -19,6 +19,7 @@ HITL 완주 대조 (A2) — fixture 와 hitl 이 **같은 값**에 도달하는�
 
 🔴 LLM 을 부른다 — 제안 패스 1회(약 10초). 완전 무호출은 `check_hitl_gate.py` 쪽이다.
 """
+
 from __future__ import annotations
 
 import json
@@ -32,14 +33,14 @@ _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from app.config import DOMAIN_ROOT                          # noqa: E402
-from app.services import pipeline_runner as R               # noqa: E402
+from app.config import DOMAIN_ROOT  # noqa: E402
+from app.services import pipeline_runner as R  # noqa: E402
 
 args = [a for a in sys.argv[1:]]
 COMPARE: list[str] = []
 if "--compare" in args:
     i = args.index("--compare")
-    COMPARE = args[i + 1:i + 3]
+    COMPARE = args[i + 1 : i + 3]
     args = args[:i]
 DOMAIN = args[0] if args else "흡연"
 
@@ -50,7 +51,9 @@ ok_all = True
 #    없는 키를 넣으면 None == None 으로 통과해 **아무것도 안 본 채 초록불**이 된다.
 def summary(run_id: str) -> dict:
     p = R.run_dir(run_id)
-    ws = json.loads((p / "step3" / f"{DOMAIN}_weight_set.json").read_text(encoding="utf-8"))
+    ws = json.loads(
+        (p / "step3" / f"{DOMAIN}_weight_set.json").read_text(encoding="utf-8")
+    )
     rp = json.loads((p / "step4" / f"{DOMAIN}_report.json").read_text(encoding="utf-8"))
     inds = ws.get("indicators") or []
     out = {
@@ -66,14 +69,16 @@ def summary(run_id: str) -> dict:
         "topn_점수": [r["점수"] for r in rp["topn"]],
     }
     empty = [k for k, v in out.items() if v in (None, {}, [])]
-    if empty:                       # 비어 있으면 "일치" 가 아무 뜻도 없다
-        raise SystemExit(f"🔴 {run_id}: 비교 항목이 비었습니다 → {empty}\n"
-                         f"   산출물 키 이름이 바뀐 것이다. 이 스크립트를 고쳐야 한다.")
+    if empty:  # 비어 있으면 "일치" 가 아무 뜻도 없다
+        raise SystemExit(
+            f"🔴 {run_id}: 비교 항목이 비었습니다 → {empty}\n"
+            f"   산출물 키 이름이 바뀐 것이다. 이 스크립트를 고쳐야 한다."
+        )
     return out
 
 
 def diff(a: dict, b: dict, label: str) -> bool:
-    j = lambda v: json.dumps(v, sort_keys=True, ensure_ascii=False)   # noqa: E731
+    j = lambda v: json.dumps(v, sort_keys=True, ensure_ascii=False)  # noqa: E731
     bad = [k for k in a if j(a[k]) != j(b.get(k))]
     if bad:
         print(f"  🔴 {label} 불일치: {bad}")
@@ -123,21 +128,29 @@ assert d["status"] == "awaiting_hitl" and d["gate"]["id"] == "audit", d
 qs = d["gate"]["questions"]
 print(f"   게이트A 질문 {len(qs)}건 · 편집가능 {sum(q['editable'] for q in qs)}건")
 if any(q["editable"] for q in qs):
-    sys.exit("🔴 픽스처인데 편집 가능한 질문이 있다 — 답을 만들 수 없다. "
-             "감리 결과가 픽스처가 아니거나 editable 판정이 틀렸다.")
-R.submit_gate(rid2, "audit", {"run_id": rid2})      # 고칠 게 없다 = 빈 답
+    sys.exit(
+        "🔴 픽스처인데 편집 가능한 질문이 있다 — 답을 만들 수 없다. "
+        "감리 결과가 픽스처가 아니거나 editable 판정이 틀렸다."
+    )
+R.submit_gate(rid2, "audit", {"run_id": rid2})  # 고칠 게 없다 = 빈 답
 
 d = wait(rid2, ("awaiting_hitl", "failed", "succeeded"))
 print("   status =", d["status"], "· gate =", (d.get("gate") or {}).get("id"))
 assert d["status"] == "awaiting_hitl" and d["gate"]["id"] == "weight", d
 qw = d["gate"]["questions"]
-print(f"   게이트B 지표 {len(qw)}건 · 반경필요 {sum(q['radius_required'] for q in qw)}건"
-      f" · 충돌 {sum(bool(q['conflict']) for q in qw)}건")
+print(
+    f"   게이트B 지표 {len(qw)}건 · 반경필요 {sum(q['radius_required'] for q in qw)}건"
+    f" · 충돌 {sum(bool(q['conflict']) for q in qw)}건"
+)
 
-fix = json.loads((Path(DOMAIN_ROOT) / f"{DOMAIN}_FIX" / "기준값.json")
-                 .read_text(encoding="utf-8"))
-radius = {k: v["radius_m"] for k, v in fix["STEP3_가중치"].items()
-          if v.get("radius_m") is not None}
+fix = json.loads(
+    (Path(DOMAIN_ROOT) / f"{DOMAIN}_FIX" / "기준값.json").read_text(encoding="utf-8")
+)
+radius = {
+    k: v["radius_m"]
+    for k, v in fix["STEP3_가중치"].items()
+    if v.get("radius_m") is not None
+}
 slider = {q["indicator_id"]: q["slider_proposed"] for q in qw}
 print("   답변 radius =", radius)
 print("   제안 radius =", {q["indicator_id"]: q["radius_proposed"] for q in qw})

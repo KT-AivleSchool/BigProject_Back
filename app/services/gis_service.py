@@ -174,20 +174,23 @@ class GisService:
             Park,
             CigaretteLitterHotspot,
             FireWaterFacility,
-            SmokingArea
+            SmokingArea,
         )
         from sqlalchemy import select, func
 
         try:
             # geom에서 위경도를 추출합니다.
             result = await db.execute(
-                select(Parcel, func.ST_Y(Parcel.geom).label('lat'), func.ST_X(Parcel.geom).label('lng'))
-                .where(Parcel.id == parcel_id)
+                select(
+                    Parcel,
+                    func.ST_Y(Parcel.geom).label("lat"),
+                    func.ST_X(Parcel.geom).label("lng"),
+                ).where(Parcel.id == parcel_id)
             )
             row = result.first()
             if not row:
                 return "필지 정보를 찾을 수 없습니다."
-            
+
             parcel = row[0]
             lng = row.lng
             lat = row.lat
@@ -219,7 +222,9 @@ class GisService:
                 .limit(1)
             )
             for row in (await db.execute(stmt_bus)).all():
-                context_lines.append(f"📍 대중교통: 가장 가까운 버스정류장({row.stop_name})까지 약 {int(row.dist)}m 거리")
+                context_lines.append(
+                    f"📍 대중교통: 가장 가까운 버스정류장({row.stop_name})까지 약 {int(row.dist)}m 거리"
+                )
 
             # 2. 공원
             stmt_park = (
@@ -240,7 +245,9 @@ class GisService:
                 .limit(1)
             )
             for row in (await db.execute(stmt_park)).all():
-                context_lines.append(f"📍 시민공간: 가장 가까운 공원({row.facility_name})까지 약 {int(row.dist)}m 거리")
+                context_lines.append(
+                    f"📍 시민공간: 가장 가까운 공원({row.facility_name})까지 약 {int(row.dist)}m 거리"
+                )
 
             # 3. 쓰레기통
             stmt_trash = (
@@ -260,13 +267,16 @@ class GisService:
                 .limit(1)
             )
             for row in (await db.execute(stmt_trash)).all():
-                context_lines.append(f"📍 기존인프라: 가장 가까운 가로 쓰레기통까지 약 {int(row.dist)}m 거리")
+                context_lines.append(
+                    f"📍 기존인프라: 가장 가까운 가로 쓰레기통까지 약 {int(row.dist)}m 거리"
+                )
 
             # 4. 상습 무단투기 구역
             stmt_litter = (
                 select(
                     func.ST_Distance(
-                        func.ST_Transform(CigaretteLitterHotspot.geom, 3857), target_geom_3857
+                        func.ST_Transform(CigaretteLitterHotspot.geom, 3857),
+                        target_geom_3857,
                     ).label("dist"),
                 )
                 .where(
@@ -280,8 +290,10 @@ class GisService:
                 .limit(1)
             )
             for row in (await db.execute(stmt_litter)).all():
-                context_lines.append(f"📍 현장상황: 가장 가까운 상습 무단투기 구역까지 약 {int(row.dist)}m 거리")
-                
+                context_lines.append(
+                    f"📍 현장상황: 가장 가까운 상습 무단투기 구역까지 약 {int(row.dist)}m 거리"
+                )
+
             # 5. 기존 흡연구역
             stmt_smoking = (
                 select(
@@ -300,13 +312,16 @@ class GisService:
                 .limit(1)
             )
             for row in (await db.execute(stmt_smoking)).all():
-                context_lines.append(f"📍 기존흡연구역: 가장 가까운 기존 흡연구역까지 약 {int(row.dist)}m 거리")
+                context_lines.append(
+                    f"📍 기존흡연구역: 가장 가까운 기존 흡연구역까지 약 {int(row.dist)}m 거리"
+                )
 
             # 6. 소방용수시설
             stmt_fire = (
                 select(
                     func.ST_Distance(
-                        func.ST_Transform(FireWaterFacility.geom, 3857), target_geom_3857
+                        func.ST_Transform(FireWaterFacility.geom, 3857),
+                        target_geom_3857,
                     ).label("dist"),
                 )
                 .where(
@@ -320,7 +335,9 @@ class GisService:
                 .limit(1)
             )
             for row in (await db.execute(stmt_fire)).all():
-                context_lines.append(f"📍 소방/안전: 가장 가까운 소방용수시설까지 약 {int(row.dist)}m 거리")
+                context_lines.append(
+                    f"📍 소방/안전: 가장 가까운 소방용수시설까지 약 {int(row.dist)}m 거리"
+                )
 
             if context_lines:
                 return "\n".join([f"- {msg}" for msg in context_lines])
@@ -329,6 +346,7 @@ class GisService:
         except Exception as e:
             print(f"POI Context Load Error (DB): {e}")
             import traceback
+
             traceback.print_exc()
             await db.rollback()
             return ""

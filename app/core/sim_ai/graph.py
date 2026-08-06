@@ -61,8 +61,6 @@ def get_persona_llm(role: str) -> ChatOpenAI:
     )
 
 
-
-
 def _format_chat_history(messages: Sequence[str]) -> str:
     """메시지 리스트를 하나의 텍스트로 포맷팅"""
     return "\n".join(messages)
@@ -124,12 +122,21 @@ async def pro_node(state: AgentState) -> dict:
         ahp_weights=state.get("ahp_weights", {}),
         rag_context=rag_context,
         audit_context=state.get("audit_context", "감리 데이터 없음"),
-        discussion_history=history_text,
+        discussion_history="",  # 히스토리는 별도 메시지로 주입
         css_level=css_level,
     )
 
+    messages = [SystemMessage(content=prompt)]
+    for msg in state.get("messages", []):
+        messages.append(HumanMessage(content=msg))
+    messages.append(
+        HumanMessage(
+            content="[당신의 차례입니다. 대본을 작성하지 말고, 찬성측 페르소나로서 이번 턴의 짧고 핵심적인 단일 발언만(화자 태그 없이) 출력하세요. 발언 중 POI, 조례(RAG), 감리 데이터 등에서 인용한 중요한 사실이나 근거는 반드시 **굵게(마크다운)** 표시하세요.]"
+        )
+    )
+
     llm = get_persona_llm("pro")
-    response = await llm.ainvoke([SystemMessage(content=prompt)])
+    response = await llm.ainvoke(messages)
     spoken = state.get("spoken_this_round", [])
     return {
         "messages": [f"찬성: {response.content}"],
@@ -155,12 +162,21 @@ async def con_node(state: AgentState) -> dict:
         ahp_weights=state.get("ahp_weights", {}),
         rag_context=rag_context,
         audit_context=state.get("audit_context", "감리 데이터 없음"),
-        discussion_history=history_text,
+        discussion_history="",  # 히스토리는 별도 메시지로 주입
         css_level=css_level,
     )
 
+    messages = [SystemMessage(content=prompt)]
+    for msg in state.get("messages", []):
+        messages.append(HumanMessage(content=msg))
+    messages.append(
+        HumanMessage(
+            content="[당신의 차례입니다. 대본을 작성하지 말고, 반대측 페르소나로서 이번 턴의 짧고 핵심적인 단일 발언만(화자 태그 없이) 출력하세요. 발언 중 POI, 조례(RAG), 감리 데이터 등에서 인용한 중요한 사실이나 근거는 반드시 **굵게(마크다운)** 표시하세요.]"
+        )
+    )
+
     llm = get_persona_llm("con")
-    response = await llm.ainvoke([SystemMessage(content=prompt)])
+    response = await llm.ainvoke(messages)
     spoken = state.get("spoken_this_round", [])
     return {
         "messages": [f"반대: {response.content}"],
@@ -186,23 +202,29 @@ async def gov_node(state: AgentState) -> dict:
         ahp_weights=state.get("ahp_weights", {}),
         rag_context=rag_context,
         audit_context=state.get("audit_context", "감리 데이터 없음"),
-        discussion_history=history_text,
+        discussion_history="",  # 히스토리는 별도 메시지로 주입
         css_level="LOW",  # 정부는 객관적 중재를 위해 LOW 유지
     )
 
+    messages = [SystemMessage(content=prompt)]
+    for msg in state.get("messages", []):
+        messages.append(HumanMessage(content=msg))
+
     if spoken == ["gov", "pro", "con"]:
-        system_msg = (
-            prompt
-            + "\n\n현재 상황: 정부의 중재안에 대한 양측의 입장을 들었습니다. 토론을 최종 마무리하는 발언을 짧게 하십시오."
+        messages.append(
+            HumanMessage(
+                content="[현재 상황: 정부의 중재안에 대한 양측의 입장을 들었습니다. 대본을 작성하지 말고, 토론을 최종 마무리하는 단일 발언을 짧게 출력하세요. 발언 중 POI, 조례(RAG), 감리 데이터 등에서 인용한 중요한 사실이나 근거는 반드시 **굵게(마크다운)** 표시하세요.]"
+            )
         )
     else:
-        system_msg = (
-            prompt
-            + "\n\n현재 상황: 3라운드의 찬반 토론이 종료되거나 합의점이 도달하여 정부가 개입할 차례입니다. 양측 의견을 수렴하여 공정한 중재안을 제시하십시오."
+        messages.append(
+            HumanMessage(
+                content="[당신의 차례입니다. 대본을 작성하지 말고, 정부 페르소나로서 양측의 입장을 조율하는 단일 발언만(화자 태그 없이) 출력하세요. 발언 중 POI, 조례(RAG), 감리 데이터 등에서 인용한 중요한 사실이나 근거는 반드시 **굵게(마크다운)** 표시하세요.]"
+            )
         )
 
     llm = get_persona_llm("gov")
-    response = await llm.ainvoke([SystemMessage(content=system_msg)])
+    response = await llm.ainvoke(messages)
     return {
         "messages": [f"정부: {response.content}"],
         "spoken_this_round": spoken + ["gov"],
@@ -299,7 +321,7 @@ async def reporter_node(state: AgentState) -> dict:
         else:
             used_doc_ids = []
 
-        print(f"🧐 [디버그] AI가 반환한 used_doc_ids: {used_doc_ids}")
+        print(f"[디버그] AI가 반환한 used_doc_ids: {used_doc_ids}")
 
         rag_docs = state.get("rag_docs", [])
 

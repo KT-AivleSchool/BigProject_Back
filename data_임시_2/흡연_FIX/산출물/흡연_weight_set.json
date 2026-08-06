@@ -1,0 +1,395 @@
+{
+  "domain": "흡연",
+  "facility": "흡연부스",
+  "region": "서울특별시 용산구",
+  "engine_version": "wm-1.0",
+  "generated_at": "2026-08-03T20:02:43",
+  "inputs": {
+    "reviewed": {
+      "file": "흡연_audit_result_reviewed.json",
+      "sha256": "a0adbdd43beda3e69a24421b5f969c7c4a31b89e927686df4aded36258cd5e4b",
+      "mtime": "2026-08-03T19:55:40",
+      "size": 21209
+    },
+    "clean_report": {
+      "file": "흡연_clean_report.json",
+      "sha256": "839317d321da6aae61c2695a8055b4510c1a8d54d9a8020865c3b158e0ababb8",
+      "mtime": "2026-08-03T19:56:13",
+      "size": 137592
+    },
+    "candidates": {
+      "file": "흡연_후보_지적도필지.gpkg",
+      "sha256": "4ff350e06d35f179bef8c8cc78d9208493b8f31b4106da5c617c45c423223312",
+      "mtime": "2026-08-03T20:02:04",
+      "size": 24961024
+    }
+  },
+  "hitl": {
+    "radius_confirmed": true,
+    "weight_confirmed": true
+  },
+  "alpha": 0.3,
+  "n_candidates": 42216,
+  "candidate_unit": "candidates 레이어 1행 (Point)",
+  "candidate_source": {
+    "file": "흡연_후보_지적도필지.gpkg",
+    "layer": "candidates",
+    "geom_type": "Point",
+    "crs": 5186,
+    "loaded_as": "geometry",
+    "n": 42216
+  },
+  "indicators": [
+    {
+      "id": "07+02",
+      "kind": "point_sum",
+      "direction": "benefit",
+      "components": {
+        "geo": "07",
+        "val": "02"
+      },
+      "radius_m": 150,
+      "radius_source": "cli_fixed",
+      "radius_rationale": "버스정류장은 유동인구가 많아 흡연부스 수요를 높이는 주요 장소이므로 넓은 반경이 필요하다.",
+      "seed_rationale": "버스정류장은 유동인구가 많은 장소로, 흡연부스 설치 수요를 높이는 요인이다.",
+      "sparse_excluded": false,
+      "w_human": 0.1899,
+      "w_human_source": "llm",
+      "direction_source": "llm",
+      "direction_llm": "benefit",
+      "direction_conflict": null,
+      "adjusted_at": null,
+      "w_critic": 0.2094,
+      "w_critic_ci": {
+        "mean": 0.20943987474153686,
+        "std": 0.000536627692976728,
+        "ci_low": 0.20842336449123375,
+        "ci_high": 0.2104949953465552
+      },
+      "w_final": 0.1858
+    },
+    {
+      "id": "06+03",
+      "kind": "point_sum",
+      "direction": "benefit",
+      "components": {
+        "geo": "06",
+        "val": "03"
+      },
+      "radius_m": 300,
+      "radius_source": "cli_fixed",
+      "radius_rationale": "지하철역은 대규모 유동인구가 집중되는 곳으로, 흡연부스 수요를 고려할 때 넓은 반경이 적합하다.",
+      "seed_rationale": "지하철역은 유동인구가 많은 장소로, 흡연부스 설치 수요를 높이는 요인이다.",
+      "sparse_excluded": false,
+      "w_human": 0.2025,
+      "w_human_source": "llm",
+      "direction_source": "llm",
+      "direction_llm": "benefit",
+      "direction_conflict": null,
+      "adjusted_at": null,
+      "w_critic": 0.1688,
+      "w_critic_ci": {
+        "mean": 0.16877218934780203,
+        "std": 0.0005095485951048659,
+        "ci_low": 0.1677970495297674,
+        "ci_high": 0.16973006707587213
+      },
+      "w_final": 0.1827
+    },
+    {
+      "id": "04",
+      "kind": "admin",
+      "direction": "benefit",
+      "components": {
+        "geo": "04",
+        "val": null
+      },
+      "radius_m": null,
+      "radius_source": "llm",
+      "radius_rationale": "행정동 단위 지표(반경 무관)",
+      "seed_rationale": "생활인구는 흡연부스 설치 수요를 나타내는 긍정적 요인입니다.",
+      "sparse_excluded": false,
+      "w_human": 0.1772,
+      "w_human_source": "llm",
+      "direction_source": "llm",
+      "direction_llm": "benefit",
+      "direction_conflict": null,
+      "adjusted_at": null,
+      "w_critic": 0.2799,
+      "w_critic_ci": {
+        "mean": 0.2798068458570158,
+        "std": 0.0007199922148340229,
+        "ci_low": 0.2785112983907857,
+        "ci_high": 0.28108433461619803
+      },
+      "w_final": 0.1975
+    },
+    {
+      "id": "08",
+      "kind": "point_count",
+      "direction": "benefit",
+      "components": {
+        "geo": "08",
+        "val": null
+      },
+      "radius_m": 50,
+      "radius_source": "cli_fixed",
+      "radius_rationale": "가로휴지통은 국소적인 편의성을 제공하므로 상대적으로 좁은 반경이 적합하다.",
+      "seed_rationale": "가로휴지통은 흡연부스 설치 시 편의성을 높이고, 흡연 후 쓰레기 처리 문제를 해결할 수 있어 설치 수요를 높이는 긍정적 요인으로 작용할 수 있다.",
+      "sparse_excluded": false,
+      "w_human": 0.0759,
+      "w_human_source": "llm",
+      "direction_source": "llm",
+      "direction_llm": "benefit",
+      "direction_conflict": null,
+      "adjusted_at": null,
+      "w_critic": 0.1283,
+      "w_critic_ci": {
+        "mean": 0.1283539252739495,
+        "std": 0.0006305542043629776,
+        "ci_low": 0.12716670331500438,
+        "ci_high": 0.12946243234713595
+      },
+      "w_final": 0.087
+    },
+    {
+      "id": "09",
+      "kind": "point_count",
+      "direction": "benefit",
+      "components": {
+        "geo": "09",
+        "val": null
+      },
+      "radius_m": 150,
+      "radius_source": "cli_fixed",
+      "radius_rationale": "담배꽁초 무단투기 지역은 흡연부스 수요가 높은 지역을 나타내므로 중간 정도의 반경이 필요하다.",
+      "seed_rationale": "담배꽁초 무단투기 지역은 흡연부스 설치 수요가 높은 지역을 나타냅니다.",
+      "sparse_excluded": true,
+      "w_human": 0.1772,
+      "w_human_source": "llm",
+      "direction_source": "llm",
+      "direction_llm": "benefit",
+      "direction_conflict": null,
+      "adjusted_at": null,
+      "w_critic": null,
+      "w_critic_ci": null,
+      "w_final": 0.1683
+    },
+    {
+      "id": "10",
+      "kind": "point_count",
+      "direction": "benefit",
+      "components": {
+        "geo": "10",
+        "val": null
+      },
+      "radius_m": 250,
+      "radius_source": "cli_fixed",
+      "radius_rationale": "상가 및 상권 정보는 유동인구와 상업 활동이 활발한 지역을 나타내므로 적당한 반경이 필요하다.",
+      "seed_rationale": "상가 및 상권 정보는 유동인구와 상업 활동이 활발한 지역을 나타내며, 흡연부스 설치 수요를 높이는 요인입니다.",
+      "sparse_excluded": false,
+      "w_human": 0.1772,
+      "w_human_source": "llm",
+      "direction_source": "llm",
+      "direction_llm": "benefit",
+      "direction_conflict": null,
+      "adjusted_at": null,
+      "w_critic": 0.2136,
+      "w_critic_ci": {
+        "mean": 0.2136271647796958,
+        "std": 0.0004974554687759822,
+        "ci_low": 0.21263870038120447,
+        "ci_high": 0.2145558080183562
+      },
+      "w_final": 0.1786
+    }
+  ],
+  "notes": {
+    "critic_method": "Spearman-CRITIC",
+    "sparse_threshold": 0.05,
+    "sparse_excluded_ids": [
+      "09"
+    ],
+    "weight_meaning": "지표 간 상대 중요도(평가단위 독립). 위치선정이 이 값으로 후보 점수화."
+  },
+  "decay": {
+    "func": "gaussian",
+    "sigma_ratio": 0.3333333333333333
+  },
+  "scale": "log",
+  "diagnostics": {
+    "sample_bias": {
+      "07+02": {
+        "base": 0.20938903573385934,
+        "min": 0.2084638121494756,
+        "max": 0.21506775968522746,
+        "spread": 0.0066039475357518584
+      },
+      "06+03": {
+        "base": 0.16883061967615318,
+        "min": 0.16883061967615318,
+        "max": 0.1794237464297456,
+        "spread": 0.010593126753592419
+      },
+      "04": {
+        "base": 0.2798582943117821,
+        "min": 0.269056797177401,
+        "max": 0.27994049462211557,
+        "spread": 0.010883697444714568
+      },
+      "08": {
+        "base": 0.1283106493496819,
+        "min": 0.1280961144112483,
+        "max": 0.1360826273979354,
+        "spread": 0.007986512986687094
+      },
+      "10": {
+        "base": 0.2136114009285234,
+        "min": 0.20516873424500534,
+        "max": 0.213746726490227,
+        "spread": 0.008577992245221655
+      },
+      "_max_spread": 0.010883697444714568,
+      "_rank_stable": false,
+      "_rank_flips": [
+        {
+          "pair": [
+            "10",
+            "07+02"
+          ],
+          "gap": 0.004222365194664068,
+          "tol": 0.008577992245221655,
+          "explained": true,
+          "variant": "층화균등"
+        }
+      ],
+      "_variants": {
+        "전체": 42216,
+        "층화균등": 19464,
+        "최다2계층제외": 31569,
+        "무작위절반": 21108
+      }
+    },
+    "alpha_sensitivity": {
+      "weights": {
+        "0.0": {
+          "07+02": 0.189873417721519,
+          "06+03": 0.20253164556962028,
+          "04": 0.17721518987341772,
+          "08": 0.0759493670886076,
+          "09": 0.17721518987341772,
+          "10": 0.17721518987341772
+        },
+        "0.1": {
+          "07+02": 0.18848474356091405,
+          "06+03": 0.1956935559134529,
+          "04": 0.18421493190376964,
+          "08": 0.07977181753560307,
+          "09": 0.17412935323383083,
+          "10": 0.17770559785242954
+        },
+        "0.2": {
+          "07+02": 0.18714360347915623,
+          "06+03": 0.18908953289588293,
+          "04": 0.19097507396242247,
+          "08": 0.08346342615800702,
+          "09": 0.17114914425427874,
+          "10": 0.17817921925025268
+        },
+        "0.3": {
+          "07+02": 0.1858475979193806,
+          "06+03": 0.1827077606529427,
+          "04": 0.19750771124025523,
+          "08": 0.08703079795177239,
+          "09": 0.16826923076923078,
+          "10": 0.17863690146641834
+        },
+        "0.4": {
+          "07+02": 0.18459448616063776,
+          "06+03": 0.17653720545823218,
+          "04": 0.2038241383008548,
+          "08": 0.09048010070271806,
+          "09": 0.16548463356973997,
+          "10": 0.17907943580781727
+        },
+        "0.5": {
+          "07+02": 0.1833821733893889,
+          "06+03": 0.1705675520605587,
+          "04": 0.2099349142478534,
+          "08": 0.09381710057340041,
+          "09": 0.1627906976744186,
+          "10": 0.17950756205437995
+        }
+      },
+      "rank_groups": [
+        {
+          "alphas": [
+            0.0
+          ],
+          "order": [
+            "06+03",
+            "07+02",
+            "04",
+            "09",
+            "10",
+            "08"
+          ]
+        },
+        {
+          "alphas": [
+            0.1
+          ],
+          "order": [
+            "06+03",
+            "07+02",
+            "04",
+            "10",
+            "09",
+            "08"
+          ]
+        },
+        {
+          "alphas": [
+            0.2
+          ],
+          "order": [
+            "04",
+            "06+03",
+            "07+02",
+            "10",
+            "09",
+            "08"
+          ]
+        },
+        {
+          "alphas": [
+            0.3
+          ],
+          "order": [
+            "04",
+            "07+02",
+            "06+03",
+            "10",
+            "09",
+            "08"
+          ]
+        },
+        {
+          "alphas": [
+            0.4,
+            0.5
+          ],
+          "order": [
+            "04",
+            "07+02",
+            "10",
+            "06+03",
+            "09",
+            "08"
+          ]
+        }
+      ]
+    },
+    "strata": "법정동코드"
+  }
+}

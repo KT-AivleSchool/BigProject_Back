@@ -11,7 +11,7 @@ class Parcel(Base):
     id = Column(Integer, primary_key=True, index=True)
     score = Column(Float, nullable=True)
     geom = Column(Geometry(geometry_type="POINT", srid=4326), nullable=True)
-    
+
     # Existing relationships can be kept or modified if needed
     simulations = relationship(
         "ConflictSimulation", back_populates="parcel", cascade="all, delete-orphan"
@@ -23,7 +23,10 @@ class ConflictSimulation(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     parcel_id = Column(
-        Integer, ForeignKey("booth_candidates.id", ondelete="CASCADE"), nullable=False, index=True
+        Integer,
+        ForeignKey("booth_candidates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     facility_type = Column(String(100), nullable=False)
     result_json = Column(JSON, nullable=False)

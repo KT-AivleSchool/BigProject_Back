@@ -32,7 +32,9 @@ router = APIRouter()
 USE_MOCK_DB = False
 
 
-async def _fetch_and_parse_audit_rules_from_db(db: AsyncSession, facility_type: str) -> str:
+async def _fetch_and_parse_audit_rules_from_db(
+    db: AsyncSession, facility_type: str
+) -> str:
     """DB에서 AuditRule을 가져와 포맷팅된 문자열로 반환"""
     if USE_MOCK_DB:
         try:
@@ -91,7 +93,9 @@ async def _fetch_and_parse_audit_rules_from_db(db: AsyncSession, facility_type: 
     return "\n\n".join(lines)
 
 
-async def _extract_dynamic_meta_from_audit_rules(db: AsyncSession, facility_type: str) -> dict:
+async def _extract_dynamic_meta_from_audit_rules(
+    db: AsyncSession, facility_type: str
+) -> dict:
     """DB에서 AuditRule을 가져와 동적 메타데이터 반환"""
     if USE_MOCK_DB:
         facility = "흡연부스"
@@ -168,16 +172,21 @@ async def run_debate_and_publish(
     pubsub_manager = RedisPubSubManager(redis)
     async with AsyncSessionLocal() as db:
         try:
-            audit_context = await _fetch_and_parse_audit_rules_from_db(db, facility_type)
+            audit_context = await _fetch_and_parse_audit_rules_from_db(
+                db, facility_type
+            )
             audit_meta = await _extract_dynamic_meta_from_audit_rules(db, facility_type)
-            
+
             # (기존에 DB의 facility_type으로 강제 덮어씌우던 로직 제거: 클라이언트 요청 facility_type 유지)
 
             try:
                 # DB에서 parcel_id로 GIS 데이터를 조회하며, geom에서 실제 위경도를 추출합니다.
                 result = await db.execute(
-                    select(Parcel, func.ST_Y(Parcel.geom).label('lat'), func.ST_X(Parcel.geom).label('lng'))
-                    .where(Parcel.id == parcel_id)
+                    select(
+                        Parcel,
+                        func.ST_Y(Parcel.geom).label("lat"),
+                        func.ST_X(Parcel.geom).label("lng"),
+                    ).where(Parcel.id == parcel_id)
                 )
                 row = result.first()
 
@@ -189,7 +198,7 @@ async def run_debate_and_publish(
                         "lat": row.lat,
                         "lng": row.lng,
                         "jibun": f"후보지 #{parcel.id} (실제 위치 기반)",
-                        "intensity_level": "보통", # Fallback default
+                        "intensity_level": "보통",  # Fallback default
                         "ahp_weights": audit_meta.get("ahp_weights", {}),
                     }
                 else:
@@ -296,7 +305,7 @@ async def run_debate_and_publish(
 
             # ===== [검증용 백엔드 터미널 로그] =====
             print("\n" + "=" * 60)
-            print("🔍 [AI 토론 엔진 - 데이터 주입 검증 로그]")
+            print("[AI 토론 엔진 - 데이터 주입 검증 로그]")
             print("-" * 60)
             print("1️⃣ [XGBoost 최종 검색 조례 문서 (Top 5)]:")
             print(common_rag if common_rag else " (검색 결과 없음)")
@@ -336,7 +345,7 @@ async def run_debate_and_publish(
 
             # 3. 그래프 비동기 스트리밍 (astream_events)
             async for event in graph.astream_events(
-                initial_state, config={"recursion_limit": 50}, version="v1"
+                initial_state, config={"recursion_limit": 50}, version="v2"
             ):
                 kind = event["event"]
 
@@ -394,11 +403,24 @@ async def run_debate_and_publish(
                                     )
                                     text = parts[1].strip() if len(parts) == 2 else msg
 
+                                    # Extract metrics from evaluator node_state
+                                    metrics = {
+                                        "pro_acc": node_state.get(
+                                            "evaluations", {}
+                                        ).get("pro_acceptance", 0.0),
+                                        "con_acc": node_state.get(
+                                            "evaluations", {}
+                                        ).get("con_acceptance", 0.0),
+                                        "css_pro": node_state.get("css_pro", "MEDIUM"),
+                                        "css_con": node_state.get("css_con", "MEDIUM"),
+                                    }
+
                                     await pubsub_manager.publish_debate_message(
                                         parcel_id,
                                         sender,
                                         text + "\n\n",
                                         is_finished=False,
+                                        metrics=metrics,
                                     )
                             # 페르소나 발언 종료 시 줄바꿈 추가 (선택사항)
                             elif node_name in ["pro", "con", "gov", "gov_wrapup"]:
@@ -604,7 +626,11 @@ async def stream_ai_discussion(
             yield {"event": "message", "data": json.dumps(data, ensure_ascii=False)}
 
     # sse_starlette 라이브러리의 EventSourceResponse를 반환하여 비동기 HTTP 청크 전송 스트림 활성화
-    return EventSourceResponse(event_generator())
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Credentials": "true",
+    }
+    return EventSourceResponse(event_generator(), headers=headers)
 
 
 @router.get("/results/{parcel_id}", response_model=SimulationResultResponse)

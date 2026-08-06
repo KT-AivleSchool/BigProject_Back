@@ -20,6 +20,7 @@ OmniSite 문서 텍스트 추출 (조례·법령 원문)
 단독 실행
   python gam2_doc_extract.py <폴더 또는 파일> [--force]
 """
+
 from __future__ import annotations
 
 import glob
@@ -32,8 +33,8 @@ EXTRACTORS: dict[str, str] = {
     ".hwpx": "_from_hwpx",
 }
 
-TEXT_EXT = (".txt", ".md")          # 변환 없이 바로 읽히는 형식
-CACHE_SUFFIX = ".txt"               # <원본>.pdf.txt
+TEXT_EXT = (".txt", ".md")  # 변환 없이 바로 읽히는 형식
+CACHE_SUFFIX = ".txt"  # <원본>.pdf.txt
 
 
 # =========================================================
@@ -48,19 +49,22 @@ def _from_pdf(path: str) -> str:
     """
     try:
         import pdfplumber
+
         with pdfplumber.open(path) as pdf:
             return "\n".join((p.extract_text() or "") for p in pdf.pages)
     except ImportError:
         pass
-    from pypdf import PdfReader                     # 폴백
+    from pypdf import PdfReader  # 폴백
+
     return "\n".join((p.extract_text() or "") for p in PdfReader(path).pages)
 
 
 def _from_docx(path: str) -> str:
     import docx
+
     d = docx.Document(path)
     parts = [p.text for p in d.paragraphs]
-    for t in d.tables:                              # 조례는 표로 된 별표가 많다
+    for t in d.tables:  # 조례는 표로 된 별표가 많다
         for row in t.rows:
             parts.append("\t".join(c.text for c in row.cells))
     return "\n".join(parts)
@@ -70,6 +74,7 @@ def _from_hwpx(path: str) -> str:
     """HWPX(한글 2014+ XML 포맷). 구형 .hwp 바이너리는 지원하지 않는다."""
     import re
     import zipfile
+
     parts = []
     with zipfile.ZipFile(path) as z:
         for n in sorted(x for x in z.namelist() if x.endswith(".xml")):
@@ -90,12 +95,10 @@ def cache_path_of(path: str) -> str:
 
 def _is_fresh(src: str, cache: str) -> bool:
     """캐시가 원본보다 최신인가. 원본이 갱신되면 재추출한다."""
-    return (os.path.isfile(cache)
-            and os.path.getmtime(cache) >= os.path.getmtime(src))
+    return os.path.isfile(cache) and os.path.getmtime(cache) >= os.path.getmtime(src)
 
 
-def extract_text(path: str, force: bool = False,
-                 verbose: bool = True) -> str | None:
+def extract_text(path: str, force: bool = False, verbose: bool = True) -> str | None:
     """단일 파일 -> 텍스트. 변환 불필요/불가면 None.
 
     반환 None 의 의미
@@ -122,9 +125,11 @@ def extract_text(path: str, force: bool = False,
         text = globals()[fn](path)
     except ImportError as e:
         if verbose:
-            pkg = {"_from_pdf": "pdfplumber 또는 pypdf",
-                   "_from_docx": "python-docx",
-                   "_from_hwpx": "(내장)"}.get(fn, "")
+            pkg = {
+                "_from_pdf": "pdfplumber 또는 pypdf",
+                "_from_docx": "python-docx",
+                "_from_hwpx": "(내장)",
+            }.get(fn, "")
             print(f"  ⚠ {os.path.basename(path)} 추출 불가 — {pkg} 미설치 ({e})")
         return None
     except Exception as e:
@@ -135,24 +140,29 @@ def extract_text(path: str, force: bool = False,
     text = (text or "").strip()
     if not text:
         if verbose:
-            print(f"  ⚠ {os.path.basename(path)} 에서 텍스트 0자 — "
-                  f"스캔본(이미지 PDF)일 수 있습니다. OCR 이 필요합니다.")
+            print(
+                f"  ⚠ {os.path.basename(path)} 에서 텍스트 0자 — "
+                f"스캔본(이미지 PDF)일 수 있습니다. OCR 이 필요합니다."
+            )
         return None
 
     try:
         with open(cache, "w", encoding="utf-8") as f:
             f.write(text)
         if verbose:
-            print(f"  ⓘ {os.path.basename(path)} → {os.path.basename(cache)} "
-                  f"({len(text):,}자)")
+            print(
+                f"  ⓘ {os.path.basename(path)} → {os.path.basename(cache)} "
+                f"({len(text):,}자)"
+            )
     except OSError as e:
         if verbose:
             print(f"  ⚠ 캐시 저장 실패 ({e}) — 이번 실행에만 사용합니다")
     return text
 
 
-def ensure_text_files(folder: str, force: bool = False,
-                      verbose: bool = True) -> list[str]:
+def ensure_text_files(
+    folder: str, force: bool = False, verbose: bool = True
+) -> list[str]:
     """폴더 안의 바이너리 문서를 전부 `.txt` 로 변환. 생성/갱신된 경로 목록 반환.
 
     load_ordinance 가 `*.txt` 를 수집하므로, 이 함수를 먼저 부르면

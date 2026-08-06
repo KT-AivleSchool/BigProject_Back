@@ -22,6 +22,7 @@
     · decay·scale·spacing·alpha·candidates → 같은 파일의 `조건`
   즉 이 파일에는 도메인 값이 하나도 없다. 픽스처가 곧 실행 조건이다.
 """
+
 from __future__ import annotations
 
 import json
@@ -254,9 +255,11 @@ def _radius_arg(base: dict) -> str:
     비-admin 지표가 빠지면 run_weight_model 이 [R] HITL 로 내려가 stdin 이 없어
     EOFError 로 죽는다 — 조용히 넘어가지 않으므로 그대로 둔다.
     """
-    parts = [f"{iid}={v['radius_m']}"
-             for iid, v in base["STEP3_가중치"].items()
-             if v.get("radius_m") is not None]
+    parts = [
+        f"{iid}={v['radius_m']}"
+        for iid, v in base["STEP3_가중치"].items()
+        if v.get("radius_m") is not None
+    ]
     if not parts:
         raise RunRequestError("픽스처의 STEP3_가중치 에 radius_m 이 하나도 없습니다.")
     return ",".join(parts)
@@ -268,8 +271,12 @@ def _radius_arg(base: dict) -> str:
 class _Proc:
     """프로세스 하나와 그것이 담당하는 단계들."""
 
-    def __init__(self, step_ids: tuple[str, ...], argv: list[str],
-                 markers: dict[str, str] | None = None):
+    def __init__(
+        self,
+        step_ids: tuple[str, ...],
+        argv: list[str],
+        markers: dict[str, str] | None = None,
+    ):
         self.step_ids = step_ids
         self.argv = argv
         self.markers = markers or {}
@@ -306,12 +313,18 @@ def _weight_args(base: dict, radius: str, weight: str | None) -> list[str]:
     """
     cond = base["조건"]
     argv = [
-        "--candidates", cond["candidates"],
-        "--alpha", str(cond["alpha"]),
-        "--decay", cond["decay"]["func"],
-        "--sigma-ratio", str(cond["decay"]["sigma_ratio"]),
-        "--scale", cond["scale"],
-        "--radius", radius,
+        "--candidates",
+        cond["candidates"],
+        "--alpha",
+        str(cond["alpha"]),
+        "--decay",
+        cond["decay"]["func"],
+        "--sigma-ratio",
+        str(cond["decay"]["sigma_ratio"]),
+        "--scale",
+        cond["scale"],
+        "--radius",
+        radius,
         # --auto-weight 는 [W] 대화형 루프를 건너뛴다. 사람 답은 --weight 로 이미
         # 들어와 있다 — 게이트에서 받았지 자동으로 정한 게 아니다.
         "--auto-weight",
@@ -334,8 +347,13 @@ def build_commands(domain: str) -> list[_Proc]:
     return [_proc_of(s, domain, base) for s in ("2", "3-1", "3-2", "4")]
 
 
-def _proc_of(stage: str, domain: str, base: dict,
-             radius: str | None = None, weight: str | None = None) -> _Proc:
+def _proc_of(
+    stage: str,
+    domain: str,
+    base: dict,
+    radius: str | None = None,
+    weight: str | None = None,
+) -> _Proc:
     """단계 하나의 커맨드. **조립은 여기 한 곳뿐이다.**
 
     fixture 와 hitl 이 같은 함수를 쓴다. 모드별로 따로 짜면 "픽스처는 되는데
@@ -352,14 +370,24 @@ def _proc_of(stage: str, domain: str, base: dict,
         # 주면 그 순간 도메인 값이 러너에 박힌다.
         return _Proc(("3-1",), [py, _svc("make_parcel_candidates.py"), domain])
     if stage == "3-2":
-        return _Proc(("3-2",), [py, _svc("run_weight_model.py"), domain]
-                     + _weight_args(base, radius or _radius_arg(base), weight))
+        return _Proc(
+            ("3-2",),
+            [py, _svc("run_weight_model.py"), domain]
+            + _weight_args(base, radius or _radius_arg(base), weight),
+        )
     if stage == "4":
         # STEP4 위치 선정. 한 프로세스가 4-1·4-2·4-3 을 전부 담당한다.
-        return _Proc(("4-1", "4-2", "4-3"),
-                     [py, _svc("gam4_site_select.py"), domain,
-                      "--spacing", str(cond["spacing"])],
-                     markers=_GAM4_MARKERS)
+        return _Proc(
+            ("4-1", "4-2", "4-3"),
+            [
+                py,
+                _svc("gam4_site_select.py"),
+                domain,
+                "--spacing",
+                str(cond["spacing"]),
+            ],
+            markers=_GAM4_MARKERS,
+        )
     raise ValueError(f"알 수 없는 단계: {stage!r}")
 
 
@@ -370,9 +398,19 @@ def _proc_propose(domain: str, base: dict, run_id: str) -> _Proc:
     여기에 7번째 단계를 만들면 프런트 진행률 UI 가 같이 바뀌어야 한다.
     이 패스는 **사람에게 보여줄 제안을 뽑는 준비 작업**이지 파이프라인 단계가 아니다.
     """
-    return _Proc((), [_python_exe(), _svc("run_weight_model.py"), domain,
-                      "--candidates", base["조건"]["candidates"],
-                      "--propose-only", "--run-id", run_id])
+    return _Proc(
+        (),
+        [
+            _python_exe(),
+            _svc("run_weight_model.py"),
+            domain,
+            "--candidates",
+            base["조건"]["candidates"],
+            "--propose-only",
+            "--run-id",
+            run_id,
+        ],
+    )
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -389,9 +427,11 @@ def _new_run_id() -> str:
     """r_YYYYMMDD_NNN. 같은 날짜의 기존 run 다음 번호를 쓴다."""
     day = datetime.now().strftime("%Y%m%d")
     RUNS_ROOT.mkdir(parents=True, exist_ok=True)
-    used = [int(m.group(1))
-            for p in RUNS_ROOT.glob(f"r_{day}_*")
-            if (m := re.match(rf"^r_{day}_(\d+)$", p.name))]
+    used = [
+        int(m.group(1))
+        for p in RUNS_ROOT.glob(f"r_{day}_*")
+        if (m := re.match(rf"^r_{day}_(\d+)$", p.name))
+    ]
     return f"r_{day}_{max(used, default=0) + 1:03d}"
 
 
@@ -470,8 +510,10 @@ def _new_status(run_id: str, domain: str, mode: str = MODE_FIXTURE) -> dict:
         "domain": domain,
         "mode": mode,
         "status": "queued",
-        "steps": [{"id": i, "label": lb, "status": "idle", "sec": None}
-                  for i, lb in STEP_LABELS],
+        "steps": [
+            {"id": i, "label": lb, "status": "idle", "sec": None}
+            for i, lb in STEP_LABELS
+        ],
         "artifacts": {k: None for k in ARTIFACTS},
         "error": None,
         "started_at": _now_iso(),
@@ -516,15 +558,18 @@ def start_run(domain: str, mode: str) -> str:
     """검증 → run 폴더 준비 → 백그라운드 실행. run_id 를 돌려준다."""
     if mode not in MODES:
         raise RunRequestError(
-            f"지원하지 않는 mode 입니다: {mode!r} (가능: {', '.join(MODES)})")
+            f"지원하지 않는 mode 입니다: {mode!r} (가능: {', '.join(MODES)})"
+        )
     _validate_domain(domain)
-    _load_fixture(domain)          # 픽스처가 없으면 여기서 400
-    build_commands(domain)         # 커맨드 조립도 미리 해본다(실패를 실행 전에 낸다)
+    _load_fixture(domain)  # 픽스처가 없으면 여기서 400
+    build_commands(domain)  # 커맨드 조립도 미리 해본다(실패를 실행 전에 낸다)
     _reap_orphans()
 
     with _LOCK:
         if domain in _ACTIVE:
-            raise RunConflict(f"'{domain}' 은 이미 실행 중입니다 (run_id={_ACTIVE[domain]})")
+            raise RunConflict(
+                f"'{domain}' 은 이미 실행 중입니다 (run_id={_ACTIVE[domain]})"
+            )
         run_id = _new_run_id()
         _ACTIVE[domain] = run_id
 
@@ -546,15 +591,16 @@ def start_run(domain: str, mode: str) -> str:
 
 
 def _spawn(run_id: str, domain: str, mode: str, start: int) -> None:
-    threading.Thread(target=_execute, args=(run_id, domain, mode, start),
-                     daemon=True).start()
+    threading.Thread(
+        target=_execute, args=(run_id, domain, mode, start), daemon=True
+    ).start()
 
 
 def _execute(run_id: str, domain: str, mode: str, start: int = 0) -> None:
     """계획을 `start` 칸부터 돌린다. 게이트를 만나면 **멈추고 스레드가 끝난다.**"""
     doc = read_status(run_id) or _new_status(run_id, domain, mode)
     doc["status"] = "running"
-    doc.pop("gate", None)          # 계약 7-3 — running 에는 gate 키가 없다
+    doc.pop("gate", None)  # 계약 7-3 — running 에는 gate 키가 없다
     _write_status(run_id, doc)
 
     base, _ = _load_fixture(domain)
@@ -577,9 +623,13 @@ def _execute(run_id: str, domain: str, mode: str, start: int = 0) -> None:
                     _write_status(run_id, doc)
                     paused = True
                     break
-                proc = (_proc_propose(domain, base, run_id) if stage == "propose"
-                        else _proc_of(stage, domain, base,
-                                      *_stage_args(run_id, mode, stage)))
+                proc = (
+                    _proc_propose(domain, base, run_id)
+                    if stage == "propose"
+                    else _proc_of(
+                        stage, domain, base, *_stage_args(run_id, mode, stage)
+                    )
+                )
                 _run_one(run_id, doc, proc, log)
         if not paused:
             doc["status"] = "succeeded"
@@ -619,15 +669,18 @@ def _run_one(run_id: str, doc: dict, proc: _Proc, log) -> None:
         _step(doc, cur)["status"] = "running"
         _write_status(run_id, doc)
 
-    tail: list[str] = []          # 실패 시 error 로 내보낼 마지막 줄들
+    tail: list[str] = []  # 실패 시 error 로 내보낼 마지막 줄들
     child = subprocess.Popen(
         proc.argv,
         cwd=str(BASE_DIR),
         env=_child_env(run_id),
-        stdin=subprocess.DEVNULL,   # 🔴 HITL 이 새로 생기면 EOFError 로 즉시 터진다.
-        stdout=subprocess.PIPE,     #    조용히 멈추는 것보다 시끄럽게 죽는 게 낫다.
+        stdin=subprocess.DEVNULL,  # 🔴 HITL 이 새로 생기면 EOFError 로 즉시 터진다.
+        stdout=subprocess.PIPE,  #    조용히 멈추는 것보다 시끄럽게 죽는 게 낫다.
         stderr=subprocess.STDOUT,
-        text=True, encoding="utf-8", errors="replace", bufsize=1,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
     )
     assert child.stdout is not None
     for line in child.stdout:
@@ -639,7 +692,8 @@ def _run_one(run_id: str, doc: dict, proc: _Proc, log) -> None:
         for sid, marker in proc.markers.items():
             if sid != cur and s.startswith(marker):
                 _step(doc, cur).update(
-                    status="done", sec=round(time.perf_counter() - started, 2))
+                    status="done", sec=round(time.perf_counter() - started, 2)
+                )
                 cur = sid
                 _step(doc, cur)["status"] = "running"
                 started = time.perf_counter()
@@ -656,8 +710,9 @@ def _run_one(run_id: str, doc: dict, proc: _Proc, log) -> None:
         raise _StepFailed(tail[-1] if tail else f"종료 코드 {child.returncode}")
 
     if cur:
-        _step(doc, cur).update(status="done",
-                               sec=round(time.perf_counter() - started, 2))
+        _step(doc, cur).update(
+            status="done", sec=round(time.perf_counter() - started, 2)
+        )
     # 마커를 못 본 나머지 단계 — 프로세스는 정상 종료했으니 done 이다.
     # 다만 **소요 시간은 지어내지 않는다**(sec=null). 원칙 4.
     for sid in proc.step_ids:
@@ -697,7 +752,8 @@ def _save_answer(run_id: str, gate_id: str, payload: dict) -> None:
     _hitl_dir(run_id).mkdir(parents=True, exist_ok=True)
     doc = {"gate": gate_id, "answered_at": _now_iso(), "answer": payload}
     _answer_path(run_id, gate_id).write_text(
-        json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+        json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
 
 def _read_answer(run_id: str, gate_id: str) -> dict | None:
@@ -708,7 +764,11 @@ def _read_answer(run_id: str, gate_id: str) -> dict | None:
 
 
 def _reviewed_path(run_id: str, domain: str) -> Path:
-    return run_dir(run_id) / "step1" / f"{domain_prefix(domain)}_audit_result_reviewed.json"
+    return (
+        run_dir(run_id)
+        / "step1"
+        / f"{domain_prefix(domain)}_audit_result_reviewed.json"
+    )
 
 
 def _proposal_path(run_id: str, domain: str) -> Path:
@@ -718,11 +778,17 @@ def _proposal_path(run_id: str, domain: str) -> Path:
 
 def build_gate(gate_id: str, run_id: str, domain: str) -> dict:
     if gate_id == "audit":
-        return {"id": "audit", "label": "감리 확인 — 배제반경 · 데이터 용도 · 지역 코드",
-                "questions": _questions_audit(run_id, domain)}
+        return {
+            "id": "audit",
+            "label": "감리 확인 — 배제반경 · 데이터 용도 · 지역 코드",
+            "questions": _questions_audit(run_id, domain),
+        }
     if gate_id == "weight":
-        return {"id": "weight", "label": "집계반경 · 가중치 확정",
-                "questions": _questions_weight(run_id, domain)}
+        return {
+            "id": "weight",
+            "label": "집계반경 · 가중치 확정",
+            "questions": _questions_weight(run_id, domain),
+        }
     raise ValueError(f"알 수 없는 게이트: {gate_id!r}")
 
 
@@ -749,68 +815,82 @@ def _questions_audit(run_id: str, domain: str) -> list[dict]:
             if ftype == "exclusion_radius_missing":
                 idx = f.get("role_index", 0)
                 role = roles[idx] if idx < len(roles) else {}
-                out.append({
-                    "kind": "exclusion",
-                    "dataset_id": did,
-                    "role_index": idx,
-                    "editable": not f.get("confirmed"),
-                    "summary": summary,
-                    "facility_type": role.get("facility_type"),
-                    "exclusion_type": role.get("exclusion_type"),
-                    "rationale": role.get("rationale", ""),
-                    "radius_m": role.get("배제반경_m"),
-                    "radius_source": role.get("source"),
-                    # 제안값은 확정값이 아니다 — 둘을 한 필드로 합치지 않는다.
-                    "proposed_m": f.get("제안값"),
-                    "proposal_source": f.get("출처"),
-                    "evidence": f.get("근거문장"),
-                    # False 면 "다른 시설 규정일 수 있다" — 화면에 경고로 띄울 것
-                    "evidence_matches_facility": f.get("근거_시설_일치"),
-                })
+                out.append(
+                    {
+                        "kind": "exclusion",
+                        "dataset_id": did,
+                        "role_index": idx,
+                        "editable": not f.get("confirmed"),
+                        "summary": summary,
+                        "facility_type": role.get("facility_type"),
+                        "exclusion_type": role.get("exclusion_type"),
+                        "rationale": role.get("rationale", ""),
+                        "radius_m": role.get("배제반경_m"),
+                        "radius_source": role.get("source"),
+                        # 제안값은 확정값이 아니다 — 둘을 한 필드로 합치지 않는다.
+                        "proposed_m": f.get("제안값"),
+                        "proposal_source": f.get("출처"),
+                        "evidence": f.get("근거문장"),
+                        # False 면 "다른 시설 규정일 수 있다" — 화면에 경고로 띄울 것
+                        "evidence_matches_facility": f.get("근거_시설_일치"),
+                    }
+                )
             elif ftype == "data_intent_unclear":
-                out.append({
-                    "kind": "intent",
-                    "dataset_id": did,
-                    "editable": not f.get("confirmed"),
-                    "summary": summary,
-                    "message": f.get("message", ""),
-                    "current_roles": [x.get("role") for x in roles],
-                    "choices": [
-                        {"value": 1, "label": "가점(수요)", "needs_weight": True},
-                        {"value": 2, "label": "감점(민감도)", "needs_weight": True},
-                        {"value": 3, "label": "배제(금지)", "needs_weight": False},
-                        {"value": 4, "label": "위치선정 참조용", "needs_weight": False},
-                        {"value": 5, "label": "잘못 넣음·제외", "needs_weight": False},
-                    ],
-                })
+                out.append(
+                    {
+                        "kind": "intent",
+                        "dataset_id": did,
+                        "editable": not f.get("confirmed"),
+                        "summary": summary,
+                        "message": f.get("message", ""),
+                        "current_roles": [x.get("role") for x in roles],
+                        "choices": [
+                            {"value": 1, "label": "가점(수요)", "needs_weight": True},
+                            {"value": 2, "label": "감점(민감도)", "needs_weight": True},
+                            {"value": 3, "label": "배제(금지)", "needs_weight": False},
+                            {
+                                "value": 4,
+                                "label": "위치선정 참조용",
+                                "needs_weight": False,
+                            },
+                            {
+                                "value": 5,
+                                "label": "잘못 넣음·제외",
+                                "needs_weight": False,
+                            },
+                        ],
+                    }
+                )
 
         for oi, op in enumerate(r.get("cleaning_ops") or []):
             if op.get("op_id") != "filter_by_code_prefix":
                 continue
             prm = op.get("params") or {}
             chk = prm.get("prefix_check") or {}
-            out.append({
-                "kind": "code_prefix",
-                "dataset_id": did,
-                # `cleaning_ops` **전체** 기준 인덱스다. filter_by_code_prefix 만
-                # 센 번호가 아니다 — 적용할 때 같은 방식으로 찾는다.
-                "op_index": oi,
-                "editable": not prm.get("prefix_confirmed"),
-                "summary": summary,
-                "col": prm.get("col"),
-                "prefix": prm.get("prefix", ""),
-                "region": region,
-                "verdict": chk.get("verdict"),
-                "reason": chk.get("reason"),
-                "detail": chk.get("detail"),
-                "suggestion": chk.get("suggestion"),
-                "confirmed_by": prm.get("prefix_confirmed_by"),
-                # 🔴 감리 때 코드표 대조를 못 했으면(`prefix_check` 없음/unknown)
-                #    여기서 다시 판정하지 않는다. `_code_samples` 가 `build_fixtures()`
-                #    를 부르고 모듈 전역에 캐시하는데, 이건 오래 사는 API 프로세스가
-                #    할 일이 아니다. 못 한 건 못 했다고 내보낸다(원칙 4·5).
-                "recheck_skipped": not chk or chk.get("verdict") == "unknown",
-            })
+            out.append(
+                {
+                    "kind": "code_prefix",
+                    "dataset_id": did,
+                    # `cleaning_ops` **전체** 기준 인덱스다. filter_by_code_prefix 만
+                    # 센 번호가 아니다 — 적용할 때 같은 방식으로 찾는다.
+                    "op_index": oi,
+                    "editable": not prm.get("prefix_confirmed"),
+                    "summary": summary,
+                    "col": prm.get("col"),
+                    "prefix": prm.get("prefix", ""),
+                    "region": region,
+                    "verdict": chk.get("verdict"),
+                    "reason": chk.get("reason"),
+                    "detail": chk.get("detail"),
+                    "suggestion": chk.get("suggestion"),
+                    "confirmed_by": prm.get("prefix_confirmed_by"),
+                    # 🔴 감리 때 코드표 대조를 못 했으면(`prefix_check` 없음/unknown)
+                    #    여기서 다시 판정하지 않는다. `_code_samples` 가 `build_fixtures()`
+                    #    를 부르고 모듈 전역에 캐시하는데, 이건 오래 사는 API 프로세스가
+                    #    할 일이 아니다. 못 한 건 못 했다고 내보낸다(원칙 4·5).
+                    "recheck_skipped": not chk or chk.get("verdict") == "unknown",
+                }
+            )
     return out
 
 
@@ -825,24 +905,26 @@ def _questions_weight(run_id: str, domain: str) -> list[dict]:
     for ind in prop["indicators"]:
         iid = ind["id"]
         rp = (prop.get("radius_proposed") or {}).get(iid) or {}
-        out.append({
-            "kind": "weight",
-            "indicator_id": iid,
-            "indicator_kind": ind["kind"],
-            # admin 지표는 행정동 단위라 반경 개념이 없다. 답에 넣으면 400 이다.
-            "radius_required": ind["kind"] != "admin",
-            "direction": ind["direction"],
-            "seed_weight": ind["seed_weight"],
-            "components": ind.get("components"),
-            "rationale": ind.get("rationale", ""),
-            "data_note": ind.get("data_note", ""),
-            "radius_proposed": rp.get("radius_m"),
-            "radius_rationale": rp.get("rationale", ""),
-            "radius_source": rp.get("source"),
-            "slider_proposed": (prop.get("slider_proposed") or {}).get(iid),
-            # 방향 판정 충돌 — 사람이 슬라이더 **부호**로 정해야 넘어간다.
-            "conflict": conflicts.get(iid),
-        })
+        out.append(
+            {
+                "kind": "weight",
+                "indicator_id": iid,
+                "indicator_kind": ind["kind"],
+                # admin 지표는 행정동 단위라 반경 개념이 없다. 답에 넣으면 400 이다.
+                "radius_required": ind["kind"] != "admin",
+                "direction": ind["direction"],
+                "seed_weight": ind["seed_weight"],
+                "components": ind.get("components"),
+                "rationale": ind.get("rationale", ""),
+                "data_note": ind.get("data_note", ""),
+                "radius_proposed": rp.get("radius_m"),
+                "radius_rationale": rp.get("rationale", ""),
+                "radius_source": rp.get("source"),
+                "slider_proposed": (prop.get("slider_proposed") or {}).get(iid),
+                # 방향 판정 충돌 — 사람이 슬라이더 **부호**로 정해야 넘어간다.
+                "conflict": conflicts.get(iid),
+            }
+        )
     return out
 
 
@@ -853,21 +935,24 @@ def submit_gate(run_id: str, gate_id: str, payload: dict) -> dict:
         raise RunRequestError(f"알 수 없는 게이트: {gate_id!r}")
     doc = read_status(run_id)
     if doc is None:
-        raise KeyError(run_id)              # 라우터가 404
+        raise KeyError(run_id)  # 라우터가 404
     if doc.get("status") != "awaiting_hitl":
         raise RunRequestError(
-            f"이 run 은 사람 확정을 기다리고 있지 않습니다 (status={doc.get('status')!r})")
+            f"이 run 은 사람 확정을 기다리고 있지 않습니다 (status={doc.get('status')!r})"
+        )
     gate = doc.get("gate") or {}
     if gate.get("id") != gate_id:
         raise RunRequestError(
-            f"지금 기다리는 게이트는 '{gate.get('id')}' 입니다 (요청: '{gate_id}')")
+            f"지금 기다리는 게이트는 '{gate.get('id')}' 입니다 (요청: '{gate_id}')"
+        )
     if not isinstance(payload, dict):
         raise RunRequestError("요청 본문이 객체가 아닙니다.")
     # 계약 7-5 가 body 에 run_id 를 둔다. 경로와 다르면 프런트가 다른 run 을 보고 있다 —
     # 조용히 경로 쪽을 쓰면 남의 run 에 답을 적용한다.
     if payload.get("run_id") not in (None, run_id):
         raise RunRequestError(
-            f"본문 run_id 가 경로와 다릅니다: {payload.get('run_id')!r} != {run_id!r}")
+            f"본문 run_id 가 경로와 다릅니다: {payload.get('run_id')!r} != {run_id!r}"
+        )
 
     domain = doc["domain"]
     mode = doc.get("mode", MODE_HITL)
@@ -919,7 +1004,9 @@ def _num_in(v, lo: float, hi: float, what: str) -> float:
     return float(v)
 
 
-def _apply_audit(run_id: str, domain: str, questions: list[dict], payload: dict) -> None:
+def _apply_audit(
+    run_id: str, domain: str, questions: list[dict], payload: dict
+) -> None:
     """게이트A 답을 reviewed.json 에 반영한다. **정본 함수를 그대로 부른다.**
 
     🔴 `radius_m` 은 `null`(반경 없음으로 확정)과 **키 생략**(건너뜀 — 미확정 유지)이
@@ -942,27 +1029,36 @@ def _apply_audit(run_id: str, domain: str, questions: list[dict], payload: dict)
     A.set_domain(domain)
 
     for item in payload.get("exclusions") or []:
-        q = _q(questions, "exclusion", dataset_id=item.get("dataset_id"),
-               role_index=item.get("role_index"))
+        q = _q(
+            questions,
+            "exclusion",
+            dataset_id=item.get("dataset_id"),
+            role_index=item.get("role_index"),
+        )
         if not q["editable"]:
             raise RunRequestError(
-                f"[{q['dataset_id']}] 배제반경은 이미 확정된 항목입니다(수정 불가).")
+                f"[{q['dataset_id']}] 배제반경은 이미 확정된 항목입니다(수정 불가)."
+            )
         if "radius_m" not in item:
-            continue                    # 건너뜀 = 미확정 유지. CLI 의 's'
+            continue  # 건너뜀 = 미확정 유지. CLI 의 's'
         radius = item["radius_m"]
         if radius is not None:
             radius = _int_in(radius, 1, 5000, f"[{q['dataset_id']}] 배제반경(m)")
         r = by_id[q["dataset_id"]]
-        flag = next(f for f in r["hitl_flags"]
-                    if f.get("type") == "exclusion_radius_missing"
-                    and f.get("role_index", 0) == q["role_index"])
+        flag = next(
+            f
+            for f in r["hitl_flags"]
+            if f.get("type") == "exclusion_radius_missing"
+            and f.get("role_index", 0) == q["role_index"]
+        )
         A.apply_radius_answer(r, flag, radius)
 
     for item in payload.get("intents") or []:
         q = _q(questions, "intent", dataset_id=item.get("dataset_id"))
         if not q["editable"]:
             raise RunRequestError(
-                f"[{q['dataset_id']}] 데이터 용도는 이미 확정된 항목입니다(수정 불가).")
+                f"[{q['dataset_id']}] 데이터 용도는 이미 확정된 항목입니다(수정 불가)."
+            )
         choice = _int_in(item.get("choice"), 1, 5, f"[{q['dataset_id']}] choice")
         weight = item.get("weight")
         if choice in (1, 2):
@@ -972,18 +1068,25 @@ def _apply_audit(run_id: str, domain: str, questions: list[dict], payload: dict)
             if weight == 0:
                 raise RunRequestError(
                     f"[{q['dataset_id']}] 가점/감점인데 크기가 0 입니다. "
-                    "제외하려면 choice=5 를 쓰세요.")
+                    "제외하려면 choice=5 를 쓰세요."
+                )
         elif weight is not None:
             raise RunRequestError(
-                f"[{q['dataset_id']}] weight 는 choice 1·2 에서만 씁니다.")
+                f"[{q['dataset_id']}] weight 는 choice 1·2 에서만 씁니다."
+            )
         A.apply_intent_answer(by_id[q["dataset_id"]], choice, weight)
 
     for item in payload.get("code_prefixes") or []:
-        q = _q(questions, "code_prefix", dataset_id=item.get("dataset_id"),
-               op_index=item.get("op_index"))
+        q = _q(
+            questions,
+            "code_prefix",
+            dataset_id=item.get("dataset_id"),
+            op_index=item.get("op_index"),
+        )
         if not q["editable"]:
             raise RunRequestError(
-                f"[{q['dataset_id']}] 지역 코드는 이미 확정된 항목입니다(수정 불가).")
+                f"[{q['dataset_id']}] 지역 코드는 이미 확정된 항목입니다(수정 불가)."
+            )
         prefix = item.get("prefix")
         if not isinstance(prefix, str) or not prefix.strip():
             raise RunRequestError(f"[{q['dataset_id']}] prefix 가 비어 있습니다.")
@@ -1027,8 +1130,7 @@ def _validate_weight(questions: list[dict], payload: dict) -> None:
         raise RunRequestError(f"집계반경이 빠진 지표: {missing}")
     extra = sorted(set(radius) - need_radius)
     if extra:
-        raise RunRequestError(
-            f"행정동 단위 지표에는 집계반경이 없습니다: {extra}")
+        raise RunRequestError(f"행정동 단위 지표에는 집계반경이 없습니다: {extra}")
     for iid, v in radius.items():
         _int_in(v, 1, 5000, f"[{iid}] 집계반경(m)")
 
@@ -1036,13 +1138,15 @@ def _validate_weight(questions: list[dict], payload: dict) -> None:
     unresolved = sorted(set(conflicted) - set(slider))
     if unresolved:
         raise RunRequestError(
-            f"방향 판정이 충돌한 지표는 슬라이더 부호로 확정해야 합니다: {unresolved}")
+            f"방향 판정이 충돌한 지표는 슬라이더 부호로 확정해야 합니다: {unresolved}"
+        )
     merged = {i: q["slider_proposed"] for i, q in known.items()}
     for iid, v in slider.items():
         merged[iid] = _num_in(v, -1.0, 1.0, f"[{iid}] 슬라이더")
     if sum(abs(v or 0.0) for v in merged.values()) == 0:
         raise RunRequestError(
-            "전 지표 슬라이더 절대값 합이 0 입니다 — 모든 후보 점수가 0 이 됩니다.")
+            "전 지표 슬라이더 절대값 합이 0 입니다 — 모든 후보 점수가 0 이 됩니다."
+        )
 
 
 def _stage_args(run_id: str, mode: str, stage: str) -> tuple[str | None, str | None]:
@@ -1054,7 +1158,7 @@ def _stage_args(run_id: str, mode: str, stage: str) -> tuple[str | None, str | N
     if mode != MODE_HITL or stage != "3-2":
         return (None, None)
     ans = _read_answer(run_id, "weight")
-    if ans is None:                       # 게이트를 안 거치고 3-2 에 온 것 = 러너 버그
+    if ans is None:  # 게이트를 안 거치고 3-2 에 온 것 = 러너 버그
         raise RuntimeError(f"게이트B 답변이 없습니다: {_answer_path(run_id, 'weight')}")
     radius = ",".join(f"{k}={int(v)}" for k, v in (ans.get("radius") or {}).items())
     weight = ",".join(f"{k}={v}" for k, v in (ans.get("slider") or {}).items())
@@ -1117,7 +1221,8 @@ _SECRET_NAME_RE = re.compile(r"KEY|SECRET|TOKEN|PASSWORD|PASSWD|DSN|DATABASE_URL
 
 # 위 목록에 없는 출처(예: 모듈에 박힌 키)를 위한 2차 방어. 쿼리스트링 형태만 본다.
 _QUERY_SECRET_RE = re.compile(
-    r"((?:api_?key|service_?key|auth_?key|access_?token|key|token)=)[^&\s\"'<>]+", re.I)
+    r"((?:api_?key|service_?key|auth_?key|access_?token|key|token)=)[^&\s\"'<>]+", re.I
+)
 
 
 def _path_re(p: str) -> re.Pattern:

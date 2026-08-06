@@ -222,21 +222,13 @@
               "여자70세이상생활인구수"
             ]
           }
-        },
-        {
-          "op_id": "filter_by_join_key",
-          "params": {
-            "key_col": "행정동코드",
-            "whitelist": "target_region_whitelist",
-            "normalize": "zfill5"
-          }
         }
       ],
       "hitl_flags": []
     },
     {
       "dataset_id": "05",
-      "summary": "어린이집 위치 데이터는 흡연부스 설치 시 법적 배제 구역으로 고려되어야 한다.",
+      "summary": "어린이집 위치 데이터로, 흡연부스 설치 시 배제해야 할 시설 정보를 제공한다.",
       "roles": [
         {
           "role": "hard_exclusion",
@@ -257,9 +249,7 @@
             "coord_cols": [
               "시설 경도(좌표값)",
               "시설 위도(좌표값)"
-            ],
-            "code_col": "ADM_CD",
-            "name_col": "ADM_NM"
+            ]
           }
         },
         {
@@ -333,7 +323,7 @@
         {
           "op_id": "filter_by_value",
           "params": {
-            "col": "정류소명",
+            "col": "SIGUNGU_NM",
             "allowed": [
               "용산구"
             ]
@@ -428,9 +418,9 @@
         {
           "op_id": "filter_by_value",
           "params": {
-            "cols": [
-              "설치주소",
-              "상세위치"
+            "col": "시군구명",
+            "allowed": [
+              "용산구"
             ]
           }
         },
@@ -519,7 +509,7 @@
         {
           "op_id": "filter_by_value",
           "params": {
-            "col": "시군구명",
+            "col": "SIGUNGU_NM",
             "allowed": [
               "용산구"
             ]
@@ -557,13 +547,12 @@
           }
         },
         {
-          "op_id": "filter_by_address_contains",
+          "op_id": "filter_by_value",
           "params": {
-            "addr_cols": [
-              "소재지도로명주소",
-              "소재지지번주소"
-            ],
-            "contains": "용산구"
+            "col": "SIGUNGU_NM",
+            "allowed": [
+              "용산구"
+            ]
           }
         }
       ],

@@ -16,10 +16,17 @@
     mini 제안이 실행마다 흔들리므로(temperature=0 인데도), 비교 실험에서는
     R 을 고정해야 감쇠 효과만 분리된다. 지정한 지표는 HITL 을 건너뛴다.
 """
-import os, sys, json, re, argparse, time
+
+import os
+import sys
+import json
+import argparse
+import time
+
 _T_START = time.perf_counter()
 _T_IMPORT = time.perf_counter()
-import numpy as np, pandas as pd, geopandas as gpd
+import pandas as pd
+import geopandas as gpd
 
 # 프로젝트 루트를 sys.path 에 추가 → `app.xxx` 절대 임포트가 되게.
 #   이 파일: BigProject_Back/app/services/run_weight_model.py
@@ -29,9 +36,16 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from app.services import gam2_weight_model as W
+
 IMPORT_SEC = time.perf_counter() - _T_IMPORT
-from app.config import (STEP1_OUTPUT_DIR, STEP2_OUTPUT_DIR, STEP3_OUTPUT_DIR,
-                        ADM_DONG_SHP, REGION_DATA_DIR, domain_prefix)
+from app.config import (
+    STEP1_OUTPUT_DIR,
+    STEP2_OUTPUT_DIR,
+    STEP3_OUTPUT_DIR,
+    ADM_DONG_SHP,
+    REGION_DATA_DIR,
+    domain_prefix,
+)
 
 
 def _resolve_candidates(path: str, domain: str = "") -> str:
@@ -48,15 +62,18 @@ def _resolve_candidates(path: str, domain: str = "") -> str:
     cands = [path]
     if pfx and not base.startswith(f"{pfx}_"):
         cands.append(os.path.join(STEP3_OUTPUT_DIR, f"{pfx}_{base}"))
-    cands += [os.path.join(STEP3_OUTPUT_DIR, base),
-              os.path.join(REGION_DATA_DIR, base)]   # 구버전 위치
+    cands += [
+        os.path.join(STEP3_OUTPUT_DIR, base),
+        os.path.join(REGION_DATA_DIR, base),
+    ]  # 구버전 위치
     for p in cands:
         if os.path.isfile(p):
             return p
     raise FileNotFoundError(
         "후보 파일 없음. 다음 경로를 찾았습니다:\n  "
         + "\n  ".join(os.path.abspath(p) for p in cands)
-        + f"\n\n  먼저 생성하세요: python app\\services\\make_parcel_candidates.py {domain or '<도메인>'}")
+        + f"\n\n  먼저 생성하세요: python app\\services\\make_parcel_candidates.py {domain or '<도메인>'}"
+    )
 
 
 def _parse_radius_arg(s: str) -> dict:
@@ -126,6 +143,7 @@ def make_loader(domain: str):
         # parquet 에 좌표 컬럼이 남아 있으면 geometry 로 복원(좌표계는 값으로 판정).
         #   지오코딩이 정제 저장 뒤에 붙는 등으로 gpkg 분기를 놓친 경우 대비.
         return W.as_geodataframe(pd.read_parquet(f), did)
+
     # rpt 경로도 돌려준다 — weight_set 의 입력 지문에 쓴다.
     return loader, doc, rpt
 
@@ -138,12 +156,15 @@ def _describe_candidates(cand, path, layer, loaded_as) -> dict:
     여기서는 파일·레이어·geometry 타입처럼 확인 가능한 것만 남긴다.
     """
     gts = sorted(set(cand.geometry.geom_type))
-    return {"file": os.path.basename(path),
-            "layer": layer,
-            "geom_type": gts[0] if len(gts) == 1 else gts,
-            "crs": int(cand.crs.to_epsg()) if cand.crs is not None else None,
-            "loaded_as": loaded_as,
-            "n": int(len(cand))}
+    return {
+        "file": os.path.basename(path),
+        "layer": layer,
+        "geom_type": gts[0] if len(gts) == 1 else gts,
+        "crs": int(cand.crs.to_epsg()) if cand.crs is not None else None,
+        "loaded_as": loaded_as,
+        "n": int(len(cand)),
+    }
+
 
 def _print_weight_table(inds, slider, conflicts=None) -> None:
     """[W] 화면. 비중 %는 **abs 기준**이라 감점 지표도 양수 %로 나온다.
@@ -159,18 +180,25 @@ def _print_weight_table(inds, slider, conflicts=None) -> None:
         v = slider[i["id"]]
         arrow = "감점" if v < 0 else ("제외" if v == 0 else "가점")
         mark = " ⚠" if i["id"] in conf_ids else ""
-        print(f"{i['id']:<10}{v:>+8.2f}{arrow:>6}{pct[i['id']]:>8.1f}%   "
-              f"{W.data_note(i)}{mark}")
+        print(
+            f"{i['id']:<10}{v:>+8.2f}{arrow:>6}{pct[i['id']]:>8.1f}%   "
+            f"{W.data_note(i)}{mark}"
+        )
     print("-" * 70)
     print(f"{'':<10}{'':>8}{'':>6}{sum(pct.values()):>8.1f}%   (절대값 기준 합계)")
-    for i in (conflicts or []):
+    for i in conflicts or []:
         c = i["direction_conflict"]
         gd = "가점" if c["geo_direction"] == "benefit" else "감점"
         vd = "가점" if c["val_direction"] == "benefit" else "감점"
-        print(f"  ⚠ [{i['id']}] 감리 판정 충돌 — "
-              f"{c['geo_dataset']}({gd}) · {c['val_dataset']}({vd})")
-        print(f"     병합값은 {c['val_dataset']} 쪽({vd})을 기본으로 뒀습니다. "
-              f"부호로 확정하세요.")
+        print(
+            f"  ⚠ [{i['id']}] 감리 판정 충돌 — "
+            f"{c['geo_dataset']}({gd}) · {c['val_dataset']}({vd})"
+        )
+        print(
+            f"     병합값은 {c['val_dataset']} 쪽({vd})을 기본으로 뒀습니다. "
+            f"부호로 확정하세요."
+        )
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -178,42 +206,80 @@ def main():
     ap.add_argument("--candidates", required=True, help="후보지 CSV(경도·위도 포함)")
     ap.add_argument("--reviewed", help="reviewed.json (기본: STEP2 옆)")
     ap.add_argument("--alpha", type=float, default=0.3)
-    ap.add_argument("--auto-radius", action="store_true",
-                    help="mini 제안값 자동 사용(HITL 생략, 테스트용)")
-    ap.add_argument("--bootstrap", type=int, default=200,
-                    help="CRITIC 95%% CI 부트스트랩 반복수 (기본 200, 0이면 생략). "
-                         "가중치 계산과 무관한 진단이다")
-    ap.add_argument("--no-diag", action="store_true",
-                    help="표본 대표성·alpha 민감도 진단 생략")
+    ap.add_argument(
+        "--auto-radius",
+        action="store_true",
+        help="mini 제안값 자동 사용(HITL 생략, 테스트용)",
+    )
+    ap.add_argument(
+        "--bootstrap",
+        type=int,
+        default=200,
+        help="CRITIC 95%% CI 부트스트랩 반복수 (기본 200, 0이면 생략). "
+        "가중치 계산과 무관한 진단이다",
+    )
+    ap.add_argument(
+        "--no-diag", action="store_true", help="표본 대표성·alpha 민감도 진단 생략"
+    )
     # --- 거리 감쇠 ---
-    ap.add_argument("--decay", choices=["gaussian", "linear"], default=None,
-                    help="거리 감쇠. 미지정이면 기존 binary(반경 안=1)")
-    ap.add_argument("--sigma-ratio", type=float, default=1/3,
-                    help="가우시안 σ = R * ratio (기본 1/3)")
-    ap.add_argument("--scale", choices=["minmax", "log"], default="minmax",
-                    help="정규화. log 는 롱테일(서울역 등) 지배를 완화")
+    ap.add_argument(
+        "--decay",
+        choices=["gaussian", "linear"],
+        default=None,
+        help="거리 감쇠. 미지정이면 기존 binary(반경 안=1)",
+    )
+    ap.add_argument(
+        "--sigma-ratio",
+        type=float,
+        default=1 / 3,
+        help="가우시안 σ = R * ratio (기본 1/3)",
+    )
+    ap.add_argument(
+        "--scale",
+        choices=["minmax", "log"],
+        default="minmax",
+        help="정규화. log 는 롱테일(서울역 등) 지배를 완화",
+    )
     # --- 반경 고정 ---
-    ap.add_argument("--radius", default=None,
-                    help='R 고정. 예: "07+02=150,06+03=300,08=50,09=50,10=250"')
+    ap.add_argument(
+        "--radius",
+        default=None,
+        help='R 고정. 예: "07+02=150,06+03=300,08=50,09=50,10=250"',
+    )
     # --- [W] 가중치 HITL ---
-    ap.add_argument("--auto-weight", action="store_true",
-                    help="LLM seed_weight 자동 사용([W] HITL 생략, 테스트용). "
-                         "방향 판정 충돌이 있으면 중단한다")
-    ap.add_argument("--weight", default=None,
-                    help='가중치 고정. 부호=방향. 예: "07+02=0.75,09=-0.4"')
+    ap.add_argument(
+        "--auto-weight",
+        action="store_true",
+        help="LLM seed_weight 자동 사용([W] HITL 생략, 테스트용). "
+        "방향 판정 충돌이 있으면 중단한다",
+    )
+    ap.add_argument(
+        "--weight",
+        default=None,
+        help='가중치 고정. 부호=방향. 예: "07+02=0.75,09=-0.4"',
+    )
     # --- 게이트B(HITL) 제안 단계 ---
     #   [A]지표정의 → [A2]레이어부착 → [R]반경제안 → 슬라이더 초기값 까지만 하고
     #   제안 산출물을 남긴 뒤 끝낸다. 후보 로드·[B]행렬·CRITIC·[F]저장은 **하지 않는다.**
     #   왜 필요한가 — 제안값은 이 프로세스 안에서만 만들어진다. 사람에게 보여주려면
     #   한 번은 여기까지 돌려야 하고, 끝까지 돌리면 확정 전 weight_set 이 생겨
     #   산출물이 "확정됐다"고 거짓말한다(원칙 4).
-    ap.add_argument("--propose-only", action="store_true",
-                    help="[R]·[W] 제안값만 만들고 종료(HITL 게이트B 화면용)")
-    ap.add_argument("--run-id", default=None,
-                    help="제안 산출물 파일명에 붙일 실행 id (API 러너가 준다)")
-    ap.add_argument("--candidate-unit", default=None,
-                    help="후보 1건이 무엇인지(설명책임용). 예: \"지적도 필지\". "
-                         "미지정 시 후보 파일에서 사실만 자동 기술한다")
+    ap.add_argument(
+        "--propose-only",
+        action="store_true",
+        help="[R]·[W] 제안값만 만들고 종료(HITL 게이트B 화면용)",
+    )
+    ap.add_argument(
+        "--run-id",
+        default=None,
+        help="제안 산출물 파일명에 붙일 실행 id (API 러너가 준다)",
+    )
+    ap.add_argument(
+        "--candidate-unit",
+        default=None,
+        help='후보 1건이 무엇인지(설명책임용). 예: "지적도 필지". '
+        "미지정 시 후보 파일에서 사실만 자동 기술한다",
+    )
     args = ap.parse_args()
 
     radius_fix = _parse_radius_arg(args.radius)
@@ -222,22 +288,26 @@ def main():
     T = W.Timer()
     loader, report, report_path = make_loader(args.domain)
     reviewed_path = args.reviewed or os.path.join(
-        STEP1_OUTPUT_DIR, f"{domain_prefix(args.domain)}_audit_result_reviewed.json")
+        STEP1_OUTPUT_DIR, f"{domain_prefix(args.domain)}_audit_result_reviewed.json"
+    )
     if not os.path.isfile(reviewed_path):
         raise FileNotFoundError(
             f"감리 결과(reviewed) 없음: {reviewed_path}\n"
-            f"  --reviewed <경로> 로 직접 지정하거나, STEP1_OUTPUT_DIR 를 확인하세요.")
+            f"  --reviewed <경로> 로 직접 지정하거나, STEP1_OUTPUT_DIR 를 확인하세요."
+        )
     reviewed = json.load(open(reviewed_path, encoding="utf-8"))
     facility = reviewed.get("facility_inference", {}).get("facility", args.domain)
     region = report.get("region", "")
     T.lap("감리·정제 결과 로드")
 
     # [A] 지표 정의
-    print("="*70, "\n[A] 지표 정의")
+    print("=" * 70, "\n[A] 지표 정의")
     inds = W.define_indicators(reviewed, report)
     for i in inds:
-        print(f"  {i['id']:<8} seed={i['seed_weight']} dir={i['direction']} "
-              f"geo={i['geo_dataset']} val={i['val_dataset']}")
+        print(
+            f"  {i['id']:<8} seed={i['seed_weight']} dir={i['direction']} "
+            f"geo={i['geo_dataset']} val={i['val_dataset']}"
+        )
 
     T.lap("[A] 지표 정의")
 
@@ -255,27 +325,36 @@ def main():
     if non_admin and non_admin <= set(radius_fix):
         print("\n[R] 집계반경 — --radius 가 전 지표를 덮으므로 LLM 제안을 건너뜁니다.")
         radius_conf = {
-            i["id"]: ({"radius_m": None, "rationale": "행정동 단위 지표(반경 무관)",
-                       "source": "none"} if i["kind"] == "admin"
-                      else {"radius_m": None, "rationale": "", "source": "none"})
-            for i in inds}
+            i["id"]: (
+                {
+                    "radius_m": None,
+                    "rationale": "행정동 단위 지표(반경 무관)",
+                    "source": "none",
+                }
+                if i["kind"] == "admin"
+                else {"radius_m": None, "rationale": "", "source": "none"}
+            )
+            for i in inds
+        }
         radius_conf["_confirmed"] = False
     else:
         print("\n[R] 집계반경 제안 (mini)")
         radius_conf = W.suggest_radius(facility, inds)
-        for _rc in radius_conf.values():      # 기본 출처 — 이후 CLI/HITL 이 덮어쓴다
+        for _rc in radius_conf.values():  # 기본 출처 — 이후 CLI/HITL 이 덮어쓴다
             if isinstance(_rc, dict):
                 _rc.setdefault("source", "llm")
     for i in inds:
         rc = radius_conf.get(i["id"], {})
-        print(f"  {i['id']:<8} R={rc.get('radius_m')}  {rc.get('rationale','')}")
+        print(f"  {i['id']:<8} R={rc.get('radius_m')}  {rc.get('rationale', '')}")
 
     # --radius 로 지정된 지표는 제안값을 덮어쓰고 HITL 에서 제외
     if radius_fix:
         unknown = set(radius_fix) - {i["id"] for i in inds}
         if unknown:
-            raise ValueError(f"--radius 에 없는 지표ID: {sorted(unknown)}\n"
-                             f"  사용 가능: {[i['id'] for i in inds]}")
+            raise ValueError(
+                f"--radius 에 없는 지표ID: {sorted(unknown)}\n"
+                f"  사용 가능: {[i['id'] for i in inds]}"
+            )
         print("\n  [고정] --radius 로 지정된 반경 (HITL 생략)")
         for k, v in radius_fix.items():
             old = radius_conf.get(k, {}).get("radius_m")
@@ -290,10 +369,13 @@ def main():
     #   그래서 [R]·[W] 를 한 화면(게이트 하나)에 올린다.
     if args.propose_only:
         slider = W.slider_from_indicators(inds)
-        prop = W.build_weight_proposal(args.domain, facility, region,
-                                       inds, radius_conf, slider, run_id=args.run_id)
+        prop = W.build_weight_proposal(
+            args.domain, facility, region, inds, radius_conf, slider, run_id=args.run_id
+        )
         path = W.save_weight_proposal(prop, args.domain, args.run_id)
-        print(f"\n[P] 제안 저장: {path}  (지표 {len(inds)} · 충돌 {len(prop['conflicts'])})")
+        print(
+            f"\n[P] 제안 저장: {path}  (지표 {len(inds)} · 충돌 {len(prop['conflicts'])})"
+        )
         T.report(import_sec=IMPORT_SEC, start=_T_START)
         return
 
@@ -303,14 +385,16 @@ def main():
             print("\n  >> HITL: 위 반경을 확인/수정하세요. 엔터=승인, 숫자입력=수정")
             for i in todo:
                 cur = radius_conf[i["id"]]["radius_m"]
-                while True:                   # 잘못된 입력에 파이프라인이 죽지 않게 재입력
+                while True:  # 잘못된 입력에 파이프라인이 죽지 않게 재입력
                     v = input(f"     [{i['id']}] R({cur}m)= ").strip()
-                    if not v:                 # 엔터 = 제안값 승인
+                    if not v:  # 엔터 = 제안값 승인
                         break
                     try:
                         r = int(v)
                     except ValueError:
-                        print(f"        숫자만 입력하세요 (엔터=승인). 입력값: {v[:40]}")
+                        print(
+                            f"        숫자만 입력하세요 (엔터=승인). 입력값: {v[:40]}"
+                        )
                         continue
                     if not (1 <= r <= 5000):
                         print("        1~5000m 범위로 입력하세요.")
@@ -319,7 +403,9 @@ def main():
                     radius_conf[i["id"]]["source"] = "hitl"
                     break
         radius_conf["_confirmed"] = True
-    radius_m = {k: v.get("radius_m") for k, v in radius_conf.items() if not k.startswith("_")}
+    radius_m = {
+        k: v.get("radius_m") for k, v in radius_conf.items() if not k.startswith("_")
+    }
     T.lap("[R] 반경 제안(LLM)+HITL")
 
     # ════════════════════════════════════════════════════════════════
@@ -334,8 +420,10 @@ def main():
     if weight_fix:
         unknown = set(weight_fix) - {i["id"] for i in inds}
         if unknown:
-            raise ValueError(f"--weight 에 없는 지표ID: {sorted(unknown)}\n"
-                             f"  사용 가능: {[i['id'] for i in inds]}")
+            raise ValueError(
+                f"--weight 에 없는 지표ID: {sorted(unknown)}\n"
+                f"  사용 가능: {[i['id'] for i in inds]}"
+            )
         print("\n  [고정] --weight 로 지정 (HITL 생략)")
         for k, v in weight_fix.items():
             print(f"     [{k}] {slider[k]:+.2f} -> {v:+.2f}")
@@ -352,9 +440,12 @@ def main():
             raise ValueError(
                 "방향 판정 충돌이 있어 --auto-weight 로 진행할 수 없습니다: "
                 f"{[i['id'] for i in unresolved]}\n"
-                "  [W] HITL 로 확정하거나 --weight 로 부호를 지정하세요.")
+                "  [W] HITL 로 확정하거나 --weight 로 부호를 지정하세요."
+            )
     else:
-        print("\n  >> HITL: 엔터=승인, 숫자입력=수정 (-1 ~ +1). 음수로 넣으면 감점으로 바뀝니다.")
+        print(
+            "\n  >> HITL: 엔터=승인, 숫자입력=수정 (-1 ~ +1). 음수로 넣으면 감점으로 바뀝니다."
+        )
         while True:
             for i in inds:
                 cur = slider[i["id"]]
@@ -365,7 +456,9 @@ def main():
                     try:
                         w = float(v)
                     except ValueError:
-                        print(f"        숫자만 입력하세요 (엔터=승인). 입력값: {v[:40]}")
+                        print(
+                            f"        숫자만 입력하세요 (엔터=승인). 입력값: {v[:40]}"
+                        )
                         continue
                     if not (-1.0 <= w <= 1.0):
                         print("        -1 ~ +1 범위로 입력하세요.")
@@ -374,7 +467,12 @@ def main():
                     sources[i["id"]] = "hitl"
                     break
             _print_weight_table(inds, slider, conflicts)
-            if input("\n  확정하시겠습니까? (엔터=확정, r=다시 입력): ").strip().lower() != "r":
+            if (
+                input("\n  확정하시겠습니까? (엔터=확정, r=다시 입력): ")
+                .strip()
+                .lower()
+                != "r"
+            ):
                 break
 
     W.apply_weight_hitl(inds, slider, sources=sources)
@@ -382,30 +480,36 @@ def main():
 
     # 후보 로드 — .gpkg/.geojson 은 geometry 그대로, .csv 는 경위도에서 생성
     cand_path = _resolve_candidates(args.candidates, args.domain)
-    _lyr = None                      # gpkg 가 아니면 레이어 개념이 없다
+    _lyr = None  # gpkg 가 아니면 레이어 개념이 없다
     if cand_path.lower().endswith((".gpkg", ".geojson", ".shp")):
         # gpkg 는 candidates(Point)/parcels(Polygon) 2개 레이어다.
         # STEP3 는 필지당 1점이어야 하므로 candidates 를 명시한다.
         _lyr = "candidates" if cand_path.lower().endswith(".gpkg") else None
-        cand = (gpd.read_file(cand_path, layer=_lyr) if _lyr
-                else gpd.read_file(cand_path)).to_crs(W.WORK_CRS)
+        cand = (
+            gpd.read_file(cand_path, layer=_lyr) if _lyr else gpd.read_file(cand_path)
+        ).to_crs(W.WORK_CRS)
         c = pd.DataFrame(cand.drop(columns="geometry"))
         src_kind = "geometry"
     else:
         c = pd.read_csv(cand_path, encoding="utf-8")
         lon = next(col for col in c.columns if "경도" in col or col.lower() == "lon")
         lat = next(col for col in c.columns if "위도" in col or col.lower() == "lat")
-        cand = gpd.GeoDataFrame(c, geometry=gpd.points_from_xy(c[lon], c[lat]),
-                                crs=4326).to_crs(W.WORK_CRS)
+        cand = gpd.GeoDataFrame(
+            c, geometry=gpd.points_from_xy(c[lon], c[lat]), crs=4326
+        ).to_crs(W.WORK_CRS)
         src_kind = "경위도(4326->%d)" % W.WORK_CRS
 
     # 후보 1건이 무엇인지는 코드가 알 수 없다 — 주입(--candidate-unit)하거나 사실만 기술한다.
     cand_src = _describe_candidates(cand, cand_path, _lyr, src_kind)
     cand_unit = args.candidate_unit or (
-        f"{cand_src['layer']} 레이어 1행 ({cand_src['geom_type']})" if cand_src["layer"]
-        else f"{cand_src['file']} 1행 ({cand_src['geom_type']})")
-    print(f"\n[후보] {len(cand):,}개 (EPSG:{W.WORK_CRS}, {src_kind})"
-          f"  {os.path.basename(cand_path)}")
+        f"{cand_src['layer']} 레이어 1행 ({cand_src['geom_type']})"
+        if cand_src["layer"]
+        else f"{cand_src['file']} 1행 ({cand_src['geom_type']})"
+    )
+    print(
+        f"\n[후보] {len(cand):,}개 (EPSG:{W.WORK_CRS}, {src_kind})"
+        f"  {os.path.basename(cand_path)}"
+    )
     T.lap("후보 로드")
 
     # 행정동 경계 (admin 지표용)
@@ -421,8 +525,14 @@ def main():
         print(f"\n[B] 지표 행렬  (감쇠={args.decay}, σ=R×{args.sigma_ratio:.3f})")
     else:
         print("\n[B] 지표 행렬  (감쇠 없음 — 반경 안=1)")
-    mat = W.build_matrix(cand, inds, radius_m, admin_gdf=admin_gdf,
-                         decay=args.decay, sigma_ratio=args.sigma_ratio)
+    mat = W.build_matrix(
+        cand,
+        inds,
+        radius_m,
+        admin_gdf=admin_gdf,
+        decay=args.decay,
+        sigma_ratio=args.sigma_ratio,
+    )
 
     T.lap("[B] 지표 행렬")
 
@@ -431,7 +541,10 @@ def main():
     print("\n[희소성] 비영 비율")
     for c_ in mat.columns:
         ratio = (mat[c_] > 0).mean()
-        print(f"  {c_:<8} {ratio*100:5.1f}%" + ("  <- 희소(CRITIC 제외)" if c_ in sparse else ""))
+        print(
+            f"  {c_:<8} {ratio * 100:5.1f}%"
+            + ("  <- 희소(CRITIC 제외)" if c_ in sparse else "")
+        )
 
     # 정규화 -> CRITIC -> human -> 합성
     norm = W.normalize_matrix(mat, inds, scale=args.scale)
@@ -439,8 +552,11 @@ def main():
     w_h = W.human_weights(inds)
     w_c = W.critic_weights(norm, sparse_ids=sparse)
     T.lap("[D] CRITIC")
-    boot = ({} if args.bootstrap <= 0
-            else W.critic_bootstrap(norm, sparse_ids=sparse, B=args.bootstrap))
+    boot = (
+        {}
+        if args.bootstrap <= 0
+        else W.critic_bootstrap(norm, sparse_ids=sparse, B=args.bootstrap)
+    )
     T.lap(f"[D] 부트스트랩 B={args.bootstrap}")
     w_f = W.synthesize(w_h, w_c, alpha=args.alpha, sparse_ids=sparse)
 
@@ -448,9 +564,9 @@ def main():
     if not args.no_diag:
         # 후보의 계층(법정동) — 주소에서 추출. 없으면 층화 검사는 생략된다.
         strata, strata_src = None, None
-        if "법정동코드" in c.columns:              # 지적도 후보(gpkg)
+        if "법정동코드" in c.columns:  # 지적도 후보(gpkg)
             strata, strata_src = c["법정동코드"].astype(str), "법정동코드"
-        else:                                       # 국유부동산 CSV — 주소에서 추출
+        else:  # 국유부동산 CSV — 주소에서 추출
             addr_col = next((col for col in c.columns if "소재지" in str(col)), None)
             if addr_col:
                 strata = c[addr_col].astype(str).str.extract(r"구\s+(\S+?)\s")[0]
@@ -463,43 +579,72 @@ def main():
         # table 은 DataFrame — 콘솔용이라 산출물에서 뺀다(gam4 의 geom 처리와 같은 이유).
         # strata 는 **실제로 쓴 컬럼명**을 남긴다. 층화 검사가 생략됐으면 null 이다 —
         # 라벨을 고정해두면 CSV 후보에서 하지도 않은 검사를 했다고 주장하게 된다.
-        diagnostics = {"sample_bias": bias,
-                       "alpha_sensitivity": {k: v for k, v in da.items()
-                                             if k != "table"},
-                       "strata": strata_src}
+        diagnostics = {
+            "sample_bias": bias,
+            "alpha_sensitivity": {k: v for k, v in da.items() if k != "table"},
+            "strata": strata_src,
+        }
         T.lap("[진단] 표본·alpha")
     else:
         # 안 한 것은 "안 했다"고 남긴다 — 없으면 산출물만 보고 검증한 줄 안다(절대원칙 4).
         diagnostics = {"skipped": True, "reason": "--no-diag"}
 
-    print("\n" + "="*70)
-    print(f"[가중치] alpha={args.alpha}  (사람 {1-args.alpha:.0%} / 데이터 {args.alpha:.0%})"
-          + (f"  감쇠={args.decay}" if args.decay else "  감쇠=없음")
-          + f"  정규화={args.scale}")
-    print("-"*70)
+    print("\n" + "=" * 70)
+    print(
+        f"[가중치] alpha={args.alpha}  (사람 {1 - args.alpha:.0%} / 데이터 {args.alpha:.0%})"
+        + (f"  감쇠={args.decay}" if args.decay else "  감쇠=없음")
+        + f"  정규화={args.scale}"
+    )
+    print("-" * 70)
     print(f"{'지표':<10}{'w_human':>9}{'w_critic':>9}{'w_final':>9}   95% CI")
     for i in inds:
-        iid = i["id"]; ci = boot.get(iid)
+        iid = i["id"]
+        ci = boot.get(iid)
         # boot 가 비면(--bootstrap 0) 전 지표가 "(희소)" 로 찍혀 거짓 경고가 된다.
         # 희소 판정(detect_sparse)과 CI 미산출을 구분해서 표시한다.
-        cis = (f"[{ci['ci_low']:.3f},{ci['ci_high']:.3f}]" if ci
-               else "(희소)" if iid in sparse else "(생략)")
-        wc = f"{w_c.get(iid,0):.3f}" if iid not in sparse else "  -  "
+        cis = (
+            f"[{ci['ci_low']:.3f},{ci['ci_high']:.3f}]"
+            if ci
+            else "(희소)"
+            if iid in sparse
+            else "(생략)"
+        )
+        wc = f"{w_c.get(iid, 0):.3f}" if iid not in sparse else "  -  "
         print(f"{iid:<10}{w_h[iid]:>9.3f}{wc:>9}{w_f[iid]:>9.3f}   {cis}")
-    print("-"*70)
+    print("-" * 70)
 
     # [F] 저장
-    ws = W.build_weight_set(args.domain, facility, region, inds, radius_conf,
-                            args.alpha, w_h, w_c, w_f, boot, sparse, len(cand),
-                            candidate_unit=cand_unit, candidate_source=cand_src,
-                            inputs={"reviewed": W.fingerprint(reviewed_path),
-                                    "clean_report": W.fingerprint(report_path),
-                                    "candidates": W.fingerprint(cand_path)},
-                            hitl={"radius_confirmed": not args.auto_radius,
-                                  "weight_confirmed": not args.auto_weight})
+    ws = W.build_weight_set(
+        args.domain,
+        facility,
+        region,
+        inds,
+        radius_conf,
+        args.alpha,
+        w_h,
+        w_c,
+        w_f,
+        boot,
+        sparse,
+        len(cand),
+        candidate_unit=cand_unit,
+        candidate_source=cand_src,
+        inputs={
+            "reviewed": W.fingerprint(reviewed_path),
+            "clean_report": W.fingerprint(report_path),
+            "candidates": W.fingerprint(cand_path),
+        },
+        hitl={
+            "radius_confirmed": not args.auto_radius,
+            "weight_confirmed": not args.auto_weight,
+        },
+    )
     # 재현성 메타 — 감쇠 설정을 산출물에 남긴다(같은 결과를 다시 못 만드는 일 방지)
-    ws["decay"] = {"func": args.decay, "sigma_ratio": args.sigma_ratio if args.decay else None}
-    ws["scale"] = args.scale        # 재현성 — 어떤 정규화로 뽑은 가중치인지
+    ws["decay"] = {
+        "func": args.decay,
+        "sigma_ratio": args.sigma_ratio if args.decay else None,
+    }
+    ws["scale"] = args.scale  # 재현성 — 어떤 정규화로 뽑은 가중치인지
     # S4 — 진단을 산출물에 남긴다. "가중치가 후보 집합에 의존하지 않는다"는 주장의 증빙이
     #      지금까지는 콘솔 출력을 손으로 옮겨적은 노트뿐이었다.
     ws["diagnostics"] = diagnostics
