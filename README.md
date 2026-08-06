@@ -14,8 +14,19 @@ source ../.venv/bin/activate
 
 # 의존성 설치
 pip install --upgrade pip setuptools
-pip install -r requirements.txt
+pip install -r requirements.txt -c constraints.txt
 ```
+
+> 🔴 **`-c constraints.txt` 를 빼지 마십시오.**
+> `requirements.txt` 가 "무엇을 설치할지"라면 `constraints.txt` 는 **"무엇을 바꾸면
+> 안 되는지"** 입니다. 값이 달라지는 패키지(pandas·pyarrow·geopandas·shapely·openai
+> 등)를 핀으로 묶어 둡니다.
+>
+> 이미 당한 적이 있습니다 — `pip install langchain-openai` 한 번이 `openai` 를
+> 2.44 → 2.53 으로 **말없이** 올렸습니다. 이런 전이 의존 이동은 회귀 대조
+> (`python app/tools/check_fixture.py 흡연` 57/57)로 **안 걸립니다.** 픽스처는 LLM 을
+> 부르지 않기 때문입니다. 패키지를 새로 설치할 때는 `--dry-run` 을 먼저 보고,
+> 설치 후에는 `pip freeze` **전체 diff** 를 보십시오(몇 개만 지켜보면 놓칩니다).
 
 ### ➋ 로컬 PostGIS + pgvector 컨테이너 기동
 Docker를 활용해 지리 정보 공간 데이터베이스(PostGIS) 및 RAG 벡터 DB(pgvector)가 통합 장착된 DB 인프라를 가동합니다.
@@ -23,18 +34,48 @@ Docker를 활용해 지리 정보 공간 데이터베이스(PostGIS) 및 RAG 벡
 # Docker Compose 백그라운드 실행
 docker compose up -d --build
 
-# 16대 물리 테이블 DDL 주입 상태 확인
-docker exec -i omnisite-db psql -U admin -d omnisite < schema.sql
+# 17개 물리 테이블 DDL 주입
+docker exec -i omnisite-postgres-db psql -U postgres -d omnisite < schema.sql
 ```
-*   **로컬 DB 접속 정보**: 포트 `5432` / 사용자 `admin` / 비밀번호 `admin1234` / DB명 `omnisite`
+*   **로컬 DB 접속 정보**: 포트 `5432` / 사용자 `postgres` / 비밀번호 `postgres` / DB명 `omnisite`
+    *   컨테이너명은 `omnisite-postgres-db` 입니다(Redis 는 `omnisite-redis-cache`).
+    *   `app/config.py` 의 `DATABASE_URL` 기본값이 이 값과 같으므로, 로컬에서는 `.env` 없이도 붙습니다.
 *   *주의*: pgvector 확장 제어 선언은 `CREATE EXTENSION vector;` 문법을 사용해야 합니다.
 
+> 🔴 **위 접속 정보는 2026-08-05 에 정정된 것입니다.**
+> 그전까지 이 자리에는 컨테이너 `omnisite-db` / 사용자 `admin` / 비밀번호 `admin1234` /
+> "16대 테이블" 이라고 적혀 있었습니다. **네 값 모두 실제와 달랐습니다** —
+> `docker-compose.yml` 은 `omnisite-postgres-db` · `postgres`/`postgres` 이고
+> `Dockerfile.db` 어디에도 `admin` 계정을 만드는 구문이 없으며, `schema.sql` 의
+> `CREATE TABLE` 은 **17개**입니다. 그대로 치면 컨테이너명과 사용자 두 군데에서 실패합니다.
+>
+> 코드가 아니라 **문서만 어긋나 있었습니다.** 이런 종류는 실행해 보기 전엔 안 걸리고,
+> 처음 받은 사람이 첫 명령에서 막힙니다.
+
+> ⚠️ **`schema.sql` 과 ORM(`app/db/models/`)이 지금 서로 다릅니다.**
+> 공통 14개 테이블 중 11개는 컬럼까지 일치하지만 `conflict_simulations`·
+> `verified_precedents` 는 컬럼 구성이 갈리고, ORM 이 참조하는 `parcels` 테이블은
+> `schema.sql` 에 아예 없습니다. **하필 `/api/v1/audit/*` 이 쓰는 테이블들입니다.**
+> 어느 쪽을 정본으로 삼을지 정해지기 전까지 `/audit/*` 은 이 DB 에서 동작을 보장할 수
+> 없습니다. 대조 근거와 스크립트는 문서
+> `01_설계결정\백엔드팀_API현황_및_Redis_Postgres_전환.md` §5-2 · §10-1 에 있습니다.
+
 ### ➌ FastAPI 백엔드 개발 서버 실행
-핫 리로드(`--reload`) 옵션을 주어 소스코드 변경 사항이 uvicorn 좀비 프로세스 교착 현상 없이 즉각 반영되도록 실행합니다.
 ```bash
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 *   **Swagger API 문서**: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+
+> 🔴 **`--reload` 를 붙이지 마십시오 (2026-08-05 정정).**
+> 파이프라인 실행 API(`/api/v1/pipeline/*`)가 생기면서 **서버가 자식 프로세스를 들고
+> 있게 됐습니다.** 서버가 죽으면 그 자식을 추적할 수 없으므로,
+> `pipeline_runner.py` 의 `_reap_orphans` 는 기동 시 **이전 서버가 남긴 run 을 전부
+> `failed` 로 닫습니다.** `--reload` 는 파일이 바뀔 때마다 프로세스를 갈아치우므로,
+> 코드를 한 줄 저장하는 순간 **본인과 남이 돌리던 run 이 같이 죽습니다.**
+>
+> 대신 **코드를 고쳐도 재시작 전에는 반영되지 않습니다.** 재시작할 때는 같은 서버를
+> 보는 사람에게 말하고 하십시오. (이 문장은 파이프라인 API 신설 전에 쓰인 것이라
+> 그때는 틀린 말이 아니었습니다 — 낡은 것이지 잘못이 아닙니다.)
 
 ---
 
