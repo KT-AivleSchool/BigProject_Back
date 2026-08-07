@@ -17,5 +17,6 @@ class StakeholderCandidate(BaseModel):
     recommendation_reason: str = Field(..., description="이 후보가 추천된 구체적인 근거 설명")
     importance_grade: str = Field(default="C", description="중요도 평가 등급 (예: A, B, C)")
     evidence_confidence: str = Field(default="medium", description="근거 신뢰도 (high, medium, low)")
+    keywords: List[str] = Field(default_factory=list, description="키워드 목록")
     related_candidate_ids: List[str] = Field(default_factory=list, description="관련된 후보지 ID 목록")
     evidence_ids: List[str] = Field(default_factory=list, description="근거가 되는 GIS나 조례 데이터 ID 목록")

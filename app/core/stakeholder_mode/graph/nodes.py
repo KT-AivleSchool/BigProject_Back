@@ -55,6 +55,47 @@ async def recommend_stakeholders_node(state: StakeholderGraphState) -> Dict[str,
     }
 
 
+async def generate_interest_profiles_node(state: StakeholderGraphState) -> Dict[str, Any]:
+    """2-1. 이해관계자별 프로필 생성 노드"""
+    from app.core.stakeholder_mode.services.interest_profile_generator import InterestProfileGenerator
+    from app.core.config.llm_config import get_llm_fast
+
+    topic = state["topic"]
+    candidates = [StakeholderCandidate(**c) for c in state.get("recommended_stakeholders", [])]
+    candidate_sites = state.get("candidate_sites", [])
+    ordinance_contexts = state.get("ordinance_contexts", [])
+
+    generator = InterestProfileGenerator(llm_client=get_llm_fast())
+    profiles = []
+    
+    for stakeholder in candidates:
+        profile = await generator.generate(
+            topic=topic,
+            stakeholder=stakeholder,
+            candidate_contexts=candidate_sites,
+            ordinance_contexts=ordinance_contexts
+        )
+        profiles.append(profile.model_dump())
+
+    return {
+        "interest_profiles": profiles
+    }
+
+
+async def validate_persona_diversity_node(state: StakeholderGraphState) -> Dict[str, Any]:
+    """2-2. 페르소나 차별성 검사 및 보정 노드"""
+    from app.core.stakeholder_mode.services.persona_diversity_validator import PersonaDiversityValidator
+    from app.core.stakeholder_mode.schemas.interest_profile import StakeholderInterestProfile
+    
+    profiles = [StakeholderInterestProfile(**p) for p in state.get("interest_profiles", [])]
+    validator = PersonaDiversityValidator()
+    issues = validator.validate(profiles)
+
+    # MVP에서는 경고/에러 내역만 상태에 저장하고 넘어감. (필요 시 LLM 재귀 호출 로직 추가 가능)
+    return {
+        "diversity_issues": issues
+    }
+
 async def review_stakeholders_node(state: StakeholderGraphState) -> Dict[str, Any]:
     """3. 사용자 선택 및 수정 (HITL 노드)"""
     selected = state.get("selected_stakeholders")
@@ -82,6 +123,41 @@ async def create_personas_node(state: StakeholderGraphState) -> Dict[str, Any]:
 
     return {
         "persona_configs": [p.model_dump() for p in persona_configs]
+    }
+
+
+async def select_persona_contexts_node(state: StakeholderGraphState) -> Dict[str, Any]:
+    """4-1. 페르소나별 관련 데이터(Context) 선택 노드"""
+    from app.core.stakeholder_mode.services.persona_context_selector import PersonaContextSelector
+    from app.core.stakeholder_mode.schemas.persona import PersonaConfig
+    from app.core.stakeholder_mode.schemas.context import CandidateContext
+    
+    # 임시 CandidateContext 파싱 로직 (기존 Dict를 CandidateContext로 변환 필요)
+    candidate_sites = state.get("candidate_sites", [])
+    
+    contexts = []
+    for site in candidate_sites:
+        # 안전한 변환 (더미 데이터 생성 혹은 파싱)
+        contexts.append(CandidateContext(
+            candidate_id=site.get("candidate_id", ""),
+            name=site.get("name", ""),
+            spatial_facts=[],
+            restrictions=[],
+            transportation=[],
+            operational_facts=[]
+        ))
+        
+    selector = PersonaContextSelector()
+    persona_configs = [PersonaConfig(**p) for p in state.get("persona_configs", [])]
+    
+    persona_contexts = {}
+    for persona in persona_configs:
+        # 첫 번째 후보지만 있다고 가정하거나 루프
+        if contexts:
+            persona_contexts[persona.persona_id] = selector.select(persona, contexts[0])
+            
+    return {
+        "persona_contexts": persona_contexts
     }
 
 

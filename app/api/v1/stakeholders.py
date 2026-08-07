@@ -1,16 +1,15 @@
-"""
-동적 이해관계자 API 라우터 (Stakeholders API Route)
-- 클라이언트(프론트엔드)에서 접근 가능한 REST API 엔드포인트를 정의합니다.
-- `/generate` POST 요청을 받아 입력 데이터(주제, GIS, 조례 등)를 `StakeholderGenerator` 서비스 클래스로 전달하고, 생성된 최종 추천 이해관계자 리스트를 반환합니다.
-"""
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from langchain_openai import ChatOpenAI
+import json
+from fastapi.responses import StreamingResponse
 
 from app.config import settings
 from app.core.stakeholder_mode.schemas.dynamic_stakeholder import StakeholderCandidate
 from app.core.stakeholder_mode.services.stakeholder_generator import StakeholderGenerator
+from app.core.stakeholder_mode.graph.dynamic_builder import dynamic_discussion_graph
+from app.core.stakeholder_mode.graph.dynamic_state import DynamicDiscussionState
 
 router = APIRouter()
 
@@ -23,15 +22,7 @@ class StakeholderGenerationRequest(BaseModel):
 
 @router.post("/generate", response_model=List[StakeholderCandidate], status_code=status.HTTP_200_OK)
 async def generate_dynamic_stakeholders(request: StakeholderGenerationRequest):
-    """
-    [동적 이해관계자 생성 API]
-    안건 주제, GIS 기반 주변 인프라, 조례 데이터를 입력받아
-    직접/간접 이해관계자를 폭넓게 도출하고(Discovery),
-    중복 집단을 묶어내며(Refinement),
-    최종적으로 5~8개의 추천 목록을 중요도/신뢰도와 함께 평가(Evaluation)하여 반환합니다.
-    """
     try:
-        # LLM Client (기본 모델 설정)
         llm = ChatOpenAI(api_key=settings.OPENAI_API_KEY, model="gpt-4o-mini", temperature=0.7)
         generator = StakeholderGenerator(llm_client=llm)
         
@@ -48,3 +39,63 @@ async def generate_dynamic_stakeholders(request: StakeholderGenerationRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"이해관계자 파이프라인 처리 중 오류가 발생했습니다: {str(e)}"
         )
+
+class DynamicDiscussionRequest(BaseModel):
+    personas: List[Dict[str, Any]]
+    topic: str
+    gis_data: Dict[str, Any]
+    ordinance_contexts: List[str]
+
+@router.post("/dynamic/discuss/stream")
+async def stream_dynamic_discussion(request: DynamicDiscussionRequest):
+    """
+    다자간 페르소나 실시간 토론 스트리밍 엔드포인트
+    LangGraph의 astream을 이용하여 노드 업데이트 발생 시 마다 Chunk를 전송합니다.
+    """
+    async def event_generator():
+        try:
+            # 페르소나 리스트를 기반으로 active_participants 구성 (프론트가 주는 데이터에 role, name 등이 있음)
+            # 백엔드 스키마 PersonaConfig에 맞게 매핑
+            mapped_personas = []
+            active_ids = []
+            for idx, p in enumerate(request.personas):
+                pid = f"persona_{idx}"
+                active_ids.append(pid)
+                mapped_personas.append({
+                    "persona_id": pid,
+                    "display_name": p.get("name", f"페르소나 {idx}"),
+                    "stakeholder_type": p.get("role", "unknown"),
+                    "relationship_to_topic": p.get("description", "관계 없음"),
+                    "importance_grade": p.get("importance_grade", "C"),
+                    "initial_position": "conditional_support",
+                    "interests": p.get("keywords", [])
+                })
+                
+            initial_state = DynamicDiscussionState(
+                project_id="stream_project",
+                topic=request.topic,
+                site_information=json.dumps(request.gis_data, ensure_ascii=False),
+                personas=mapped_personas,
+                active_participants=active_ids,
+                css_levels={},
+                ordinance_contexts=[{"content": ctx} for ctx in request.ordinance_contexts],
+                messages=[],
+                next_speaker="supervisor",
+                round_count=0,
+                rebuttal_target="",
+                rebuttal_count=0,
+                evaluations={},
+                final_scenarios={},
+                is_finished=False
+            )
+            
+            async for chunk in dynamic_discussion_graph.astream(initial_state, stream_mode="updates"):
+                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            
+    return StreamingResponse(event_generator(), media_type="text/event-stream")

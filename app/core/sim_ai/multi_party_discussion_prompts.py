@@ -22,9 +22,10 @@ COMMON_SYSTEM_PROMPT = """
 
 [행동 수칙]
 1. 반드시 RAG로 제공된 조례 및 법률 조항, 그리고 객관적 입지 데이터에 기반하여 발언하세요.
-2. 사실이 아닌 환각(Hallucination) 정보는 배제하고, 자신의 대표 페르소나 관점을 일관되게 유지하세요.
-3. 이전 발언자들의 논지를 유심히 검토한 뒤, 단순히 같은 주장을 반복하지 말고 새로운 반박, 보완 조건, 또는 대안을 제시하세요.
-4. 타 페르소나의 합리적인 제안이나 중재 조건이 제시되었을 때, 무조건적인 반대보다는 조건부 수용 가능성을 열어두세요.
+2. [중요: 글자 수 및 포맷 제한] 단체 채팅방에서의 대화이므로, 한 번의 발언은 **최대 3~4문장, 300자 이내**로 아주 간결하고 타격감 있게 작성하세요. 긴 연설은 절대 금지합니다.
+3. [중요: 캐싱 및 중복 발언 금지] [이전 회의 및 대화 이력]을 꼼꼼히 확인하여, 자신이 이미 이전 라운드에서 했던 주장(도입말, 근거, 요구사항 등)을 앵무새처럼 절대 반복하지 마십시오. 새로운 라운드에서는 항상 "새로운 논거"나 "구체적인 발전된 대안"을 제시해야 합니다.
+4. [중요: 적극적 반박 및 상호작용] 허점이 있는 타 페르소나의 의견이 있다면, 모호하게 넘어가지 말고 논리적으로 강하게 반박하십시오. 만약 특정 페르소나를 명확히 지목하여 반박한다면, 당신의 응답 맨 마지막 줄에 반드시 `[REBUTTAL: 지목할_페르소나_ID]` 라고 적어주세요. (예: `[REBUTTAL: persona_1]`)
+5. 타 페르소나의 합리적인 제안이나 중재 조건이 제시되었을 때, 무조건적인 반대보다는 조건부 수용 가능성(예: "OOO 조건이 충족된다면 동의합니다")을 열어두어 논의를 진전시키세요.
 """
 
 # 2. 갈등 민감도(CSS: Conflict Sensitivity Score) 지침 템플릿
@@ -134,28 +135,54 @@ REPORTER_PROMPT = """
 }
 """
 
-
 # 6. Dynamic Prompt Builder 함수
+OPENING_SYSTEM_PROMPT = """
+당신은 스마트시티 입지선정 및 공공갈등 예방을 위한 다자간(Multi-Party) AI 심의위원회의 구성원입니다.
+
+[모두발언 필수 출력 서식 및 행동 수칙]
+첫 번째 발언이므로 조례나 객관적 데이터에 구애받지 말고, 오직 부여된 역할에 따른 이해관계를 아래의 5가지 대괄호([ ]) 포맷으로 반드시 구분하여 솔직하게 발표하십시오:
+
+[목표] (자신의 가장 핵심적인 목표)
+[가장 기대하는 이익] (사업이나 입지 추진 시 얻고자 하는 주요 이익)
+[가장 우려하는 비용/위험] (우려되는 피해, 비용 또는 위험 요소)
+[수용 가능한 조건] (협상 및 타협 가능한 조건)
+[절대 수용 불가능한 조건] (절대 수용할 수 없는 Red Line)
+
+- 타 페르소나를 공격하거나 반박하지 마십시오.
+- 반드시 위 5가지 대괄호 포맷([목표], [가장 기대하는 이익], [가장 우려하는 비용/위험], [수용 가능한 조건], [절대 수용 불가능한 조건])을 모두 포함하여 명확하게 작성하세요.
+"""
+
 def build_multi_party_prompt(
     role_prompt: str,
     site_information: str,
     rag_context: str,
     discussion_history: str,
-    css_level: str
+    css_level: str = "MEDIUM",
+    is_opening_statement: bool = False
 ) -> str:
     """
-    공통 프롬프트 + CSS 지침 + 역할별 프롬프트를 하나로 합성하는 헬퍼 함수
+    제공된 정보와 페르소나 특성을 조합하여 다자간 심의 시뮬레이션 프롬프트를 구성합니다.
+    is_opening_statement가 True일 경우 반박 없이 본인의 목표와 이익/비용만 말하도록 강제합니다.
     """
-    css_instruction = CSS_PROMPT_TEMPLATE.get(css_level.upper(), CSS_PROMPT_TEMPLATE["MEDIUM"])
-    
-    return f"""
+    if is_opening_statement:
+        # 모두발언 라운드: 조례 무시, 이해관계 피력 우선
+        prompt = f"""
+{OPENING_SYSTEM_PROMPT}
+
+{role_prompt}
+"""
+    else:
+        # 2라운드 이상: 정식 토론 (조례/데이터 기반, 갈등 민감도 적용)
+        css_prompt = CSS_PROMPT_TEMPLATE.get(css_level, CSS_PROMPT_TEMPLATE["MEDIUM"])
+        prompt = f"""
 {COMMON_SYSTEM_PROMPT.format(
     site_information=site_information,
     rag_context=rag_context,
     discussion_history=discussion_history
 )}
 
-{css_instruction}
+{css_prompt}
 
 {role_prompt}
 """
+    return prompt

@@ -29,11 +29,20 @@ class StakeholderCandidate(BaseModel):
     LLM이 안건 및 조례 분석 후 자동 추천하는 이해관계자 정보입니다.
     연관성/영향도가 높은 순서대로 나열됩니다.
     """
-    name: str = Field(..., description="이해관계자 명칭 (예: 후보지 인근 주민대표)")
+    stakeholder_id: str = Field(..., description="이해관계자 고유 식별자")
+    display_name: str = Field(..., description="이해관계자 명칭 (예: 후보지 인근 주민대표)")
     stakeholder_type: str = Field(..., description="이해관계자 유형 코드 (예: resident, merchant, officer)")
+
+    constituency: str = Field(..., description="이 페르소나가 누구를 대표하는지 구체적으로 설명")
     relationship_to_topic: str = Field(..., description="토론 주제와의 관계 및 영향성 설명")
     recommendation_reason: str = Field(..., description="LLM이 해당 이해관계자를 추천한 명확한 이유")
-    relevance_score: float = Field(default=0.9, description="안건과의 연관성/영향도 점수 (0.0 ~ 1.0, 높은 순 내림차순 정렬)")
+
+    related_candidate_ids: list[str] = Field(default_factory=list, description="관련된 후보지 ID 목록")
+    evidence_ids: list[str] = Field(default_factory=list, description="근거가 되는 공간 데이터 ID 목록")
+    ordinance_chunk_ids: list[str] = Field(default_factory=list, description="관련 조례 조항 ID 목록")
+
+    importance_score: float = Field(default=0.0, ge=0.0, le=1.0, description="안건과의 연관성/영향도 점수 (0.0 ~ 1.0)")
+    evidence_confidence: float = Field(default=0.0, ge=0.0, le=1.0, description="근거 신뢰도 (0.0 ~ 1.0)")
 
 
 class StakeholderModeInput(BaseModel):

@@ -3,35 +3,43 @@ from typing import List
 from pydantic import BaseModel, Field
 
 
-class Priority(BaseModel):
-    """
-    [우선순위 가중치 모델]
-    관심 분야별 중요도 기준 및 상대적 가중치(합 1.0 권장 또는 상대 점수)를 정의합니다.
-    """
-    criterion: str = Field(..., description="우선순위 평가 기준 (예: 주거 소음 방지, 상권 유동인구 확보)")
-    weight: float = Field(default=0.5, description="기준별 가중치 (0.0 ~ 1.0)")
-
-
 class PersonaConfig(BaseModel):
     """
-    [Phase 2 확장 PersonaConfig 데이터 모델]
-    중요도 등급(A~D), 참여 유형(필수/선택/참고), 관심사별 가중치 및 수용 불가 조건(Non-negotiable)이 확장된 페르소나 설정 객체입니다.
+    [PersonaConfig 데이터 모델]
+    실제 LLM이 역할을 수행하기 위한 실행 설정으로, StakeholderInterestProfile을 기반으로 생성됩니다.
     """
     persona_id: str = Field(..., description="페르소나 고유 식별자 (예: PERSONA-001)")
-    display_name: str = Field(..., description="화면 표시용 페르소나 명칭 (예: 후보지 인근 주민)")
-    stakeholder_type: str = Field(..., description="이해관계자 유형 (예: resident, merchant, officer)")
-    relationship_to_topic: str = Field(..., description="주제와의 관계 및 핵심 입장 배경")
+    stakeholder_id: str = Field(default="UNKNOWN", description="이해관계자 고유 식별자")
 
-    importance_grade: str = Field(default="A", description="이해관계자 중요도 등급 (A: 핵심, B: 주요, C: 참고, D: 단순관찰)")
-    participation_type: str = Field(default="essential", description="참여 유형 (essential: 필수, optional: 선택, reference: 참고)")
+    display_name: str = Field(..., description="화면 표시용 페르소나 명칭")
+    constituency: str = Field(default="일반", description="대표 집단")
+    relationship_to_topic: str = Field(default="이해관계 있음", description="주제와의 관계")
 
-    priorities: List[Priority] = Field(default_factory=list, description="관심사별 우선순위 가중치 목록")
-    interests: List[str] = Field(default_factory=list, description="주요 관심사 목록")
-    concerns: List[str] = Field(default_factory=list, description="주요 우려사항 목록")
-    
-    initial_position: str = Field(..., description="초기 기본 입장 (support, conditional_support, opposition, conditional_opposition)")
-    acceptable_conditions: List[str] = Field(default_factory=list, description="수용 가능한 협상/조정 조건 목록")
-    non_negotiable_conditions: List[str] = Field(default_factory=list, description="절대 수용 불가능한 조건 목록 (절대 조건)")
+    primary_goal: str = Field(default="최선의 결과 도출", description="가장 중요한 목표")
+    success_definition: List[str] = Field(default_factory=list, description="성공의 구체적 상태")
 
+    expected_benefits: List[str] = Field(default_factory=list, description="기대 이익")
+    expected_costs: List[str] = Field(default_factory=list, description="예상 비용/불편")
+    major_risks: List[str] = Field(default_factory=list, description="주요 위험")
+
+    protected_interests: List[str] = Field(default_factory=list, description="보호해야 할 가치/권익")
+    red_lines: List[str] = Field(default_factory=list, description="절대 수용할 수 없는 조건")
+    negotiable_conditions: List[str] = Field(default_factory=list, description="협상 가능한 조건")
+
+    spatial_focus_tags: List[str] = Field(default_factory=list, description="공간 관심 항목")
+    required_evidence_types: List[str] = Field(default_factory=list, description="필요 근거 유형")
+    preferred_metrics: List[str] = Field(default_factory=list, description="선호 지표")
+    unique_questions: List[str] = Field(default_factory=list, description="고유 질문")
+
+    decision_authority: str = Field(default="의견 제시", description="의사결정 권한 역할")
+    risk_tolerance: str = Field(default="보통", description="위험 수용 성향")
+    time_horizon: str = Field(default="단기", description="시간 관점")
+
+    likely_initial_position: str = Field(default="조건부 찬성/반대", description="초기 기본 입장")
+
+    related_candidate_ids: List[str] = Field(default_factory=list, description="관련 후보지 ID 목록")
     evidence_ids: List[str] = Field(default_factory=list, description="참조 근거 데이터 ID 목록")
     ordinance_chunk_ids: List[str] = Field(default_factory=list, description="참조 조례 청크 ID 목록")
+
+    human_approved: bool = Field(default=False, description="사용자 승인 여부")
+    human_modified_fields: List[str] = Field(default_factory=list, description="사용자가 직접 수정한 필드 목록")

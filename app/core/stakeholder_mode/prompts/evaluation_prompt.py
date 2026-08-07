@@ -19,5 +19,17 @@ EVALUATION_PROMPT = """
 평가를 바탕으로 최종적으로 논의에 참여해야 할 핵심 추천 이해관계자 후보를 5~8개 선정하여 반환하세요.
 
 [출력 형식]
-JSON 리스트 형태의 StakeholderCandidate 구조체 형식을 따르세요.
+반드시 아래 JSON 배열의 스키마를 준수하되, 템플릿의 설명문을 그대로 복사하지 말고 **평가 결과로 도출된 실제 데이터 값**을 채워넣어 출력하세요. 다른 텍스트는 출력하지 마세요.
+[
+    {{
+        "display_name": "실제 이해관계자 그룹 이름",
+        "stakeholder_type": "분류 태그 (resident, merchant, admin, expert 등)",
+        "relationship_to_topic": "주제와의 연관성 및 구체적인 영향",
+        "recommendation_reason": "이 그룹이 논의에 반드시 참여해야 하는 이유",
+        "importance_grade": "A, B, C 중 하나",
+        "evidence_confidence": "high, medium, low 중 하나",
+        "keywords": ["핵심", "키워드", "3개"]
+    }}
+]
 """
+
