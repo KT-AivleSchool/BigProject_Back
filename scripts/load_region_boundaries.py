@@ -19,7 +19,9 @@ import sys
 import io
 from pathlib import Path
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+# line_buffering: 리다이렉트(백그라운드 실행·로그 수집) 시에도 진행 상황이 즉시 보이게 한다.
+# 재래핑이 python -u 를 무력화하므로 여기서 다시 켜 준다.
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", line_buffering=True)
 
 import pandas as pd
 import geopandas as gpd
@@ -123,7 +125,8 @@ def main():
     if not SRC.exists():
         print(f"[중단] 원본 폴더 없음: {SRC}\n  region_data 를 이 경로에 배치 후 재실행하세요.")
         sys.exit(1)
-    with psycopg.connect(DSN) as conn:
+    # connect_timeout: 미지정 시 DB 부재를 260초(실측) 뒤에야 알려준다 — "느림"으로 오인된다.
+    with psycopg.connect(DSN, connect_timeout=10) as conn:
         if COMMIT:
             conn.cursor().execute(DDL.read_text(encoding="utf-8"))
             conn.commit()
