@@ -6,12 +6,15 @@ from app.services.hwpx_generator import build_hwpx_report
 router = APIRouter()
 
 class HwpxReportRequest(BaseModel):
+    parcel_id: Optional[int] = None
     candidate_jibun: str
     candidate_address: Optional[str] = None
     candidate_lat: float
     candidate_lng: float
     facility_type: str
     intensity_level: str
+    conflict_sensitivity_score: Optional[float] = None
+    conflict_factors: Optional[Dict[str, float]] = None
     ahp_weights: Dict[str, float]
     timestamp: str
     scenarios: List[Dict[str, Any]]
