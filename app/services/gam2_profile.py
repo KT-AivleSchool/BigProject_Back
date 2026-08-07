@@ -301,6 +301,17 @@ def _read_json(path: str, nrows: int | None = None) -> pd.DataFrame:
 
 
 def _read_sample(path: str, ext: str, nrows: int | None) -> pd.DataFrame:
+    # ── Redis 적재 데이터 1순위 조회 ──────────────────────────────────
+    try:
+        from app.utils.redis_data_seeder import get_dataset_from_redis
+        fname = os.path.basename(path)
+        domain = os.path.basename(os.path.dirname(os.path.normpath(os.path.dirname(path))))
+        redis_df = get_dataset_from_redis(domain, fname)
+        if redis_df is not None:
+            return redis_df.head(nrows) if nrows else redis_df
+    except Exception:
+        pass
+
     if ext == ".csv":
         return _read_csv(path, nrows)
     if ext in (".xlsx", ".xls"):

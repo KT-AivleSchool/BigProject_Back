@@ -52,12 +52,38 @@ from app.api.v1 import auth, audit, pipeline
 #       우리가 고치지 않고 **이슈로 넘긴다** — 인계 문서:
 #       obsidian 10_OmniSite/04_이슈/2026-08-04_GH이슈_import시점_외부접속.md
 
+import logging
+from contextlib import asynccontextmanager
+
+logger = logging.getLogger("uvicorn.error")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    [FastAPI Lifespan 생명주기 관리자]
+    서버 구동(Startup) 시 시연용 도메인 데이터(흡연 등)를 Redis에 Feather 바이너리로 자동 시딩하고
+    서버 종료 시 리소스를 정리합니다.
+    """
+    logger.info("🚀 [Startup] OmniSite Backend Server starting up...")
+    try:
+        from app.utils.redis_data_seeder import seed_domain_data_to_redis
+        res = seed_domain_data_to_redis("흡연")
+        logger.info(f"⚡ [Redis Seeding] 흡연 도메인 데이터 시딩 완료: {len(res)}개 항목")
+    except Exception as e:
+        logger.warning(f"⚠️ [Redis Seeding Warning] 시딩 중 경고: {e}")
+
+    yield
+
+    logger.info("🛑 [Shutdown] OmniSite Server shutting down...")
+
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     description="OmniSite 스마트시티 입지선정 및 공공갈등 예측 플랫폼 통합 백엔드 API",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # CORS 미들웨어 설정 (프론트엔드 Next.js 개발 서버 연동 허용)

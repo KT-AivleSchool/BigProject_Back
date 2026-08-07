@@ -21,7 +21,7 @@ services:
     container_name: omnisite-redis-cache
     ports:
       - "6379:6379"
-    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    command: redis-server --maxmemory 2gb --maxmemory-policy noeviction
     restart: always
 
 volumes:
