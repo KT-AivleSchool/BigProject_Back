@@ -7,6 +7,7 @@ router = APIRouter()
 
 class HwpxReportRequest(BaseModel):
     candidate_jibun: str
+    candidate_address: Optional[str] = None
     candidate_lat: float
     candidate_lng: float
     facility_type: str

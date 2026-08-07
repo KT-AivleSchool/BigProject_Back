@@ -1,5 +1,6 @@
 import io
 import zipfile
+import urllib.parse
 from datetime import datetime
 from typing import Dict, Any
 
@@ -7,7 +8,6 @@ def format_official_date(ts_str: str) -> str:
     """
     공문서 날짜 표기 표준 (2025/2026 행정업무운영 편람)
     형식: YYYY. M. D. (온점 뒤 띄어쓰기 필수)
-    예: 2026. 8. 6.
     """
     try:
         dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
@@ -18,7 +18,6 @@ def format_official_date(ts_str: str) -> str:
 def format_official_time(ts_str: str) -> str:
     """
     공문서 시간 표기 표준: 24시각제 (HH:MM)
-    예: 17:21
     """
     try:
         dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
@@ -28,10 +27,11 @@ def format_official_time(ts_str: str) -> str:
 
 def build_hwpx_report(data: Dict[str, Any]) -> bytes:
     """
-    공문서 작성 12대 표준 원칙(두문-본문-결문, YYYY. M. D., 1.-가.-1), 끝. 규칙)을
-    100% 준수한 HWPX 한글 표준 바이너리를 생성합니다.
+    이모지, 색상, 과도한 디자인 요소를 모두 배제하고
+    행정업무운영 편람 표준 규격에 따라 작성된 HWPX 한글 바이너리를 생성합니다.
     """
     candidate_jibun = data.get("candidate_jibun", "후보지 미지정")
+    candidate_address = data.get("candidate_address") or candidate_jibun
     facility_type = data.get("facility_type", "공공시설")
     lat = data.get("candidate_lat", 0.0)
     lng = data.get("candidate_lng", 0.0)
@@ -39,6 +39,10 @@ def build_hwpx_report(data: Dict[str, Any]) -> bytes:
     timestamp_raw = data.get("timestamp", "")
     ahp_weights = data.get("ahp_weights", {})
     scenarios = data.get("scenarios", [])
+
+    encoded_addr = urllib.parse.quote(candidate_address)
+    kakao_map_url = f"https://map.kakao.com/link/map/{encoded_addr},{lat},{lng}"
+    naver_map_url = f"https://map.naver.com/v5/search/{encoded_addr}"
 
     official_date = format_official_date(timestamp_raw)
     official_time = format_official_time(timestamp_raw)
@@ -57,7 +61,7 @@ def build_hwpx_report(data: Dict[str, Any]) -> bytes:
     content_hpf = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <package xmlns="http://www.hancom.co.kr/hwpml/2011/content" version="1.0">
     <metadata>
-        <title>입지 심의 및 평가 보고서</title>
+        <title>입지 심의 및 평가 결과 보고</title>
         <creator>스마트시티 입지심의위원회</creator>
     </metadata>
     <manifest>
@@ -76,7 +80,7 @@ def build_hwpx_report(data: Dict[str, Any]) -> bytes:
 </hh:head>
 """
 
-    # AHP 가중치 분석 항목 생성 (하위 항목 '1)', '2)' 형식)
+    # AHP 가중치 분석 항목
     ahp_rows_xml = ""
     for idx, (k, v) in enumerate(ahp_weights.items()):
         percentage = f"{v * 100:.1f}%({v:.2f})"
@@ -87,7 +91,7 @@ def build_hwpx_report(data: Dict[str, Any]) -> bytes:
             </hp:run>
         </hp:p>"""
 
-    # 시나리오 심의 평가 항목 생성 (하위 항목 '1)', '2)' 형식)
+    # 시나리오 심의 평가 항목
     scenario_xml = ""
     for idx, sc in enumerate(scenarios):
         sc_num = sc.get('scenario', '')
@@ -126,10 +130,10 @@ def build_hwpx_report(data: Dict[str, Any]) -> bytes:
         </hp:p>
         """
 
-    # 표준 공문서 (두문 - 본문 - 결문) XML
+    # 표준 공문서 (이모지/색상 전면 제거)
     section0_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph">
-    <!-- [두문 (Head)] -->
+    <!-- 두문 -->
     <hp:p id="1">
         <hp:run>
             <hp:t>스 마 트 시 티   입 지 심 의 위 원 회</hp:t>
@@ -156,7 +160,7 @@ def build_hwpx_report(data: Dict[str, Any]) -> bytes:
         </hp:run>
     </hp:p>
 
-    <!-- [본문 (Body)] -->
+    <!-- 본문 -->
     <hp:p id="6">
         <hp:run>
             <hp:t>1. 관련: 스마트시티 입지선정정책과-2026호({official_date})</hp:t>
@@ -168,7 +172,6 @@ def build_hwpx_report(data: Dict[str, Any]) -> bytes:
         </hp:run>
     </hp:p>
     
-    <!-- 가. 후보지 기본 정보 -->
     <hp:p id="8">
         <hp:run>
             <hp:t>  가. 후보지 기본 정보</hp:t>
@@ -176,31 +179,35 @@ def build_hwpx_report(data: Dict[str, Any]) -> bytes:
     </hp:p>
     <hp:p id="9">
         <hp:run>
-            <hp:t>    1) 후보지 명칭: {candidate_jibun}</hp:t>
+            <hp:t>    1) 후보지 명칭 및 대상 시설: {candidate_jibun} ({facility_type})</hp:t>
         </hp:run>
     </hp:p>
     <hp:p id="10">
         <hp:run>
-            <hp:t>    2) 대상 시설: {facility_type}</hp:t>
+            <hp:t>    2) x, y 좌표 (위경도): 위도 {lat:.6f}, 경도 {lng:.6f}</hp:t>
         </hp:run>
     </hp:p>
     <hp:p id="11">
         <hp:run>
-            <hp:t>    3) 위경도 좌표: {lat:.4f}, {lng:.4f}</hp:t>
+            <hp:t>    3) x, y 좌표 변환 주소: {candidate_address}</hp:t>
         </hp:run>
     </hp:p>
     <hp:p id="12">
         <hp:run>
-            <hp:t>    4) 수요 강도 수준: {intensity_level}</hp:t>
+            <hp:t>    4) 카카오지도 핀 연결 URL: {kakao_map_url}</hp:t>
         </hp:run>
     </hp:p>
     <hp:p id="13">
         <hp:run>
-            <hp:t>    5) 심의 일시: {official_date} {official_time}</hp:t>
+            <hp:t>    5) 네이버지도 핀 연결 URL: {naver_map_url}</hp:t>
+        </hp:run>
+    </hp:p>
+    <hp:p id="13_2">
+        <hp:run>
+            <hp:t>    6) 수요 강도 수준 및 심의 일시: {intensity_level} / {official_date} {official_time}</hp:t>
         </hp:run>
     </hp:p>
 
-    <!-- 나. 시나리오 심의 평가 및 종합 의견 -->
     <hp:p id="14">
         <hp:run>
             <hp:t>  나. 시나리오 심의 평가 및 종합 의견</hp:t>
@@ -208,7 +215,6 @@ def build_hwpx_report(data: Dict[str, Any]) -> bytes:
     </hp:p>
     {scenario_xml}
 
-    <!-- 다. AHP 지표별 가중치 분석 -->
     <hp:p id="15">
         <hp:run>
             <hp:t>  다. AHP 지표별 가중치 분석</hp:t>
@@ -216,7 +222,6 @@ def build_hwpx_report(data: Dict[str, Any]) -> bytes:
     </hp:p>
     {ahp_rows_xml}
 
-    <!-- 붙임 및 끝. 규정 적용 -->
     <hp:p id="20">
         <hp:run>
             <hp:t>붙임  1. 입지분석 데이터 및 AHP 산출 내역서 1부.  끝.</hp:t>
@@ -228,7 +233,7 @@ def build_hwpx_report(data: Dict[str, Any]) -> bytes:
         </hp:run>
     </hp:p>
 
-    <!-- [결문 (Tail)] -->
+    <!-- 결문 -->
     <hp:p id="22">
         <hp:run>
             <hp:t>스 마 트 시 티 입 지 심 의 위 원 장</hp:t>
