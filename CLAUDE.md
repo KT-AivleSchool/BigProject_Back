@@ -49,7 +49,8 @@ MVP: 용산구 흡연부스 / 2차: 성동구 재활용정거장.
 | **읽기인 줄 알았는데 쓰기** | 검증하려고 별도 프로세스에서 `pipeline_runner.read_status()` 를 부르면 그 안의 **`_reap_orphans()`** 가 돈다. 새 프로세스는 `_SERVER_BOOT` 가 now 라 **남이 실행 중인 run 을 `failed` 로 닫는다.** 2026-08-05 23:16, 프런트가 돌리던 `r_20260805_022` 를 밟기 직전에 멈췄다 | 재시작만 위험한 게 아니다. **out-of-process 로 러너 함수를 부르기 전에 `runs/*/status.json` 을 직접 읽어 활성 run 을 센다.** 함수명이 `read_` 여도 부작용이 있을 수 있다 |
 | **대조기가 없는 키를 읽음** | `report.json` 실제 키는 `counts`·`data_gap`·`topn` 인데 `후보수`·`gap`·`topN` 으로 읽어 `None == None`·`[] == []` 로 **전 항목 통과**. 아무것도 안 본 채 초록불이 떴다 | 비교 항목이 **비면 멈춘다**(`SystemExit`). 가짜 초록불은 회귀보다 나쁘다 — 그 뒤 모든 판단의 근거가 된다 |
 | **브랜치마다 따로 돌린 ruff** | 2026-08-06 통합에서 충돌 8건 중 **7건이 로직이 아니라 포맷**이었다. 브랜치 둘이 각자 `ruff format` 을 돌려(455b1f6 / 6d40676·dd058ae) 같은 코드가 서로 다른 모양이 됐다. 정본 `gam2_weight_model.py` 는 1714줄 ↔ 1439줄로 갈렸는데 **의미 차이는 0**이다. 줄 수만 보면 대형 개편으로 읽힌다 | 충돌 파일은 줄 수가 아니라 **AST 로 대조**한다. 자리표시자 없는 `f""` → `""`, `import a, b` 분해, 미사용 import 제거까지 정규화하면 남는 게 진짜 차이다. 이번엔 그러고 나니 **본문이 전부 동일**했고 진짜 충돌은 `test_api_client.py` 1건뿐이었다 |
-| **도커 크래시 → 인증만 깨짐** | 2026-08-07 Docker Desktop 하드 크래시 뒤 로더가 `password authentication failed for user "postgres"` 로 죽었다. `.env` 도 `POSTGRES_PASSWORD` 도 `postgres` 인데 **컨테이너 안에서 TCP 로 붙어도** 실패했다. 로그에 `database system was not properly shut down` + `invalid record length` — WAL 이 잘리며 `pg_authid` 의 SCRAM 검증자가 선언값과 어긋났다. **데이터는 멀쩡해서**(44,459행 geom 전부 유효) 원인을 클라이언트에서 찾게 된다 | 클라이언트를 의심하기 전에 **서버에서 재라.** `pg_hba` 의 `local trust` 로 들어가 `ALTER USER postgres WITH PASSWORD '...'` 로 선언값 복구. 확신이 필요하면 `pg_authid.rolpassword` 의 SCRAM 검증자를 PBKDF2 로 직접 계산해 후보와 대조한다 |
+| 🔴 **인증 실패를 「크래시 탓」으로 오진** | 2026-08-07 로더가 `password authentication failed for user "postgres"` 로 죽었다. 로그에 `not properly shut down` + `invalid record length` 가 같이 있어 **WAL 손상으로 SCRAM 검증자가 깨졌다**고 결론짓고 `ALTER USER ... PASSWORD 'postgres'` 로 되돌렸다. **틀렸다.** 실제로는 그 전에 **외부 침입**이 있었다(08-07 11:39 무차별 대입 20회 → 14:12 `DROP DATABASE omnisite` → 랜섬 노트). 되돌린 비번이 다시 `postgres` 라 **문을 다시 열어준 셈**이다. 그때도 `docker logs` 를 읽었지만 `FATAL` 만 grep 해서 `sh: 1: wget: not found` 줄을 못 봤다 — **찾는 패턴 밖의 증거는 보고도 못 본다** | 인증 실패가 **연속으로** 뜨면 먼저 **누가 시도했는지**를 본다: `docker logs <c> \| grep -E "authentication failed\|sh:\|DROP DATABASE"`. 서버 내부(WAL·SCRAM)만 후보에 올리면 **바깥에서 들어온 가능성**이 아예 안 보인다. 상세: `04_이슈\2026-08-08_로컬DB_랜섬웨어_침해사고.md` |
+| 🔴 **컨테이너 포트 기본 노출** | 위 침입의 **진짜 원인.** `ports: "5432:5432"` 는 앞에 IP 가 없으면 **`0.0.0.0` = 전 인터넷 공개**다. 비번은 `postgres`, Redis 는 인증 자체가 없었다. 두 조건이 겹치면 뚫리는 데 필요한 건 **시간뿐**이다. `.env.example` 에도 `postgres:postgres` 가 예시로 박혀 있어 **예시값이 곧 실사용값**이 됐다 | `ports` 는 항상 **`127.0.0.1:` 을 붙인다.** 비밀번호는 compose 에 기본값을 두지 않고 `${VAR:?메시지}` 로 **없으면 기동을 실패시킨다** — 기본값이 있으면 빠뜨렸을 때 조용히 약한 암호로 뜬다(원칙 1). 점검: `netstat -ano \| grep LISTENING \| grep -E ":5432\|:6379"` 에 `0.0.0.0` 이 보이면 열린 것 |
 | **libpq 무타임아웃** | 위 건에서 도커가 아예 죽었을 땐 `psycopg.connect(DSN)` 이 **260초**를 기다렸다(실측). 원시 TCP 는 2초에 `ConnectionRefused` 인데 libpq 만 안 끝난다 → 사용자에겐 "느린 스크립트"로 보인다. 60초 타임아웃으로 재고 "무한 대기"라 단정한 것도 틀렸다(원칙 5) | `connect_timeout` 을 **명시**한다(`scripts/load_region_boundaries.py` 는 10초, 실측 12초에 종료). 기다림은 실패로 드러나야 한다 |
 | **stdout 재래핑이 `-u` 를 무력화** | 같은 스크립트가 `sys.stdout = io.TextIOWrapper(...)` 로 다시 감싸 **`python -u` 가 안 먹었다.** 백그라운드로 돌리니 출력 파일이 끝까지 비어 진행 상황을 알 수 없었다 | 재래핑할 땐 `line_buffering=True` 를 같이 준다. 진행이 안 보이면 멈춘 건지 도는 건지 구분할 수 없다 |
 
@@ -267,6 +268,8 @@ D:\obsidian_claude\10_OmniSite\
   02_작업일지\2026-08-07.md           ← **최근** DB 스택 이관 · 경계 3종 적재 · PR #217 분석
   배포후_작업일지\20260807_PR217_sim_ai_충돌_동현_민영.md
                                      ← sim_ai 충돌 = 동현님↔민영님 작업물 충돌. 두 분께 전달
+  배포후_작업일지\20260807_PR217_파일별_문제와_수정안.md
+                                     ← 위 문서의 **처치 계획**. 파일 10건 각각 무슨 문제·어떻게 고칠지
   배포후_작업일지\백엔드_더미데이터.md ← 커밋된 더미·중복 48.63MB 목록. 정리는 민영님 병합 **후**
   02_작업일지\2026-08-06.md           ← 통합 (동현님 STEP5·6 PR #211 · DB팀 PR #216)
                                        충돌 8건 중 7건이 ruff 포맷 · AST 대조로 판정한 근거
@@ -289,6 +292,9 @@ D:\obsidian_claude\10_OmniSite\
   01_설계결정\백엔드팀_API현황_및_Redis_Postgres_전환.md
                                     ← **백엔드팀 전달용** (2026-08-05). 살아 있는 API 9개 실측 ·
                                        schema.sql↔ORM 불일치 · Postgres/Redis 전환 판단표
+  04_이슈\2026-08-08_로컬DB_랜섬웨어_침해사고.md  ← 🔴 **먼저 읽을 것.** 로컬 Postgres 가
+                                       0.0.0.0 + 비번 postgres 로 뚫려 DB 가 삭제됐다.
+                                       타임라인·처치·팀 전파 문구·점검 명령
   04_이슈\2026-08-05_GH이슈_PostGIS_공간연산전환_중단.md  ← S5 중단 근거(팀 공유용)
   01_설계결정\프런트_설계.md            ← 프런트 세션이 쓴다. 화면↔산출물 대응·rewrite 경계
   작업 노트\배제구역_점면판정_지목배수.md  ← S9
