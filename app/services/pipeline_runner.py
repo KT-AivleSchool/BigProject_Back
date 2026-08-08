@@ -62,6 +62,11 @@ _LOCK = threading.Lock()
 # status.json 쓰기 직렬화. 실행 스레드·폴링(_reap_orphans)·게이트 답변이 동시에 쓴다.
 # Windows 의 os.replace 는 대상이 열려 있으면 PermissionError 로 터진다.
 _IO_LOCK = threading.Lock()
+# 🔴 위 락으로 **부족하다.** 읽는 쪽은 락 밖이라 폴링이 status.json 을 열고 있으면
+#    os.replace 가 거부된다(WinError 5). 읽기는 순간이니 짧게 재시도하면 넘어간다.
+#    상한 7 × 25ms = 175ms — 그 안에 안 되면 일시적 경합이 아니므로 raise 한다.
+_REPLACE_RETRIES = 8
+_REPLACE_BACKOFF_S = 0.025
 # 이 서버 프로세스가 **지금** 돌리고 있는 것. domain -> run_id
 #   409 판정을 파일이 아니라 이걸로 한다. 서버가 죽으면 비므로,
 #   죽은 서버가 남긴 status.json 이 새 실행을 영원히 막지 않는다.
@@ -155,12 +160,28 @@ def _write_status(run_id: str, doc: dict) -> None:
        쓰면 한쪽이 아직 쥐고 있는 파일을 다른 쪽이 replace 하려다 Windows 에서
        PermissionError 로 터진다(WinError 32). 실행 스레드와 폴링이 겹치는 건
        예외가 아니라 **정상 동작**이다.
+
+    🔴 그래도 os.replace 는 터진다 — 락은 **쓰는 쪽끼리만** 직렬화한다(2026-08-08 실측).
+       읽는 쪽(`read_status` → `_reap_orphans` 가 `runs/*/status.json` 을 **전수 스캔**한다)은
+       이 락 밖이고, 파이썬 `open()` 은 `FILE_SHARE_DELETE` 를 안 준다 → **누가 읽고 있는
+       동안엔 replace 가 거부된다.** 예상했던 WinError 32(사용 중)가 아니라 **WinError 5**
+       (액세스 거부)로 온다 — 번호가 달라 안 걸렸다.
+       `r_20260808_001` 이 이걸로 시작 같은 초에 죽었다. 읽기는 순간이므로 짧게
+       재시도하면 넘어간다. 끝내 안 되면 **raise 한다** — 조용히 넘기면 status 가
+       옛 값인 채로 남아 거짓말을 한다(원칙 1·4).
     """
     p = _status_path(run_id)
     tmp = p.with_suffix(f".json.{threading.get_ident()}.tmp")
     with _IO_LOCK:
         tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(tmp, p)
+        for attempt in range(_REPLACE_RETRIES):
+            try:
+                os.replace(tmp, p)
+                return
+            except PermissionError:
+                if attempt == _REPLACE_RETRIES - 1:
+                    raise
+                time.sleep(_REPLACE_BACKOFF_S)
 
 
 def read_status(run_id: str) -> dict | None:
@@ -608,10 +629,18 @@ def _execute(run_id: str, domain: str, mode: str, start: int = 0) -> None:
             #    있게 되고, 두 run 이 같은 정본 캐시·데이터를 동시에 건드린다.
             doc["finished_at"] = _now_iso()
             _refresh_artifacts(doc)
-            _write_status(run_id, doc)
+            # 🔴 자원 반납을 상태 기록보다 **먼저** 한다(2026-08-08).
+            #    _write_status 는 터질 수 있다(위 WinError 5). 뒤에 두면 기록이
+            #    실패한 순간 예외가 나서 여기까지 못 오고, 그 도메인은 서버를
+            #    재시작할 때까지 409 로 잠긴다 — 409 는 파일이 아니라 _ACTIVE 로
+            #    판정하므로 status.json 을 손으로 고쳐도 안 풀린다.
+            #    기록 실패와 자원 반납이 같이 묶일 이유가 없다.
+            #    (자식 프로세스는 이미 끝났고 새 run 은 다른 run_id·다른 폴더를
+            #     쓰므로, 여기서 먼저 풀어도 두 run 이 겹치지 않는다)
             with _LOCK:
                 if _ACTIVE.get(domain) == run_id:
                     _ACTIVE.pop(domain, None)
+            _write_status(run_id, doc)
 
 
 class _StepFailed(Exception):

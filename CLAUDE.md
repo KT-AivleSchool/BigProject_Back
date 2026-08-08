@@ -44,7 +44,9 @@ MVP: 용산구 흡연부스 / 2차: 성동구 재활용정거장.
 | **전이 의존 버전 이동** | `pip install langchain-openai` 가 `openai` 를 2.44→2.53 으로 말없이 올렸다. `sse-starlette` 은 `starlette` 0.37→1.3 을 시도(막힘). **감시 목록 밖이라 안 보인다** | `pip install -c constraints.txt` + `--dry-run` 선행. 사후엔 `pip freeze` **전체 diff** — 5개만 보면 놓친다 |
 | **커밋했는데 절반만 돈다** | `3cc73ff` 후에도 서버가 **기동 14:16 / 커밋 18:03** 인 옛 프로세스였다(`--reload` 없음). 그런데 `run_weight_model.py` 는 **자식 프로세스라 즉시 새 코드**, `pipeline_runner.py` 는 **import 라 옛 코드** → 새 인자를 안 넘겨 `argparse` 기본값이 들어갔다. 안 터지고 값만 틀린다 | "고쳤다"고 말하기 전에 **프로세스 기동 시각 ↔ 커밋 시각**을 비교한다. 자식 CLI 와 임포트 모듈은 **반영 시점이 다르다** |
 | **시각 정밀도 불일치** | `_SERVER_BOOT` 는 마이크로초인데 `started_at` 은 `timespec="seconds"` → 부팅과 **같은 초**에 시작된 run 을 `_reap_orphans` 가 "이전 서버의 고아"로 보고 실행 중에 `failed` 로 닫았다. uvicorn 으로는 부팅·요청 간격 때문에 **한 번도 안 나타난다** | 비교하는 두 값의 **절삭 단위를 맞춘다**. "실서버에서 안 나오니 없는 버그"가 아니다 — in-process 로도 돌려본다 |
-| **같은 이름의 다른 스키마** | `schema.sql` 과 ORM 이 테이블명은 같은데 컬럼이 다르다. 공통 14개 중 11개는 완전 일치이고 `conflict_simulations`·`verified_precedents` 만 갈리는데 **하필 `/audit/*` 이 쓰는 둘.** `ConflictSimulation.parcel_id` 는 `ForeignKey("parcels.id")` 인데 `parcels` 가 SQL 에 없다. 이름이 같아 **`SELECT` 를 짤 때까지 안 보인다** | 이름이 아니라 **컬럼 집합**을 대조한다(`Base.metadata` ↔ `schema.sql` 파싱). 스크립트는 `01_설계결정\백엔드팀_API현황_및_Redis_Postgres_전환.md` §10-1 |
+| **같은 이름의 다른 스키마** | `schema.sql` 과 ORM 이 테이블명은 같은데 컬럼이 다르다. 공통 14개 중 11개는 완전 일치이고 `conflict_simulations`·`verified_precedents` 만 갈리는데 **하필 `/audit/*` 이 쓰는 둘.** 이름이 같아 **`SELECT` 를 짤 때까지 안 보인다** | 이름이 아니라 **컬럼 집합**을 대조한다(`Base.metadata` ↔ `schema.sql` 파싱). 스크립트는 `01_설계결정\백엔드팀_API현황_및_Redis_Postgres_전환.md` §10-1 |
+| 🔴 **대조 대상이 둘인 줄 알았는데 셋** | 위 항목의 확장(2026-08-08 실측, 정정). `conflict_simulations` 는 **ORM·`schema.sql`·실제 DB 가 전부 다르다.** 필지 참조 컬럼이 `parcel_id`(FK `booth_candidates.id`) / `cadastral_land_id` / `candidate_land_id` 로 셋 다 이름도 대상도 다르고, **공통 컬럼은 `id`·`created_at` 둘뿐**이다. 위 항목이 적어둔 `ForeignKey("parcels.id")` 도 `merge_Back` 에선 틀렸다 → `booth_candidates.id`. `/simulation(s)/results/{id}` 가 **500**(`UndefinedColumnError`)이고, 쓰기(`simulations.py:492`)는 예외를 `print` 로 삼켜 **조용히 실패**한다(원칙 1·4) | `schema.sql` 이 현행이라고 가정하지 않는다 — **실제 DB 를 `\d` 로 직접 본다.** 시드를 뜬 기준이 저장소 SQL 과 다를 수 있다. 상세: `배포후_작업일지\20260808_파이프라인_실행중단_WinError5.md` §B |
+| 🔴 **실패를 기록하는 코드가 같은 함수로 실패한다** | `r_20260808_001` 이 시작 **같은 초**에 죽었는데 `status.json` 엔 25분 뒤 `_reap_orphans` 의 일반 메시지만 남았다. 진짜 사인은 `status.json.7652.tmp` 에만 있었다 — `PermissionError [WinError 5]` on `os.replace`. `_write_status`(`:161`)는 **쓰기만** `_IO_LOCK` 인데 `read_status`→`_reap_orphans`(`:209`)가 `runs/*/status.json` 39개를 **락 밖에서** 연다(프런트 폴러 2개 × 초당 ~1.2회). 더 나쁜 건 `finally`(`:611`)가 **같은 `_write_status`** 를 써서 실패 기록도 못 하고 `_ACTIVE.pop`(`:613`)까지 못 간다 → 그 도메인은 **재시작 전까지 409**. `_ACTIVE` 판정이라 **파일을 손으로 고쳐도 안 풀린다** | 정리 코드는 **터질 수 있는 호출 뒤에 두지 않는다** — 자원 반납을 기록보다 먼저 한다. Windows `open()` 은 `FILE_SHARE_DELETE` 를 안 줘서 **읽는 중에도** `os.replace` 가 터진다(예상했던 `WinError 32` 가 아니라 **5**). 쓰기끼리만 직렬화하는 건 방어가 아니다. `runs/` 가 쌓일수록 확률이 오른다(사고 당시 39개·1.3GB). **✅ 2026-08-08 수정됨** — `os.replace` 재시도(8×25ms, 끝내 안 되면 `raise`) + `_ACTIVE.pop`(`:642`)을 `_write_status`(`:643`) **앞으로**. 폴러 2개·69회 폴링으로 사고 조건 재현하며 완주, 픽스처 57/57. 🔴 단 `_reap_orphans` 의 **전수 스캔은 그대로**다 — 증상만 막았다 |
 | **선언만 있는 ORM** | 모델 17개 중 **13개가 `app/db/models/` 밖에서 참조 0회**. 공간 13종은 테이블이 비어 있고 파이프라인은 파일로 읽는다. "모델이 있으니 적재돼 있겠지" 로 읽힌다 | 참조 횟수를 센다. **있는 것과 쓰이는 것은 다르다** |
 | **읽기인 줄 알았는데 쓰기** | 검증하려고 별도 프로세스에서 `pipeline_runner.read_status()` 를 부르면 그 안의 **`_reap_orphans()`** 가 돈다. 새 프로세스는 `_SERVER_BOOT` 가 now 라 **남이 실행 중인 run 을 `failed` 로 닫는다.** 2026-08-05 23:16, 프런트가 돌리던 `r_20260805_022` 를 밟기 직전에 멈췄다 | 재시작만 위험한 게 아니다. **out-of-process 로 러너 함수를 부르기 전에 `runs/*/status.json` 을 직접 읽어 활성 run 을 센다.** 함수명이 `read_` 여도 부작용이 있을 수 있다 |
 | **대조기가 없는 키를 읽음** | `report.json` 실제 키는 `counts`·`data_gap`·`topn` 인데 `후보수`·`gap`·`topN` 으로 읽어 `None == None`·`[] == []` 로 **전 항목 통과**. 아무것도 안 본 채 초록불이 떴다 | 비교 항목이 **비면 멈춘다**(`SystemExit`). 가짜 초록불은 회귀보다 나쁘다 — 그 뒤 모든 판단의 근거가 된다 |
@@ -52,6 +54,7 @@ MVP: 용산구 흡연부스 / 2차: 성동구 재활용정거장.
 | 🔴 **인증 실패를 「크래시 탓」으로 오진** | 2026-08-07 로더가 `password authentication failed for user "postgres"` 로 죽었다. 로그에 `not properly shut down` + `invalid record length` 가 같이 있어 **WAL 손상으로 SCRAM 검증자가 깨졌다**고 결론짓고 `ALTER USER ... PASSWORD 'postgres'` 로 되돌렸다. **틀렸다.** 실제로는 그 전에 **외부 침입**이 있었다(08-07 11:39 무차별 대입 20회 → 14:12 `DROP DATABASE omnisite` → 랜섬 노트). 되돌린 비번이 다시 `postgres` 라 **문을 다시 열어준 셈**이다. 그때도 `docker logs` 를 읽었지만 `FATAL` 만 grep 해서 `sh: 1: wget: not found` 줄을 못 봤다 — **찾는 패턴 밖의 증거는 보고도 못 본다** | 인증 실패가 **연속으로** 뜨면 먼저 **누가 시도했는지**를 본다: `docker logs <c> \| grep -E "authentication failed\|sh:\|DROP DATABASE"`. 서버 내부(WAL·SCRAM)만 후보에 올리면 **바깥에서 들어온 가능성**이 아예 안 보인다. 상세: `04_이슈\2026-08-08_로컬DB_랜섬웨어_침해사고.md` |
 | 🔴 **컨테이너 포트 기본 노출** | 위 침입의 **진짜 원인.** `ports: "5432:5432"` 는 앞에 IP 가 없으면 **`0.0.0.0` = 전 인터넷 공개**다. 비번은 `postgres`, Redis 는 인증 자체가 없었다. 두 조건이 겹치면 뚫리는 데 필요한 건 **시간뿐**이다. `.env.example` 에도 `postgres:postgres` 가 예시로 박혀 있어 **예시값이 곧 실사용값**이 됐다 | `ports` 는 항상 **`127.0.0.1:` 을 붙인다.** 비밀번호는 compose 에 기본값을 두지 않고 `${VAR:?메시지}` 로 **없으면 기동을 실패시킨다** — 기본값이 있으면 빠뜨렸을 때 조용히 약한 암호로 뜬다(원칙 1). 점검: `netstat -ano \| grep LISTENING \| grep -E ":5432\|:6379"` 에 `0.0.0.0` 이 보이면 열린 것 |
 | **libpq 무타임아웃** | 위 건에서 도커가 아예 죽었을 땐 `psycopg.connect(DSN)` 이 **260초**를 기다렸다(실측). 원시 TCP 는 2초에 `ConnectionRefused` 인데 libpq 만 안 끝난다 → 사용자에겐 "느린 스크립트"로 보인다. 60초 타임아웃으로 재고 "무한 대기"라 단정한 것도 틀렸다(원칙 5) | `connect_timeout` 을 **명시**한다(`scripts/load_region_boundaries.py` 는 10초, 실측 12초에 종료). 기다림은 실패로 드러나야 한다 |
+| **요약표 한 칸만 읽음** | 2026-08-08. 데이터팀 스키마(#205)를 보고 "크로스워크 코드 3체계를 `region_code` 하나로 접었다"고 되묻기를 적었다. **틀렸다** — `schema_region_boundaries.sql:72-84` 에 세 컬럼이 다 있고 인덱스도 2개다. 이슈 요약표의 `PK/키` 칸만 읽고 **같은 표의 `주요 컬럼` 칸도, 우리 저장소 루트에 있는 DDL 도 안 열었다.** 같은 건에서 "3,559−3,555=4건이 조용히 사라진다"도 틀렸다: 미매칭은 **6건**(뺄셈≠미매칭, 부분집합이 아니다)이고 전부 서울 밖이며 **#205 본문이 이미 답해놨다** | 남의 요약을 근거로 삼지 않는다. **원본(DDL·코드)이 우리 저장소에 있으면 그걸 연다.** 집합 차이는 뺄셈이 아니라 **교집합·차집합을 실제로 센다.** 되묻기를 적기 전에 **상대 본문을 끝까지 읽는다** — 이미 답한 걸 물으면 문서 전체를 안 믿게 된다 |
 | **stdout 재래핑이 `-u` 를 무력화** | 같은 스크립트가 `sys.stdout = io.TextIOWrapper(...)` 로 다시 감싸 **`python -u` 가 안 먹었다.** 백그라운드로 돌리니 출력 파일이 끝까지 비어 진행 상황을 알 수 없었다 | 재래핑할 땐 `line_buffering=True` 를 같이 준다. 진행이 안 보이면 멈춘 건지 도는 건지 구분할 수 없다 |
 
 ---
@@ -265,7 +268,14 @@ S9 증가분의 출처: `01 금연구역` 0.0245→0.6325(학·공 55점이 면 
 ```
 D:\obsidian_claude\10_OmniSite\
   남은 작업들\00_남은작업.md          ← S1~S12 전체. 여기부터
-  02_작업일지\2026-08-07.md           ← **최근** DB 스택 이관 · 경계 3종 적재 · PR #217 분석
+  배포후_작업일지\20260808_파이프라인_실행중단_WinError5.md
+                                     ← **최근.** ⓐ run 이 조용히 죽고 도메인이 409 로
+                                       잠기던 건(os.replace WinError 5) — **수정·검증 완료**
+                                       🔴 ⓑ 화면5·6 엔드포인트 **6개 전부 500** — 결함이
+                                       **3개** 겹쳤다: conflict_simulations 3중 불일치 ·
+                                       `scalar_first` 없는 메서드 · weasyprint GTK 미설치.
+                                       하나만 고치면 다시 500 이다. **미수정(화면5 담당 몫)**
+  02_작업일지\2026-08-07.md           ← DB 스택 이관 · 경계 3종 적재 · PR #217 분석
   배포후_작업일지\20260807_PR217_sim_ai_충돌_동현_민영.md
                                      ← sim_ai 충돌 = 동현님↔민영님 작업물 충돌. 두 분께 전달
   배포후_작업일지\20260807_PR217_파일별_문제와_수정안.md
@@ -318,9 +328,14 @@ D:\obsidian_claude\10_OmniSite\
                         라우터도 붙었다 — `/upload/regulation` 외 2개.
                         남은 것은 gam2_doc_extract.py + gam2_ordinance_select.py
                         배선(#203)이다
-⬜ 이슈 #205 되묻기      admin_crosswalk `region_code` 가 통계청/행자부 중 뭔지 ·
-                        adm_dong 3,559 ↔ crosswalk 3,555 = 4건 차이 ·
-                        경계는 통계청 코드인데 우리는 행자부 → 크로스워크 경유 강제
+⬜ 이슈 #205 되묻기      **3건 → 1건.** 2026-08-08 실측으로 3건 다 철회했다
+                        (근거: `02_작업일지\2026-08-04b.md` §7-2). DDL 은 세 코드를
+                        다 들고 있었고, 미매칭은 4가 아니라 6이며 전부 서울 밖이고
+                        **#205 본문이 이미 답해놨다**
+                        남은 1건 = `national_owned_properties`(schema_cleaned_data.sql)
+                        ↔ `national_properties`(schema_cleaned_data_add.sql) **중복 정의.**
+                        같은 원본(국유부동산_위경도.csv 2,486행)이 컬럼명만 다르게 두 번.
+                        둘 다 있으니 에러가 안 난다 — 정본을 정해야 한다
 ⬜ 조문 선별 검증        app\tools\check_ordinance_select.py 재활용 — 누락 조문 확인
 ⬜ 인용 법령 한정        규제 조문에서만 추출 (한 줄, 크레딧 절약)
 ⬜ 성동구 완주           OpenAI 크레딧 충전 후
