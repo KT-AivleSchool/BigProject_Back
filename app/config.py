@@ -29,7 +29,7 @@ except ImportError:
 # ══════════════════════════════════════════════════════════════════
 # 1. 비밀값 — .env 에서 로드 (코드/설정에 값 자체는 두지 않음)
 # ══════════════════════════════════════════════════════════════════
-VWORLD_KEY = os.environ.get("VWORLD_KEY", "")
+VWORLD_KEY = os.environ.get("VWORLD_KEY") or os.environ.get("VWORLD_API_KEY", "")
 DATA_GO_KR_KEY = os.environ.get("DATA_GO_KR_KEY", "")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 LAW_GO_KR_OC = os.environ.get("LAW_GO_KR_OC", "")  # 법제처 국가법령정보 OC값(조례 취득)
@@ -136,7 +136,12 @@ STEP3_OUTPUT_DIR = os.environ.get("OMNISITE_STEP3_DIR", str(DATA_ROOT / "step3_o
 STEP4_OUTPUT_DIR = os.environ.get("OMNISITE_STEP4_DIR", str(DATA_ROOT / "step4_output"))
 
 # 캐시 폴더(배제반경 등 재사용 캐시). 결과물과 분리 관리.
-SEARCH_CACHE_DIR = os.environ.get("OMNISITE_CACHE_DIR", str(DATA_ROOT / "search_cache"))
+_target_cache = DATA_ROOT / "search_cache"
+_fallback_cache = BASE_DIR / "data_임시" / "search_cache"
+SEARCH_CACHE_DIR = os.environ.get(
+    "OMNISITE_CACHE_DIR",
+    str(_target_cache if _target_cache.exists() else _fallback_cache)
+)
 EXCLUSION_CACHE_PATH = os.path.join(SEARCH_CACHE_DIR, "exclusion_radius_cache.json")
 # 지목 판정 캐시(시설별). 지목 부호는 법정 표준이라 지적도가 갱신돼도 유지된다.
 JIMOK_CACHE_PATH = os.path.join(SEARCH_CACHE_DIR, "jimok_role_cache.json")
