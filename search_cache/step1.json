@@ -1,0 +1,9 @@
+{
+  "흡연_audit_result": {
+    "facility": "흡연부스",
+    "status": "reviewed"
+  },
+  "흡연_enriched": {
+    "exclusions": []
+  }
+}

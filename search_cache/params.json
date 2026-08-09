@@ -1,0 +1,13 @@
+{
+  "흡연부스": {
+    "alpha": 0.3,
+    "decay": {
+      "func": "gaussian",
+      "sigma_ratio": 0.3333333333333333
+    },
+    "scale": "log",
+    "candidates": "흡연_후보_지적도필지.gpkg",
+    "spacing": 20,
+    "cli": "run_pipeline → hitl → clean_data → make_parcel_candidates --facility 흡연부스 --region '서울특별시 용산구' → run_weight_model --decay gaussian --scale log --radius '07+02=150,06+03=300,08=50,09=150,10=250' → gam4_site_select --spacing 20 --curve-n 100"
+  }
+}

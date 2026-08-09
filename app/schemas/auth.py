@@ -13,9 +13,18 @@ class UserLogin(BaseModel):
 
 
 class TokenResponse(BaseModel):
-    access_token: str = Field(..., description="JWT Access Token")
+    access_token: str = Field(..., description="JWT Access Token (유효기간 15분)")
+    refresh_token: str | None = Field(None, description="JWT Refresh Token (유효기간 7일)")
     token_type: str = Field("bearer", description="토큰 타입")
-    expires_in_minutes: int = Field(..., description="토큰 만료 시간")
+    expires_in_minutes: int = Field(..., description="Access Token 만료 시간 (분)")
+
+
+class TokenRefreshRequest(BaseModel):
+    refresh_token: str = Field(..., description="재발급용 JWT Refresh Token")
+
+
+class LogoutResponse(BaseModel):
+    message: str = Field("성공적으로 로그아웃되었습니다.", description="응답 메시지")
 
 
 class UserResponse(BaseModel):

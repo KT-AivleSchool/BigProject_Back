@@ -3,16 +3,21 @@ from sqlalchemy.orm import declarative_base
 from app.config import settings
 
 # 1. SQLAlchemy 비동기 연동을 위해 드라이버 문자열 포매팅
-# (postgresql:// 로 시작 시 postgresql+asyncpg:// 로 치환하여 비동기 연결 보장)
-database_url = settings.DATABASE_URL
-if database_url.startswith("postgresql://"):
-    database_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+import os
+
+def get_database_url() -> str:
+    url = os.getenv("DATABASE_URL") or settings.DATABASE_URL
+    if url.startswith("postgresql://"):
+        url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    return url
+
+database_url = get_database_url()
 
 # 2. 비동기 데이터베이스 연결 엔진 생성
 engine = create_async_engine(
     database_url,
-    pool_pre_ping=True,  # 주기적으로 연결 핑을 날려 유실된 세션을 자동 탐지 및 재수거
-    echo=False,  # 개발 시 SQL 쿼리 로깅이 필요하면 True로 변경 가능
+    pool_pre_ping=True,
+    echo=False,
 )
 
 # 3. 비동기 세션 팩토리 생성 (AsyncSession 주입 객체 빌드)

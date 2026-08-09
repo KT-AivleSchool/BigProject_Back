@@ -21,7 +21,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 try:
     from dotenv import load_dotenv
 
-    load_dotenv()  # 같은 폴더의 .env 를 읽어 환경변수로
+    _env_path = Path(__file__).resolve().parent.parent / ".env"
+    load_dotenv(dotenv_path=_env_path, override=True)  # 프로젝트 루트 .env 강제 읽기
 except ImportError:
     pass  # dotenv 미설치 시 시스템 환경변수만 사용
 
@@ -317,7 +318,8 @@ class Settings(BaseSettings):
     # 보안 및 JWT 인증 설정
     SECRET_KEY: str = os.getenv("SECRET_KEY", "SUPER_SECRET_TOKEN_OMNISITE_2026_KEY")
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 1주일
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))  # 15분
+    REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))  # 7일
 
     # pydantic_settings v2 규격 설정
     model_config = SettingsConfigDict(
