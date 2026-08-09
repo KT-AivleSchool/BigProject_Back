@@ -1,24 +1,20 @@
 """
-OmniSite Redis Raw Data Seeder & Loader
+OmniSite Redis Raw Bytes Data Seeder & Staging File Loader
 
-로컬의 data_임시/<도메인>/data/ 원본 파일들을
-Feather/Parquet/Pickle 바이너리 포맷으로 직렬화하여 Redis에 적재하고,
-파이프라인 및 정제 프로세스가 Redis에서 수 밀리초 내로 직접 읽어올 수 있도록 지원하는 모듈입니다.
+로컬의 data_임시/<도메인>/ 하위 파일들(data/, fixture/profiles.json 등)을
+원형 바이너리 바이트 그대로 Redis에 적재하고,
+파이프라인 실행 시 임시 스테이징 디렉터리로 복원하여
+정본 파서(gam2_profile._read_csv 등)를 100% 동일하게 재사용할 수 있도록 지원하는 모듈입니다.
 """
 
-import io
 import os
-import pickle
 import logging
 import redis
-import pandas as pd
-import geopandas as gpd
 from app.config import settings
 
 logger = logging.getLogger("uvicorn.error")
 
-_REDIS_KEY_PREFIX = "omnisite:raw_data"
-_ENCODINGS = ["utf-8-sig", "cp949", "euc-kr", "utf-8"]
+_REDIS_KEY_PREFIX = "omnisite:raw_bytes"
 
 
 def get_redis_client() -> redis.Redis | None:
@@ -33,122 +29,91 @@ def get_redis_client() -> redis.Redis | None:
         return None
 
 
-def _make_redis_key(domain: str, filename: str) -> str:
-    return f"{_REDIS_KEY_PREFIX}:{domain}:{filename}"
+def _make_redis_key(domain: str, rel_path: str) -> str:
+    normalized_path = rel_path.replace("\\", "/")
+    return f"{_REDIS_KEY_PREFIX}:{domain}:{normalized_path}"
 
 
-def _read_csv_fallback(fpath: str) -> pd.DataFrame:
-    """한글 CP949 / EUC-KR / UTF-8 인코딩을 다각도로 폴백하여 CSV를 파싱합니다."""
-    last_err = None
-    for enc in _ENCODINGS:
-        try:
-            return pd.read_csv(fpath, encoding=enc, low_memory=False)
-        except UnicodeDecodeError as e:
-            last_err = e
-        except Exception as e:
-            last_err = e
-    if last_err:
-        raise last_err
-    return pd.read_csv(fpath, encoding="utf-8-sig", low_memory=False)
-
-
-def seed_domain_data_to_redis(domain: str = "흡연", data_dir: str | None = None) -> dict[str, bool]:
+def seed_domain_data_to_redis(domain: str = "흡연", domain_dir: str | None = None) -> dict[str, bool]:
     """
-    지정한 도메인의 data_임시/<domain>/data/ 디렉터리 내 데이터를
-    바이너리로 직렬화하여 Redis에 적재합니다.
+    지정한 도메인의 data_임시/<domain>/ 디렉터리 내 모든 raw 파일(data/, fixture/, law/ 등)을
+    원형 바이너리 바이트(raw bytes) 그대로 Redis에 적재합니다.
     """
     redis_cli = get_redis_client()
     if not redis_cli:
         logger.warning("[RedisSeeder] Redis 클라이언트를 생성할 수 없습니다. 적재를 건너뜁니다.")
         return {}
 
-    if not data_dir:
+    if not domain_dir:
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-        data_dir = os.path.join(base_dir, "data_임시", domain, "data")
+        domain_dir = os.path.join(base_dir, "data_임시", domain)
 
-    if not os.path.exists(data_dir):
-        logger.warning(f"[RedisSeeder] 데이터 디렉터리가 존재하지 않습니다: {data_dir}")
+    if not os.path.exists(domain_dir):
+        logger.warning(f"[RedisSeeder] 데이터 디렉터리가 존재하지 않습니다: {domain_dir}")
         return {}
 
+    # 기존 오래된 패턴 키 삭제 정리
+    pattern = f"{_REDIS_KEY_PREFIX}:{domain}:*"
+    old_keys = redis_cli.keys(pattern)
+    if old_keys:
+        redis_cli.delete(*old_keys)
+
     results = {}
-    files = os.listdir(data_dir)
-    logger.info(f"[RedisSeeder] {domain} 도메인 시딩 시작 (총 {len(files)}개 파일 탐색)")
+    logger.info(f"[RedisSeeder] {domain} 도메인 바이너리 시딩 시작 -> {domain_dir}")
 
-    for fname in files:
-        fpath = os.path.join(data_dir, fname)
-        if not os.path.isfile(fpath):
-            continue
+    for root, _, files in os.walk(domain_dir):
+        for fname in files:
+            fpath = os.path.join(root, fname)
+            rel_path = os.path.relpath(fpath, domain_dir)
+            key = _make_redis_key(domain, rel_path)
 
-        ext = os.path.splitext(fname)[1].lower()
-        key = _make_redis_key(domain, fname)
-
-        try:
-            raw_bytes = None
-            if ext in (".csv", ".txt"):
-                df = _read_csv_fallback(fpath)
-                buf = io.BytesIO()
-                try:
-                    df.to_feather(buf)
-                    raw_bytes = buf.getvalue()
-                except Exception:
-                    # PyArrow 큰 정수 오버플로 등 발생 시 Pickle 바이너리로 유연하게 백업
-                    raw_bytes = pickle.dumps(df)
-            elif ext in (".shp", ".gpkg", ".geojson"):
-                gdf = gpd.read_file(fpath)
-                buf = io.BytesIO()
-                try:
-                    gdf.to_feather(buf)
-                    raw_bytes = buf.getvalue()
-                except Exception:
-                    raw_bytes = pickle.dumps(gdf)
-            elif ext in (".feather", ".parquet"):
+            try:
                 with open(fpath, "rb") as f:
                     raw_bytes = f.read()
-            else:
-                logger.debug(f"[RedisSeeder] 건너뜀 (지원 확장자 아님): {fname}")
-                continue
 
-            if raw_bytes:
-                redis_cli.set(key, raw_bytes)
-                results[fname] = True
-                logger.info(f"  ✅ [Redis 적재 성공] {key} ({len(raw_bytes):,} bytes)")
-        except Exception as e:
-            results[fname] = False
-            logger.error(f"  ❌ [Redis 적재 실패] {fname}: {e}")
+                if raw_bytes:
+                    redis_cli.set(key, raw_bytes)
+                    results[rel_path] = True
+                    logger.info(f"  ✅ [Redis raw bytes 적재 성공] {key} ({len(raw_bytes):,} bytes)")
+            except Exception as e:
+                results[rel_path] = False
+                logger.error(f"  ❌ [Redis raw bytes 적재 실패] {rel_path}: {e}")
 
     return results
 
 
-def get_dataset_from_redis(domain: str, filename: str) -> pd.DataFrame | gpd.GeoDataFrame | None:
+def stage_domain_data_from_redis(domain: str, staging_dir: str) -> dict[str, bool]:
     """
-    Redis에서 적재된 바이너리 데이터를 읽어 DataFrame 또는 GeoDataFrame으로 즉시 복원합니다.
+    Redis에 적재된 raw 바이너리 바이트 데이터를 읽어 지정된 staging_dir 하위의
+    <domain>/ 폴더 트리에 원형 파일들(data/, fixture/ 등)을 그대로 복원합니다.
     """
     redis_cli = get_redis_client()
     if not redis_cli:
-        return None
+        logger.warning("[RedisSeeder] Redis 클라이언트를 연결할 수 없습니다. 스테이징을 건너뜁니다.")
+        return {}
 
-    key = _make_redis_key(domain, filename)
-    try:
-        data_bytes = redis_cli.get(key)
-        if not data_bytes:
-            return None
+    target_domain_dir = os.path.join(staging_dir, domain)
+    os.makedirs(target_domain_dir, exist_ok=True)
 
-        # 1차 Feather 시도, 2차 Pickle 시도
-        buf = io.BytesIO(data_bytes)
-        buf.seek(0)
+    pattern = f"{_REDIS_KEY_PREFIX}:{domain}:*"
+    keys = redis_cli.keys(pattern)
+    results = {}
 
-        try:
-            return gpd.read_feather(buf)
-        except Exception:
-            pass
+    if not keys:
+        logger.warning(f"[RedisSeeder] Redis 패턴 '{pattern}'에 매칭되는 데이터가 없습니다.")
+        return {}
 
-        buf.seek(0)
-        try:
-            return pd.read_feather(buf)
-        except Exception:
-            pass
+    prefix = f"{_REDIS_KEY_PREFIX}:{domain}:"
+    for key_bytes in keys:
+        key = key_bytes.decode("utf-8") if isinstance(key_bytes, bytes) else str(key_bytes)
+        rel_path = key[len(prefix):]
+        raw_bytes = redis_cli.get(key)
+        if raw_bytes:
+            out_path = os.path.join(target_domain_dir, rel_path)
+            os.makedirs(os.path.dirname(out_path), exist_ok=True)
+            with open(out_path, "wb") as f:
+                f.write(raw_bytes)
+            results[rel_path] = True
 
-        return pickle.loads(data_bytes)
-    except Exception as e:
-        logger.warning(f"[RedisLoader] Redis 키 조회 중 예외 발생 ({key}): {e}")
-        return None
+    logger.info(f"⚡ [RedisStaging] {domain} 도메인 raw 파일 {len(results)}개 스테이징 복원 완료 -> {target_domain_dir}")
+    return results

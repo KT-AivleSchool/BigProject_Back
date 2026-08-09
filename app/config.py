@@ -73,7 +73,8 @@ DATA_ROOT = Path(os.environ.get("OMNISITE_DATA_ROOT", str(BASE_DIR / "data_임�
 DOMAIN_ROOT = DATA_ROOT
 
 # 공용 지역 데이터(경계 SHP 등) — 도메인 무관 공유
-REGION_DATA_DIR = DATA_ROOT / "region_data"
+_target_region = DATA_ROOT / "region_data"
+REGION_DATA_DIR = _target_region if _target_region.exists() else (BASE_DIR / "data_임시" / "region_data")
 DATA_DIR = str(REGION_DATA_DIR)  # (구 이름 호환)
 
 # 국유·공유 재산 — 후보 필지에 '국유 지분' 정보를 붙이는 데 쓴다(점수 아님, 실행축).

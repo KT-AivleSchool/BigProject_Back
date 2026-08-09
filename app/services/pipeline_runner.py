@@ -438,13 +438,30 @@ def _prepare_dirs(run_id: str, domain: str) -> None:
     shutil.copyfile(fix_rev, d / "step1" / f"{pre}_audit_result_reviewed.json")
 
 
-def _child_env(run_id: str) -> dict:
+def _child_env(run_id: str, domain: str = "흡연") -> dict:
     env = os.environ.copy()
     d = run_dir(run_id)
     env["OMNISITE_STEP1_DIR"] = str(d / "step1")
     env["OMNISITE_STEP2_DIR"] = str(d / "step2")
     env["OMNISITE_STEP3_DIR"] = str(d / "step3")
     env["OMNISITE_STEP4_DIR"] = str(d / "step4")
+
+    # ── Redis 데이터 스테이징 복원 & OMNISITE_DATA_ROOT 주입 ────────
+    try:
+        status_file = d / "status.json"
+        if status_file.exists():
+            st_doc = json.loads(status_file.read_text(encoding="utf-8"))
+            domain = st_doc.get("domain") or domain
+
+        from app.utils.redis_data_seeder import stage_domain_data_from_redis
+        staging_dir = d / "raw_data"
+        staged = stage_domain_data_from_redis(domain, str(staging_dir))
+        if staged:
+            env["OMNISITE_DATA_ROOT"] = str(staging_dir)
+            print(f"[pipeline_runner] ⚡ Redis 스테이징 데이터 주입: OMNISITE_DATA_ROOT={staging_dir}")
+    except Exception as e:
+        print(f"[pipeline_runner] ⚠️ Redis 스테이징 복원 중 경고: {e}")
+
     # 🔴 없으면 콘솔 코드페이지(cp949)에서 이모지 출력 순간 UnicodeEncodeError 로
     #    죽는다. 값이 틀린 게 아니라 **출력에서** 터지는 것이라 회귀로 오인하기 쉽다.
     env["PYTHONIOENCODING"] = "utf-8"

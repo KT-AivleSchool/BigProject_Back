@@ -103,17 +103,6 @@ def _load_raw(profile: dict, data_dir: str):
             f"profile 에 filename 없음: dataset_id={profile.get('dataset_id')}"
         )
     
-    # ── Redis 적재 데이터 1순위 조회 ──────────────────────────────────
-    domain = profile.get("domain") or os.path.basename(os.path.dirname(os.path.normpath(data_dir)))
-    try:
-        from app.utils.redis_data_seeder import get_dataset_from_redis
-        redis_df = get_dataset_from_redis(domain, fname)
-        if redis_df is not None:
-            print(f"[clean_data] ⚡ Redis 적재 데이터 복원 성공: domain={domain}, file={fname} (shape={redis_df.shape})")
-            return redis_df
-    except Exception as e:
-        pass
-
     path = os.path.join(data_dir, fname)
     if not os.path.isfile(path):
         raise FileNotFoundError(f"원본 없음: {path}")
