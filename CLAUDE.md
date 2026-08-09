@@ -48,6 +48,8 @@ MVP: 용산구 흡연부스 / 2차: 성동구 재활용정거장.
 | **선언만 있는 ORM** | 모델 17개 중 **13개가 `app/db/models/` 밖에서 참조 0회**. 공간 13종은 테이블이 비어 있고 파이프라인은 파일로 읽는다. "모델이 있으니 적재돼 있겠지" 로 읽힌다 | 참조 횟수를 센다. **있는 것과 쓰이는 것은 다르다** |
 | **읽기인 줄 알았는데 쓰기** | 검증하려고 별도 프로세스에서 `pipeline_runner.read_status()` 를 부르면 그 안의 **`_reap_orphans()`** 가 돈다. 새 프로세스는 `_SERVER_BOOT` 가 now 라 **남이 실행 중인 run 을 `failed` 로 닫는다.** 2026-08-05 23:16, 프런트가 돌리던 `r_20260805_022` 를 밟기 직전에 멈췄다 | 재시작만 위험한 게 아니다. **out-of-process 로 러너 함수를 부르기 전에 `runs/*/status.json` 을 직접 읽어 활성 run 을 센다.** 함수명이 `read_` 여도 부작용이 있을 수 있다 |
 | **대조기가 없는 키를 읽음** | `report.json` 실제 키는 `counts`·`data_gap`·`topn` 인데 `후보수`·`gap`·`topN` 으로 읽어 `None == None`·`[] == []` 로 **전 항목 통과**. 아무것도 안 본 채 초록불이 떴다 | 비교 항목이 **비면 멈춘다**(`SystemExit`). 가짜 초록불은 회귀보다 나쁘다 — 그 뒤 모든 판단의 근거가 된다 |
+| 🔴 **인증 실패를 「크래시 탓」으로 오진** | 2026-08-07 로더가 `password authentication failed for user "postgres"` 로 죽었다. 로그에 `not properly shut down` + `invalid record length` 가 같이 있어 **WAL 손상으로 SCRAM 검증자가 깨졌다**고 결론짓고 `ALTER USER ... PASSWORD 'postgres'` 로 되돌렸다. **틀렸다.** 실제로는 그 전에 **외부 침입**이 있었다(08-07 11:39 무차별 대입 20회 → 14:12 `DROP DATABASE omnisite` → 랜섬 노트). 되돌린 비번이 다시 `postgres` 라 **문을 다시 열어준 셈**이다. 그때도 `docker logs` 를 읽었지만 `FATAL` 만 grep 해서 `sh: 1: wget: not found` 줄을 못 봤다 — **찾는 패턴 밖의 증거는 보고도 못 본다** | 인증 실패가 **연속으로** 뜨면 먼저 **누가 시도했는지**를 본다: `docker logs <c> \| grep -E "authentication failed\|sh:\|DROP DATABASE"`. 서버 내부(WAL·SCRAM)만 후보에 올리면 **바깥에서 들어온 가능성**이 아예 안 보인다. 상세: `04_이슈\2026-08-08_로컬DB_랜섬웨어_침해사고.md` |
+| 🔴 **컨테이너 포트 기본 노출** | 위 침입의 **진짜 원인.** `ports: "5432:5432"` 는 앞에 IP 가 없으면 **`0.0.0.0` = 전 인터넷 공개**다. 비번은 `postgres`, Redis 는 인증 자체가 없었다. 두 조건이 겹치면 뚫리는 데 필요한 건 **시간뿐**이다. `.env.example` 에도 `postgres:postgres` 가 예시로 박혀 있어 **예시값이 곧 실사용값**이 됐다 | `ports` 는 항상 **`127.0.0.1:` 을 붙인다.** 비밀번호는 compose 에 기본값을 두지 않고 `${VAR:?메시지}` 로 **없으면 기동을 실패시킨다** — 기본값이 있으면 빠뜨렸을 때 조용히 약한 암호로 뜬다(원칙 1). 점검: `netstat -ano \| grep LISTENING \| grep -E ":5432\|:6379"` 에 `0.0.0.0` 이 보이면 열린 것 |
 
 ---
 
@@ -279,6 +281,9 @@ D:\obsidian_claude\10_OmniSite\
   01_설계결정\백엔드팀_API현황_및_Redis_Postgres_전환.md
                                     ← **백엔드팀 전달용** (2026-08-05). 살아 있는 API 9개 실측 ·
                                        schema.sql↔ORM 불일치 · Postgres/Redis 전환 판단표
+  04_이슈\2026-08-08_로컬DB_랜섬웨어_침해사고.md  ← 🔴 **먼저 읽을 것.** 로컬 Postgres 가
+                                       0.0.0.0 + 비번 postgres 로 뚫려 DB 가 삭제됐다.
+                                       타임라인·처치·팀 전파 문구·점검 명령
   04_이슈\2026-08-05_GH이슈_PostGIS_공간연산전환_중단.md  ← S5 중단 근거(팀 공유용)
   01_설계결정\프런트_설계.md            ← 프런트 세션이 쓴다. 화면↔산출물 대응·rewrite 경계
   작업 노트\배제구역_점면판정_지목배수.md  ← S9
