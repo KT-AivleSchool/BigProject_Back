@@ -17,5 +17,58 @@ ENV/
 # OS
 .DS_Store
 
-# Planning Repository (Cloned for study) 
+# Planning Repository (Cloned for study)
 BigProject_Planning/
+
+# 폴더는 유지, 내부 파일은 제외
+
+# 데이터들
+data_임시/*/data/*
+!data_임시/*/data/.gitkeep
+data_임시/*/fixture/*
+!data_임시/*/fixture/.gitkeep
+data_임시/*/law/*
+!data_임시/*/law/.gitkeep
+*.zip
+
+# V4 대조 데이터 (데이터팀 전달본 · issue #198). 원본 60MB+ 라 저장소에 올리지 않는다.
+data_임시/_v4/
+
+# 공공 데이터, 캐시
+data_임시/region_data/*
+!data_임시/region_data/.gitkeep
+data_임시/search_cache/*
+!data_임시/search_cache/.gitkeep
+
+# 산출물
+data_임시/step1_output/*
+!data_임시/step1_output/.gitkeep
+data_임시/step2_output/*
+!data_임시/step2_output/.gitkeep
+data_임시/step3_output/*
+!data_임시/step3_output/.gitkeep
+data_임시/step4_output/*
+!data_임시/step4_output/.gitkeep
+
+# Local Dev Tests
+tests/test_geocoder.py
+
+# Dynamic Uploads & Media Files
+uploads/
+
+# 순수 일회성 스크립트만 남은 로컬 폴더 (analyze_clean_perf.py 하나).
+# 🔴 회귀 대조기·진단기 9개는 2026-08-05 에 `app/tools/` 로 옮겨 **추적한다.**
+#    픽스처(기준값)는 리포에 있는데 대조기가 없으면 재는 자가 없는 자다.
+검증용/
+
+# 개인 메모
+메모장/
+
+# 로컬 에이전트 설정
+.claude/
+# 파이프라인 run 산출물 (run 하나가 25MB+ · 로컬 전용)
+runs/
+
+# 백업 사본. 기준선을 되돌릴 일이 생기면 git 이력에서 꺼낸다 —
+# 저장소 안에 "이전 기준값"이 하나 더 있으면 어느 쪽이 기준인지 흐려진다.
+*.bak

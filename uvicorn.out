@@ -1,0 +1,13 @@
+INFO:     Started server process [37332]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:6217 - "POST /api/v1/pipeline/runs HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:6234 - "GET /api/v1/pipeline/runs/r_20260806_001 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:6245 - "GET /api/v1/pipeline/runs/r_20260806_001 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:6252 - "GET /api/v1/pipeline/runs/r_20260806_001 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:6261 - "GET /api/v1/pipeline/runs/r_20260806_001 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:6273 - "GET /api/v1/pipeline/runs/r_20260806_001 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:6283 - "GET /api/v1/pipeline/runs/r_20260806_001 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:6293 - "GET /api/v1/pipeline/runs/r_20260806_001 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:6303 - "GET /api/v1/pipeline/runs/r_20260806_001 HTTP/1.1" 200 OK

@@ -3,31 +3,106 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 
 # 라우터 Import (v1 하위 라우터 연동)
-from app.api.v1 import auth, lands, ahp, simulations, audit
+#
+# 🔴 2026-08-04 — import 가 안 되는 라우터를 뺐다. 전부 실측이다(추정 아님).
+#    try/except 로 감싸서 "실패하면 건너뛰기" 하지 않는다 — 라우터가 사라졌는데
+#    서버는 200 을 주는 상태가 제일 나쁘다(원칙 1: 조용한 실패 금지).
+from app.api.v1 import auth, audit, pipeline
+
+# ── 🔴 폐기된 스캐폴딩 — lands·ahp (사람 확인 2026-08-04) ─────────────────────
+#    두 라우터가 부르던 gis_service·ahp_service 는 다른 팀원이 **임시로 만들어둔
+#    초안**이었고 **쓸 예정이 없다.** 5e55dee 에서 dummy/ 로 옮겨졌다가 삭제됐다.
+#    "구현이 아직 안 된" 게 아니라 **폐기된 것**이다. 되살릴 조건이
+#    "그 서비스를 만들어라"가 아니다 — 만들면 안 된다. 대체재가 이미 있다.
+#      gis_service  → geopandas 로 간다 (메모리 한계 때문. S5 결론 참조)
+#      ahp_service  → STEP3 가중치 구조가 이미 그 일을 한다 (gam2_weight_model.py)
+#    lands.py · ahp.py 는 **삭제했다**(7f66fd9). 죽은 서비스 호출 아니면 하드코딩
+#    응답이었다 — `/lock` 은 입력과 무관하게 `is_locked: True`, `/upload` 는 항상
+#    `imported: 95`. 잠그지도 넣지도 않고 "했다"고 말하는 코드다(원칙 4).
+#    살릴 조각(로드뷰 딥링크·경계포함 SQL)은 삭제 커밋 메시지에 남겼다.
+#
+# ── ⏱ 여기부터는 **폐기가 아니다.** import 시점 DB 접속 때문에 못 붙인다 ────────
+#
+# 🔴 simulations 는 스캐폴딩이 아니라 **다중에이전트 공청회 시뮬레이션**이다
+#    (CLAUDE.md 첫 줄의 프로젝트 두 축 중 하나. app/core/sim_ai/ 547행이 엔진).
+#    2026-08-04 에 내가 폐기로 잘못 분류했다가 정정했다.
+#    막고 있던 `pdf_service` import(구 15행)는 **함수 안으로 옮겨 해소**했다.
+#    남은 차단 요인은 딱 하나 — 아래 `sim_ai/graph.py:57` 의 import 시점 접속이다.
+#    ※ 화면6(PDF)은 별건이다. `pdf_service.py`(9be3851) ·
+#      `report_template.html`(2bd69ef 에서 삭제) 복구 + weasyprint(GTK3) 가 필요하다.
+#      재작성이 아니라 **복구 + 환경**이며, 그 사정은 그 함수 주석에 적어뒀다.
+# from app.api.v1 import simulations
+#
+# 🔴 upload 도 폐기가 아니다 — **앞으로 쓸 것**이다. 이슈 #203 대로
+#    gam2_doc_extract.py(문서→텍스트) + gam2_ordinance_select.py(조문 분할·규제 선별)를
+#    붙이는 업로드 경로가 여기로 들어온다.
+# from app.api.v1 import upload
+#
+# ── ⏱ 둘의 공통 차단 요인 — import 가 **525.7초** 걸린다 (2026-08-04 실측) ────
+#    `upload.py:10` 과 `core/sim_ai/graph.py:57` 이 **모듈 최상단에서**
+#    `RagVectorStorage()` 를 만든다 → `vector_db.py:32` 의 `PGVector(...)` 가
+#    **import 도중에** Postgres 로 접속한다. DB 가 없으면 psycopg 연결 타임아웃
+#    (::1 · 127.0.0.1 각각 × 콜렉션 2개)을 다 기다린 뒤 `vector_db.py:37` 의 except 가
+#    잡고 넘어간다 — rc=0 으로 **성공은 한다.** 무한이 아니라 지연이다.
+#    하지만 등록하면 uvicorn 기동이 9분 가까이 걸린다.
+#    되돌릴 조건: (a) pgvector Postgres 를 띄우거나,
+#                (b) `RagVectorStorage()` 를 최상단이 아니라 **요청 시점**에 만들 것.
+#                (b) 가 근본이다. import 가 외부 서비스에 의존하면 안 된다.
+#    🔵 `vector_db.py`·`graph.py` 는 담당이 다르다(파일 주석 `[동현님 담당]`).
+#       우리가 고치지 않고 **이슈로 넘긴다** — 인계 문서:
+#       obsidian 10_OmniSite/04_이슈/2026-08-04_GH이슈_import시점_외부접속.md
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
     description="OmniSite 스마트시티 입지선정 및 공공갈등 예측 플랫폼 통합 백엔드 API",
     version="1.0.0",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
 )
 
 # CORS 미들웨어 설정 (프론트엔드 Next.js 개발 서버 연동 허용)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # 개발 단계 전체 허용, 상용 시 도메인 타이트닝 설정 가능
+    allow_origins=["*"],  # 개발 단계 전체 허용, 상용 시 도메인 타이트닝 설정 가능
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # 라우터 연결
-app.include_router(auth.router, prefix=settings.API_V1_STR + "/auth", tags=["Authentication"])
-app.include_router(lands.router, prefix=settings.API_V1_STR + "/lands", tags=["Lands & HITL"])
-app.include_router(ahp.router, prefix=settings.API_V1_STR + "/ahp", tags=["AHP Engine"])
-app.include_router(simulations.router, prefix=settings.API_V1_STR + "/simulation", tags=["AI Simulation"])
-app.include_router(audit.router, prefix=settings.API_V1_STR + "/audit", tags=["Audit AI"])
+app.include_router(
+    auth.router, prefix=settings.API_V1_STR + "/auth", tags=["Authentication"]
+)
+# 🔴 아래 2개는 뺐다. **둘 다 폐기가 아니다** — 사유가 하나로 같다:
+#    `RagVectorStorage()` 를 모듈 최상단에서 만들어 import 가 525.7초 걸린다.
+#    등록하면 uvicorn 기동이 9분이 된다. 상세와 인계 이슈는 파일 상단 주석 참조.
+#    (/lands · /ahp 는 성격이 다르다 — 그건 폐기라서 라우터 파일째 삭제했다)
+#    /simulation 과 /simulations 두 prefix 로 **같은 라우터를 두 번** 등록하고 있었다 —
+#    되살릴 때 한쪽만 살리면 프런트 경로가 조용히 404 가 된다. 둘 다 같이 처리할 것.
+# app.include_router(
+#     simulations.router,
+#     prefix=settings.API_V1_STR + "/simulation",
+#     tags=["AI Simulation"],
+# )
+# app.include_router(
+#     simulations.router,
+#     prefix=settings.API_V1_STR + "/simulations",
+#     tags=["AI Simulation"],
+# )
+app.include_router(
+    audit.router, prefix=settings.API_V1_STR + "/audit", tags=["Audit AI"]
+)
+# app.include_router(
+#     upload.router,
+#     prefix=settings.API_V1_STR + "/upload",
+#     tags=["Regulation & File Upload"],
+# )
+app.include_router(
+    pipeline.router,
+    prefix=settings.API_V1_STR + "/pipeline",
+    tags=["Pipeline Run"],
+)
+
 
 # 루트 헬스체크 엔드포인트
 @app.get("/", tags=["Health Check"])
@@ -35,5 +110,5 @@ def read_root():
     return {
         "status": "online",
         "project": settings.PROJECT_NAME,
-        "message": "Welcome to OmniSite Backend API Server!"
+        "message": "Welcome to OmniSite Backend API Server!",
     }

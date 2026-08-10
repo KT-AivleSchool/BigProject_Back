@@ -7,10 +7,15 @@ services:
       context: .
       dockerfile: Dockerfile.db
     # EC2 내부(로컬 루프백) 또는 도커 네트워크 통신만 허용 (보안)
+    # 🔴 2026-08-07 침해. "5432:5432" 는 0.0.0.0 바인딩이라 인터넷 전체에 열린다.
+    #    비밀번호가 postgres 라 봇이 무차별 대입으로 뚫고 DB 를 DROP 했다.
+    #    로컬 루프백에만 붙인다 — 앞의 127.0.0.1 을 지우지 말 것.
     ports:
       - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_USER: postgres
+      # 기본값을 두지 않는다. .env 에 없으면 기동이 실패해야 한다 —
+      # 기본값이 있으면 빠뜨렸을 때 조용히 약한 암호로 뜬다(그래서 뚫렸다).
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 를 .env 에 설정할 것}
       POSTGRES_DB: omnisite
     volumes:
@@ -20,6 +25,8 @@ services:
   redis:
     image: redis:7-alpine
     container_name: omnisite-redis-cache
+    # 🔴 위와 같은 이유. Redis 는 인증이 아예 없었다 —
+    #    열린 6379 는 CONFIG SET dir 로 파일을 쓰는 공격에 그대로 노출된다.
     ports:
       - "127.0.0.1:6379:6379"
     command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD 를 .env 에 설정할 것} --maxmemory 512mb --maxmemory-policy allkeys-lru
