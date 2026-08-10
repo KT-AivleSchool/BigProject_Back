@@ -995,7 +995,18 @@ gap 6건(4/1/1) · `w_final 0.1858/0.1827/0.1975/0.0870/0.1683/0.1786` ·
 `alpha 0.3 · scale log · decay gaussian` · `hitl.value_source="human"`.
 
 001 과 002 의 차이는 **`적재-감리` 칸**이다. 001 은 그게 없어 화면5 가 죽었고(8-5),
-칸을 넣은 뒤 002 는 **손으로 한 단계도 거들지 않고** 화면5 목록까지 갔다.
+칸을 넣은 뒤 002 는 화면5 목록까지 갔다.
+
+🔴 **여기 "손으로 한 단계도 거들지 않고" 라고 적었던 건 틀렸다**(정정 2026-08-10).
+`runs/r_20260810_002/hitl/` 에 `audit_answer.json`·`weight_answer.json` 이 **둘 다 있다.**
+표의 "게이트 A·B 둘 다 정상 정지 → POST 로 재개" 와 같은 줄에서 모순되는 문장이었다.
+**`full` 은 무인 완주 모드가 아니다 — 게이트가 둘 있고 답을 줘야 이어진다.**
+
+그리고 **위 `w_final` 이 기준선과 같은 이유도 그 답에 있다.** 002 의 게이트B 답은
+`radius {07+02:150, 06+03:300, 08:50, 09:150, 10:250}` ·
+`slider {07+02:0.75, 06+03:0.8, 04:0.7, 08:0.5, 09:0.7, 10:0.7}` 로 **픽스처 조건 그대로**다.
+즉 이 절이 증명하는 건 「업로드 경로로도 기준선이 재현된다」가 아니라
+**「같은 답을 넣으면 같은 값이 나온다」**(A2 의 `check_hitl_e2e` 결론과 같은 성질)이다.
 
 `fixture` 모드도 같은 날 다시 완주시켰다 — `r_20260810_004` **71초 · 6칸 · succeeded**,
 값은 위와 동일. 단 그 전에 `data_임시/흡연/fixture/profiles.json` 이 **없어서 실패**했다
@@ -1017,3 +1028,61 @@ gap 6건(4/1/1) · `w_final 0.1858/0.1827/0.1975/0.0870/0.1683/0.1786` ·
 
 ⚠ `GET /simulations/results/{id}` 의 `{id}` 는 **`parcel_id`** 다(`simulations.py:970`).
 로그의 `simulation_id=` 를 넣으면 404 가 나는데 **회귀로 보인다.** 실측: `/results/{2,84,62}` 전부 200.
+
+### 8-10. 서버 재시작 후 전 구간 재실측 (2026-08-10 · 사람 지시)
+
+*"처음부터 끝까지 … 특히 마지막에 생성된 결과 문서가 제대로 DB에 저장되는지도 (해당 run_id로)"*
+
+재시작 전에 **활성 run 0건**을 `runs/*/status.json` 직접 조회로 확인했다
+(`reap_orphans()` 가 남의 run 을 닫는 걸 막기 위해).
+도메인 **`흡연_E2E2`**(신규) · 흡연 원본 `law/` 2 + `data/` 11(536MB)을
+**화면1 업로드 API 로만** 5.0초에 넣고 `mode:"full"` · `topn:20`.
+
+| 칸 | 초 | 칸 | 초 |
+|---|---|---|---|
+| 0 프로파일링 | 10.1 | 4-1 후보점 생성 | 1.58 |
+| 1 감리·상위법 | 237.18 | 4-2 점수화·배제 | 8.99 |
+| 2 정제 | 24.43 | 4-3 위치 선정 | 4.89 |
+| 3-1 후보 필지 | 17.26 | 적재-감리 | 0.93 |
+| 3-2 가중치 | 10.52 | 적재-후보 | 0.72 |
+
+`succeeded` · `loaded {"run_id":"r_20260810_006","audit_rules":13,"booth_candidates":20}` ·
+산출물 8키 전부 URL · `error: null`.
+
+**게이트 응답은 제안값을 그대로 되돌려줬다** — `proposed_m`(없으면 `radius_m`) ·
+`radius_proposed` · `slider_proposed`. 값을 지어내지 않는 「엔터로 제안값 승인」이다.
+게이트A 질문 6건 중 `04` 지역코드는 `editable:false` 라 건너뛰고, 배제 5건은
+`01=10 · 05=30 · 06=10 · 07=10 · 11=30` — CLAUDE.md 레이어별 실측표와 같은 값이다.
+🔴 `07 버스정류소`만 `proposed_m` 이 `null` 이라 `radius_m` 을 썼다.
+
+**값 대조** — 결정론 구간은 기준선과 **전부 일치**(후보 42,216 / 후보점 66,915 /
+생존 56,967 / union 1.1107 / 내접폭 4종 / 폭2m통과 59,989 / 수요점 6,797 / gap 6).
+`w_final` 만 갈렸다: 이번 게이트B 답이 **LLM 제안값**(`07+02=200 · 09=100 · 10=150` ·
+슬라이더 `04=0.8 · 08=0.3 · 09=0.8`)이라 8-8 의 픽스처 조건과 다르다. **회귀가 아니다.**
+
+**화면5** — `/candidates?domain=흡연_E2E2&run_id=r_20260810_006` → 20건 전부 이 run.
+rank 1 = `parcel_id=122`(0.7538). 🔴 rank 3 이 0.7781 로 더 높다(커버 기여 그리디).
+`/stream` → 1,440 events · 53.5초 · 시나리오 **C** · CSS 7.5 · 수용도 15.0%.
+`conflict_factors` **8개** = `positive_factor` 8행 (26행이 섞였다면 16개다 — 6절 B안이
+실제로 걸린 증거).
+
+**🔴 결과 문서의 run 귀속 — 조인으로만 확인된다.**
+`conflict_simulations` 에는 **`run_id` 컬럼이 없다.** 경로는
+`parcel_id → booth_candidates.id → booth_candidates.run_id` **하나뿐**이다.
+
+```
+conflict_simulations  id=18 · parcel_id=122 · facility_type=흡연부스 · css_score=7.5
+  result_json 있음 5,736자 · worst_scenario 만 채움(A/B 는 NULL = 사실, 원칙 4)
+  candidate_land_id=None ← booth_candidates.land_id 가 NULL 이라 유도값도 NULL(지어내지 않음)
+  ⟵ JOIN booth_candidates : run_id='r_20260810_006' · domain='흡연_E2E2' · rank=1
+debate_logs  simulation_id=18 · 14행 (발화 1건 = 1행)
+```
+
+교차 오염 없음 — `정본`(흡연) · `r_20260810_002`(흡연_E2E) · `r_20260810_006`(흡연_E2E2)
+셋 다 `audit_rules 13` · `booth_candidates 20` 으로 격리.
+
+**화면6 둘 다** — `/simulations/results/122/pdf` → 200 `application/pdf` **85,039 B** `%PDF-` ·
+`/report/download/hwpx` → 200 `application/hwp+zip` **4,520 B** `PK`,
+`BinData/image1.png`·`image2.png` **2개** · 대체문구 0 ·
+**선언 4곳 전부 일치**(manifest 2 · content.hpf 2 · header `bindataList` 2 ·
+section0 `<hp:pic>` 2, `binaryItemIDRef="image1"/"image2"`) · XML 4개 파싱 통과.
