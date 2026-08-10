@@ -26,10 +26,32 @@ def format_official_time(ts_str: str) -> str:
         dt = datetime.now()
     return f"{dt.hour:02d}:{dt.minute:02d}"
 
+def generate_qr_png_bytes(url: str) -> bytes:
+    """
+    URL을 기반으로 PNG 포맷의 QR 코드 이미지 바이너리를 생성합니다.
+    """
+    try:
+        import qrcode
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_M,
+            box_size=4,
+            border=2,
+        )
+        qr.add_data(url)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception:
+        return b""
+
 def build_hwpx_report(data: Dict[str, Any]) -> bytes:
     """
     이모지, 색상, 과도한 디자인 요소를 모두 배제하고
     행정업무운영 편람 표준 규격에 따라 작성된 HWPX 한글 바이너리를 생성합니다.
+    (지도 QR 코드 바이너리 이미지 포함)
     """
     raw_jibun = data.get("candidate_jibun", "후보지 미지정")
     raw_addr = data.get("candidate_address") or raw_jibun
@@ -47,24 +69,32 @@ def build_hwpx_report(data: Dict[str, Any]) -> bytes:
     scenarios = data.get("scenarios", [])
 
     encoded_addr = urllib.parse.quote(raw_addr)
-    kakao_map_url = xml_escape(f"https://map.kakao.com/link/map/{encoded_addr},{lat},{lng}")
-    naver_map_url = xml_escape(f"https://map.naver.com/v5/search/{encoded_addr}")
+    raw_kakao_url = f"https://map.kakao.com/link/map/{encoded_addr},{lat},{lng}"
+    raw_naver_url = f"https://map.naver.com/v5/search/{encoded_addr}"
+    kakao_map_url = xml_escape(raw_kakao_url)
+    naver_map_url = xml_escape(raw_naver_url)
+
+    # QR 코드 PNG 바이너리 동적 생성
+    kakao_qr_png = generate_qr_png_bytes(raw_kakao_url)
+    naver_qr_png = generate_qr_png_bytes(raw_naver_url)
+    has_qr = len(kakao_qr_png) > 0 and len(naver_qr_png) > 0
 
     official_date = xml_escape(format_official_date(timestamp_raw))
     official_time = xml_escape(format_official_time(timestamp_raw))
 
     mimetype_content = b"application/hwp+zip"
 
-    manifest_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+    manifest_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0">
     <manifest:file-entry manifest:full-path="/" manifest:media-type="application/hwp+zip"/>
     <manifest:file-entry manifest:full-path="Contents/header.xml" manifest:media-type="text/xml"/>
     <manifest:file-entry manifest:full-path="Contents/section0.xml" manifest:media-type="text/xml"/>
     <manifest:file-entry manifest:full-path="Contents/content.hpf" manifest:media-type="text/xml"/>
+    {"<manifest:file-entry manifest:full-path=\"BinData/image1.png\" manifest:media-type=\"image/png\"/><manifest:file-entry manifest:full-path=\"BinData/image2.png\" manifest:media-type=\"image/png\"/>" if has_qr else ""}
 </manifest:manifest>
 """
 
-    content_hpf = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+    content_hpf = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <package xmlns="http://www.hancom.co.kr/hwpml/2011/content" version="1.0">
     <metadata>
         <title>입지 심의 및 평가 결과 보고</title>
@@ -73,6 +103,7 @@ def build_hwpx_report(data: Dict[str, Any]) -> bytes:
     <manifest>
         <item id="header" href="Contents/header.xml" media-type="text/xml"/>
         <item id="section0" href="Contents/section0.xml" media-type="text/xml"/>
+        {"<item id=\"image1\" href=\"BinData/image1.png\" media-type=\"image/png\"/><item id=\"image2\" href=\"BinData/image2.png\" media-type=\"image/png\"/>" if has_qr else ""}
     </manifest>
     <spine>
         <itemref idref="section0"/>
@@ -80,9 +111,10 @@ def build_hwpx_report(data: Dict[str, Any]) -> bytes:
 </package>
 """
 
-    header_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<hh:head xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head">
+    header_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<hh:head xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head" xmlns:hc="http://www.hancom.co.kr/hwpml/2011/core">
     <hh:beginNum page="1" footnote="1" endnote="1" pic="1" tbl="1" equation="1"/>
+    {"<hh:bindataCnt count=\"2\"/><hh:bindataList><hc:bindata id=\"image1\" binDataRef=\"image1\" format=\"png\"/><hc:bindata id=\"image2\" binDataRef=\"image2\" format=\"png\"/></hh:bindataList>" if has_qr else ""}
 </hh:head>
 """
 
@@ -137,9 +169,30 @@ def build_hwpx_report(data: Dict[str, Any]) -> bytes:
         </hp:p>
         """
 
+    # 지도 QR 이미지 XML 구문 생성 (있는 경우)
+    kakao_qr_xml = """
+        <hp:run>
+            <hp:pic id="1001" zOrder="0" numberingType="PICTURE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES">
+                <hc:offset x="0" y="0"/>
+                <hc:orgSz width="2800" height="2800"/>
+                <hc:curSz width="2800" height="2800"/>
+                <hc:img binaryItemIDRef="image1"/>
+            </hp:pic>
+        </hp:run>""" if has_qr else ""
+
+    naver_qr_xml = """
+        <hp:run>
+            <hp:pic id="1002" zOrder="0" numberingType="PICTURE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES">
+                <hc:offset x="0" y="0"/>
+                <hc:orgSz width="2800" height="2800"/>
+                <hc:curSz width="2800" height="2800"/>
+                <hc:img binaryItemIDRef="image2"/>
+            </hp:pic>
+        </hp:run>""" if has_qr else ""
+
     # 표준 공문서 (이모지/색상 전면 제거)
     section0_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph">
+<hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph" xmlns:hc="http://www.hancom.co.kr/hwpml/2011/core">
     <!-- 두문 -->
     <hp:p id="1">
         <hp:run>
@@ -181,7 +234,7 @@ def build_hwpx_report(data: Dict[str, Any]) -> bytes:
     
     <hp:p id="8">
         <hp:run>
-            <hp:t>  가. 후보지 기본 정보</hp:t>
+            <hp:t>  가. 후보지 기본 정보 및 모바일 지도 핀 QR코드</hp:t>
         </hp:run>
     </hp:p>
     <hp:p id="9">
@@ -203,11 +256,13 @@ def build_hwpx_report(data: Dict[str, Any]) -> bytes:
         <hp:run>
             <hp:t>    4) 카카오지도 핀 연결 URL: {kakao_map_url}</hp:t>
         </hp:run>
+        {kakao_qr_xml}
     </hp:p>
     <hp:p id="13">
         <hp:run>
             <hp:t>    5) 네이버지도 핀 연결 URL: {naver_map_url}</hp:t>
         </hp:run>
+        {naver_qr_xml}
     </hp:p>
     <hp:p id="13_2">
         <hp:run>
@@ -276,6 +331,9 @@ def build_hwpx_report(data: Dict[str, Any]) -> bytes:
         z.writestr('Contents/content.hpf', content_hpf)
         z.writestr('Contents/header.xml', header_xml)
         z.writestr('Contents/section0.xml', section0_xml)
+        if has_qr:
+            z.writestr('BinData/image1.png', kakao_qr_png)
+            z.writestr('BinData/image2.png', naver_qr_png)
 
     buffer.seek(0)
     return buffer.getvalue()
