@@ -291,10 +291,9 @@ async def dynamic_reporter_node(state: DynamicDiscussionState) -> dict:
     return {"final_scenarios": scenarios, "is_finished": True}
 
 async def dynamic_factchecker_node(state: DynamicDiscussionState) -> dict:
-    """방금 발언한 페르소나의 메시지에서 데이터 조작(할루시네이션)이 있는지 검증하는 노드"""
-    
-    from app.core.stakeholder_mode.schemas.factcheck import FactCheckStatus
-    from pydantic import BaseModel, Field
+    """방금 발언한 페르소나의 메시지에서 데이터 조작(할루시네이션)이 있는지 검증하는 노드 (유연성 확보를 위해 bypass/비활성화)"""
+    # 팩트체커 유연성 부족으로 인해 비활성화 처리 (Bypass)
+    return {}
 
     messages = state.get("messages", [])
     if not messages:
