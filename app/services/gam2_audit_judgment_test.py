@@ -970,12 +970,15 @@ def search_exclusion_radius(
 def enrich_with_search(
     in_path: str | None = None,
     out_path: str | None = None,
-    region: str = "용산구",
+    region: str | None = None,
     ordinance_rag: str = "",
 ) -> str:
     """audit_result.json 의 exclusion_radius_missing flag 를, 조례가 인용한 상위법을
     법령 API 로 조회해 배제반경 후보로 채워 별도 저장. 원본 보존, confirmed=false(HITL 확인).
-    ordinance_rag: 업로드된 조례 본문(「」 인용 법령 파싱용). 없으면 조례 텍스트 파일 사용."""
+    ordinance_rag: 업로드된 조례 본문(「」 인용 법령 파싱용). 없으면 조례 텍스트 파일 사용.
+    region: 안 주면 감리 결과의 `facility_inference.region` 을 쓴다. 🔴 예전 기본값은
+      **"용산구"** 였다(2026-08-10 제거) — `search` 모드로 성동구를 돌리면 인자를 안 주므로
+      용산구로 web_search 했다. 시설명(`facility`)은 이미 그 파일에서 읽고 있었다."""
     import copy
     import os
     from app.services.gam2_ordinance_acquisition import (
@@ -1040,8 +1043,18 @@ def enrich_with_search(
         return out_path
     # ─────────────────────────────────────────────────────────────
 
-    # facility(폴백 web_search 프롬프트용) — 결과 JSON의 facility_inference에서
-    facility = (doc.get("facility_inference", {}) or {}).get("facility", "")
+    # facility·region(폴백 web_search 프롬프트용) — 결과 JSON의 facility_inference에서.
+    # 두 값의 출처를 같은 곳으로 맞춘다 — facility 만 파일에서 읽고 region 은 기본값을
+    # 쓰면 "성동구 재활용정거장" 이 아니라 "용산구 재활용정거장" 을 검색하게 된다.
+    _fi = doc.get("facility_inference", {}) or {}
+    facility = _fi.get("facility", "")
+    region = str(region or _fi.get("region") or "").strip()
+    if not region:
+        # 여기까지 왔다는 건 검색할 flag 가 실제로 있다는 뜻이다(위 스킵 경로 통과).
+        raise SystemExit(
+            f"🔴 {in_path} 에 facility_inference.region 이 없다. "
+            "지역을 추측하지 않는다 — region= 으로 넘기거나 감리를 다시 돌릴 것."
+        )
 
     n_filled = 0
     for r in enriched["results"]:
@@ -2018,9 +2031,24 @@ def build_fixtures(profiles_path: str | None = None) -> dict:
     return profiles
 
 
-# 테스트용 폴백 기본값. 실제 실행 시 resolve_facility 가 사용자 입력에서 facility·region 을
-# 추출해 이 값을 대체한다(도메인 무관). 사용자 입력이 비었을 때만 이 값이 쓰인다.
-DOMAIN = {"facility": "흡연부스", "region": "용산구"}
+def require_region(fac: dict) -> str:
+    """시설 확정 결과(`resolve_facility*`)에서 대상 지역을 꺼낸다. 없으면 멈춘다.
+
+    🔴 예전엔 `DOMAIN = {"facility": "흡연부스", "region": "용산구"}` 를 두고
+       `fac.get("region") or DOMAIN["region"]` 로 채웠다(2026-08-10 제거, 사람 승인).
+       주석엔 "테스트용 폴백"이라 적혀 있었지만 실제로는 **실행 경로 3곳**에서 쓰였다
+       (`gam2_run_pipeline.py:191`·이 파일 real/mock 진입점 2곳).
+       MVP 도메인 값이라 성동구 입력에서 지역이 안 잡히면 조용히 **용산구** 조례·상위법을
+       검색한다 — 안 터지고 근거만 틀린다. "엔진은 그대로, 데이터만 바꾼다"에도 어긋난다.
+    """
+    region = str(fac.get("region") or "").strip()
+    if not region:
+        raise SystemExit(
+            "🔴 대상 지역을 확정하지 못했다. 지역을 추측하지 않는다. "
+            "입력에 '<시군구>' 를 포함할 것 (예: \"용산구 흡연부스 부지 선정\"). "
+            f"입력: {fac.get('source_input', '')!r}"
+        )
+    return region
 
 
 if __name__ == "__main__":
@@ -2072,7 +2100,7 @@ if __name__ == "__main__":
         print("  ※ 확정 아님 — HITL에서 확인/수정 필요\n")
         domain = {
             "facility": fac["facility"],
-            "region": fac.get("region") or DOMAIN["region"],
+            "region": require_region(fac),
         }
         print(f"[감리 AI 검수 리포트] 모델: {AUDIT_LLM_MODEL}")
         print("※ 배제반경 미확정·애매 데이터는 아래 HITL 대기로 넘어갑니다.\n")
@@ -2089,7 +2117,7 @@ if __name__ == "__main__":
         print(f"[시설 확정(mock)] '{fac['facility']}'  (입력: {user_input})\n")
         domain = {
             "facility": fac["facility"],
-            "region": fac.get("region") or DOMAIN["region"],
+            "region": require_region(fac),
         }
         print("[MockLLM 검수 리포트] — 하네스 출력 형식 확인용\n")
         judgments, raw_preds = run_harness(MockLLM(), fixtures, domain)

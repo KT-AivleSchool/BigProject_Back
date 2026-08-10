@@ -188,7 +188,9 @@ def run(
 
     domain = {
         "facility": fac["facility"],
-        "region": fac.get("region") or A.DOMAIN["region"],
+        # 🔴 예전엔 `or A.DOMAIN["region"]`(="용산구") 였다. 지역이 안 잡히면
+        #    성동구 실행이 조용히 용산 조례를 검색했다 — 없으면 멈춘다(2026-08-10).
+        "region": A.require_region(fac),
     }
 
     # ── STEP 1. 감리 판정 (gpt-4o)
