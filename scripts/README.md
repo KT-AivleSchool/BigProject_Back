@@ -4,7 +4,8 @@ STEP2 정제 산출물·경계 원본을 PostGIS(`omnisite`)에 적재하는 멱
 모두 **대상 테이블이 0행일 때만 적재**하므로 재실행해도 중복되지 않는다.
 
 ## 사전 준비
-- `.env` 의 `DATABASE_URL` 설정 (없으면 `postgresql://postgres:postgres@localhost:5432/omnisite` 기본값)
+- `.env` 의 `DATABASE_URL` 설정 — **기본값은 없다. 없으면 `SystemExit`** 이다(2026-08-09).
+  예전 기본값이 `postgres:postgres` 였고 2026-08-07 로컬 DB 침해가 정확히 그 조합이었다.
 - 가상환경에 `geopandas`, `pyogrio`, `psycopg`, `pandas`, `python-dotenv` 설치
 - **원본 데이터 배치** (아래 경로는 `.gitignore` 대상 → 각자 Teams/감리팀에서 받아 배치):
   - `data_임시/region_data/` — `BND_{SIDO,SIGUNGU,ADM_DONG}_PG.shp`, `행정동_크로스워크.csv`

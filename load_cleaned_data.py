@@ -10,22 +10,37 @@
 필요:  pip install psycopg2-binary pandas openpyxl python-dotenv
 """
 
-import os
+import sys
+from pathlib import Path
+
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
 
-# .env 사용 시:  from dotenv import load_dotenv; load_dotenv()
-DSN = os.getenv(
-    "DATABASE_URL",
-    "host=localhost port=5432 dbname=omnisite user=postgres password=본인비번",
-)
-BASE = r"c:/Users/User/Projects/BigProject_Back/app/data/04.최종_데이터"
+ROOT = Path(__file__).resolve().parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+# 🔴 DSN 기본값을 두지 않는다(2026-08-07 침해 대응). 예전엔 `password=본인비번` 이
+#    기본값이라 `.env` 를 빠뜨려도 **조용히 엉뚱한 곳에 붙으려 했다**.
+from app.config import DB_CONNECT_TIMEOUT, settings  # noqa: E402
+
+DSN = settings.DATABASE_URL
+
+# 🔴 절대경로(`c:/Users/User/Projects/…`)를 저장소 기준 상대경로로 바꿨다(2026-08-10).
+#    작성자 PC 밖에서는 아무 데이터도 못 읽는데 그 사실이 **첫 파일을 읽을 때까지**
+#    안 드러났다. 없으면 여기서 멈춘다(원칙 1).
+BASE = ROOT / "app" / "data" / "04.최종_데이터"
+if not BASE.is_dir():
+    raise SystemExit(
+        f"원본 데이터 폴더가 없다: {BASE}\n"
+        "  `app/data/` 는 .gitignore 대상이라 clone 에 안 들어온다 — 따로 받아야 한다."
+    )
 
 
 def rd(fname):
     """인코딩 자동 감지 (파일마다 utf-8 / cp949 섞여 있음)"""
-    path = f"{BASE}/{fname}"
+    path = BASE / fname
     if fname.endswith(".xlsx"):
         return pd.read_excel(path)
     for enc in ("utf-8-sig", "cp949", "utf-8"):
@@ -42,7 +57,7 @@ def to_num(df, cols):
     return df.dropna(subset=list(cols))
 
 
-conn = psycopg2.connect(DSN)
+conn = psycopg2.connect(DSN, connect_timeout=DB_CONNECT_TIMEOUT)
 cur = conn.cursor()
 
 # ─────────────────────────────────────────────────────────────────

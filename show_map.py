@@ -1,16 +1,21 @@
+import sys
+from pathlib import Path
+
 import folium
 import psycopg2
 from shapely import wkt as shapely_wkt
 
-DB_USER = "postgres"
-DB_PASS = "9816"
-DB_HOST = "127.0.0.1"  # localhost 말고 이걸로 (IPv4 고정)
-DB_PORT = "5432"
-DB_NAME = "postgres"
+ROOT = Path(__file__).resolve().parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-conn = psycopg2.connect(
-    host=DB_HOST, port=DB_PORT, dbname=DB_NAME, user=DB_USER, password=DB_PASS
-)
+# 🔴 예전엔 여기에 비밀번호가 평문으로 박혀 있었다(`DB_PASS = "9816"`). 2026-08-07
+#    로컬 DB 침해가 정확히 그 계열(약한/공개된 자격증명)이었다 — 저장소에 값을 두지
+#    않는다. 접속 정보는 `.env` 한 곳에서만 온다(2026-08-10).
+#    호스트가 `127.0.0.1` 인 이유는 `app/config.py:_normalize_dsn` 주석 참조.
+from app.config import DB_CONNECT_TIMEOUT, settings  # noqa: E402
+
+conn = psycopg2.connect(settings.DATABASE_URL, connect_timeout=DB_CONNECT_TIMEOUT)
 cur = conn.cursor()
 
 # 용산구 중심 좌표로 지도 시작

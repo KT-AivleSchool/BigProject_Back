@@ -38,7 +38,17 @@ except ImportError:
     pass
 
 ROOT = Path(__file__).resolve().parents[1]
-DSN = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/omnisite")
+# 🔴 기본값을 두지 않는다(2026-08-09). 예전 기본값이 `postgres:postgres` 였고,
+#    2026-08-07 로컬 DB 침해가 정확히 그 조합이었다. 없으면 멈춘다(원칙 1).
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+# 🔴 호스트 정규화(localhost→127.0.0.1)와 기본값 금지 판단은 `app/config.py` 한 곳에서
+#    한다. 여기서 다시 구현하면 두 벌이 되고 한쪽만 고쳐진다(2026-08-10).
+from app.config import DB_CONNECT_TIMEOUT, settings  # noqa: E402
+
+DSN = settings.DATABASE_URL
+
 SRC = ROOT / "data_임시" / "step2_output" / "흡연_1차"
 COMMIT = "--commit" in sys.argv
 
@@ -67,7 +77,7 @@ def main():
     if not SRC.exists():
         print(f"[중단] 소스 폴더 없음: {SRC}")
         sys.exit(1)
-    with psycopg.connect(DSN) as conn:
+    with psycopg.connect(DSN, connect_timeout=DB_CONNECT_TIMEOUT) as conn:
         for fname, table, mapping in SPEC:
             with conn.cursor() as cur:
                 cur.execute(f'SELECT count(*) FROM "{table}"')

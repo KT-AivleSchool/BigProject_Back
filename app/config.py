@@ -12,7 +12,9 @@ FastAPI 서버 설정(Settings) + 감리 AI(gam2) 파이프라인 설정을 함�
     (구버전의 DISTRICT_BBOX 폴백은 제거됨: filter_bbox op 삭제 + validate_geocode 폴리곤화)
 """
 
+import logging
 import os
+import re
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -24,6 +26,56 @@ try:
     load_dotenv()  # 같은 폴더의 .env 를 읽어 환경변수로
 except ImportError:
     pass  # dotenv 미설치 시 시스템 환경변수만 사용
+
+
+def _require_env(name: str) -> str:
+    """.env 에 없으면 기동을 실패시킨다. 기본값을 두지 않는 이유는 Settings 쪽 주석 참조."""
+    v = os.environ.get(name)
+    if not v:
+        raise RuntimeError(
+            f"{name} 가 .env 에 없다. 기본값을 두지 않는다(2026-08-07 로컬 DB 침해 대응). "
+            f".env.example 을 복사해 값을 채울 것."
+        )
+    return v
+
+
+# DSN 안에서 호스트만 골라낸다. 비밀번호에 `@` 가 들어갈 수 있으므로 **마지막** `@` 를 쓴다.
+_DSN_HOST_RE = re.compile(r"^(?P<pre>[a-z+]+://[^/]*@|[a-z+]+://)(?P<host>localhost)(?=[:/?]|$)")
+
+# 이름 해석이 IPv6 를 먼저 주는 호스트명 → IPv4 주소로 고정한다.
+_LOOPBACK_ALIASES = {"localhost": "127.0.0.1"}
+
+
+def _normalize_dsn(name: str, url: str) -> str:
+    """DSN 의 `localhost` 를 `127.0.0.1` 로 고정한다.
+
+    🔴 `getaddrinfo("localhost")` 는 `::1` 을 먼저 준다. 2026-08-09 보안 조치로
+       docker 가 `127.0.0.1` 에만 바인딩(IPv4 전용)하면서 IPv6 로는 아무도 안 듣게
+       됐고, OS 가 TCP 재시도를 다 쓴 뒤 IPv4 로 폴백하느라 **동기 접속 1회에
+       130초**가 걸렸다(실측 2026-08-10). asyncpg 경로는 멀쩡해서 특정
+       엔드포인트만 느려 보인다 — 안 터지고 느려지기만 하니 안 걸린다.
+
+    `.env` 를 고쳐도 다음 사람이 다시 `localhost` 를 쓴다. 여기서 막되
+    **조용히 바꾸지 않는다**(원칙 4) — 바꿨다는 사실을 로그로 남긴다.
+    호스트명만 손대고 포트·경로·자격증명은 건드리지 않는다.
+    """
+    m = _DSN_HOST_RE.match(url)
+    if not m:
+        return url
+    fixed = _LOOPBACK_ALIASES[m.group("host")]
+    logging.getLogger(__name__).warning(
+        "%s 의 호스트를 'localhost' → '%s' 로 고정했다. "
+        "IPv6(::1) 우선 해석 때문에 동기 DB 접속이 130초 걸린다(2026-08-10 실측). "
+        ".env 를 직접 고치는 편이 낫다.",
+        name,
+        fixed,
+    )
+    return url[: m.start("host")] + fixed + url[m.end("host") :]
+
+
+# 🔴 접속 타임아웃 — 명시하지 않으면 libpq 가 DB 부재를 **260초**(실측) 뒤에야
+#    알려준다. 기다림이 실패로 드러나지 않으면 사용자에겐 "원래 느린 기능"이 된다.
+DB_CONNECT_TIMEOUT = int(os.environ.get("DB_CONNECT_TIMEOUT", "10"))
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -334,11 +386,15 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "OmniSite FastAPI Monolith"
     API_V1_STR: str = "/api/v1"
 
-    # 데이터베이스 설정 (로컬 sqlite 메모리를 fallback으로 셋업하여 CI 환경 대응)
-    DATABASE_URL: str = os.getenv(
-        "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/omnisite"
-    )
-    REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    # 데이터베이스 설정
+    # 🔴 기본값을 두지 않는다(2026-08-09). 예전엔 `postgres:postgres` 가 박혀 있었고,
+    #    .env 를 빠뜨리면 **조용히 약한 자격증명으로 붙었다.** 2026-08-07 로컬 DB
+    #    침해가 정확히 그 조합이었다(0.0.0.0 노출 + 비번 postgres → 무차별 대입
+    #    → DROP DATABASE). docker-compose 는 `${VAR:?}` 로 이미 막았는데
+    #    앱만 뚫려 있으면 막은 게 아니다. 없으면 기동이 실패해야 한다(원칙 1).
+    #    호스트는 `_normalize_dsn` 이 IPv4 로 고정한다(위 함수 주석 참조).
+    DATABASE_URL: str = _normalize_dsn("DATABASE_URL", _require_env("DATABASE_URL"))
+    REDIS_URL: str = _normalize_dsn("REDIS_URL", _require_env("REDIS_URL"))
 
     # AI 및 외부 연동 API 설정
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")

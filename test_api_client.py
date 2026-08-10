@@ -4,7 +4,7 @@ import sys
 
 
 def main():
-    url = "http://localhost:8000/api/v1/simulation/stream"
+    url = "http://127.0.0.1:8000/api/v1/simulation/stream"
 
     # 이제 백엔드가 DB에서 직접 데이터를 가져오므로 더미 파일(dummy_audit.json)이 필요 없습니다!
     payload = {"parcel_id": 1, "facility_type": "흡연부스", "audit_data": {}}
