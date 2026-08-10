@@ -37,16 +37,5 @@ shapely>=2.0.0
 # Machine Learning & RAG Re-ranking
 xgboost>=2.0.0
 scikit-learn>=1.3.0
-numpy>=1.24.0
-# 🔴 아래 둘은 "있으면 좋은 것"이 아니라 **없으면 값이 달라지는 것**이다.
-#    안 터지고 조용히 다른 결과를 낸다 — 회귀 방어가 여기서 샌다(2026-08-04 추가).
-#  pyarrow : parquet 저장 엔진. 없으면 CSV 로 떨어지고 앞자리 0 이 유실된다
-#            ("00001"→1) → 조인 파괴. CLAUDE.md 함정 표의 그 항목이다
-#  pyogrio : geopandas 의 GPKG/SHP IO 엔진. 없으면 fiona 로 떨어져 동작·속도가 갈린다
 pyarrow>=15.0.0
 pyogrio>=0.8.0
-
-# 설치할 때는 constraints 를 같이 건다 — 전이 의존이 위 버전을 밀어올리는 걸 막는다.
-#   pip install -r requirements.txt -c constraints.txt
-# 실제로 sse-starlette 가 starlette 을 0.37.2 → 1.3.1 로 올려 fastapi 0.110.3 을
-# 깨뜨리려 한 적이 있다(2026-08-04). 위 sse-starlette 줄에 상한이 없어서다.
