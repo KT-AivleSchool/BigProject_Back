@@ -79,6 +79,7 @@ MVP: 용산구 흡연부스 / 2차: 성동구 재활용정거장.
 | 🔴 **점수가 내용이 아니라 라운드 수를 따라 올라갔다** | 위 건을 추적하다 나온 두 번째 결함. `evaluator.txt` 와 `graph.py` 의 호출 문구가 **"조금이라도 타협 여지가 생겼다면 무조건 이전 점수보다 상향"** 이었다 — 한 방향 지시라 근거 없이 같은 말을 되풀이해도 점수가 오른다. 토론자 프롬프트도 짝을 이뤄 "**라운드가 거듭될수록** 양보를 모색하라" 였다. 최종 시나리오 A/B/C 는 이 점수로 갈린다(`reporter.txt`) → **토론 내용과 무관하게 라운드만 채우면 A 가 나온다** | 평가 프롬프트에 **한 방향만** 허용하면 그건 평가가 아니라 카운터다. 상향·하향·유지를 다 열고, **무엇이 점수를 움직였는지 근거 대목을 반환**하게 한다. 생산자(토론자)와 소비자(평가자) 프롬프트는 **같이** 고친다 — 한쪽만 고치면 평가할 내용 자체가 안 생긴다. ✅ 2026-08-10 수정(사람 지시) |
 | 🔴 **자동 확정이 flag 를 안 남겨 HITL 화면에서 사라졌다** | `enrich_hitl_flags` 에 배제반경 자동 확정이 **둘** 있었다: ⓐ 사람이 한 번 답한 값을 run 폴더 **밖**(`search_cache/<prefix>_exclusion_radius_cache.json`, 키=`facility_type`)에 적어두고 다음 실행에서 묻지 않고 채움 ⓑ 조례 텍스트에 시설유형과 반경 숫자가 **둘 다 substring 으로 있으면** `confirmed=True`. 둘 다 **flag 를 안 만든다** → 게이트A 질문 목록에 아예 안 뜬다. 실측: 픽스처 배제 5건 중 06 지하철역·07 버스정류소는 `hitl_flags []` 라 **HITL 인데 사람이 볼 기회가 없었다.** ⓑ 는 「제5조의 10m 가 이 시설 얘기인지」를 모른다 — **근거는 되지만 확정은 아니다** | 질문 목록을 flag 같은 **부산물**에서 만들면 그 부산물을 안 만드는 경로가 곧 **구멍**이 된다. 목록은 **본체**(여기선 `hard_exclusion` role)에서 만들고 flag 는 부가정보로만 쓴다. **✅ 2026-08-10 제거**(사람 지시 · 계약 §7-7) — 캐시 삭제(`load/save_to_exclusion_cache`·`EXCLUSION_CACHE_PATH`·json 3개) · 조례 대조는 `제안값`·`출처`·`근거_시설_일치` 로 **강등** · 게이트A 가 flag 없는 role 도 질문으로 만들고 `_apply_audit` 이 답 적을 flag 를 만든다 · 미확정인 채 STEP2 진입은 `SystemExit`(`assert_exclusions_confirmed`). 확정은 **그 run 안에서만** 유효하다. `hitl` 은 `_prepare_dirs` 가 **run 안 사본만** 되돌린다(원본 픽스처 무변경) — `fixture` 는 게이트가 없으니 되돌리지 **않는다**(되돌리면 STEP2 가 멈춘다). 47/47 · 픽스처 57/57 |
 | 🔴 **검증이 최상위 키에서 멈췄다** | 위 건을 막고 나서 「배제 승격」이 막다른 길이 됐다. `apply_intent_answer(…, choice=3)` 은 `배제반경_m: null · confirmed: false` 인 `hard_exclusion` 을 **새로** 만드는데, 게이트A 질문 목록은 **답변 전에** 만들어져 그 role 의 질문이 없다 → `exclusions` 로 답하면 `400 게이트에 없는 대상`. 그런데 `intents` 항목에 `radius_m` 을 실으면 **200 인데 값이 버려졌다** — `_apply_audit` 이 payload **최상위 키**만 화이트리스트로 막고 **항목 내부는 안 봤다.** 프런트는 성공으로 읽고 run 은 STEP2 에서 죽는다. 같은 이유로 `exclusions` 의 `radius_m` 오타(`radius_mm`)가 「건너뜀 = 미확정 유지」로 읽혔다 | 화이트리스트는 **한 겹만 치면 안 친 것과 같다** — 바깥을 막고 안을 안 보면, 거절당할 줄 알았던 필드가 조용히 사라진다. 「답이 새 대상을 만드는」 질문은 **그 답과 같은 항목에서** 후속 값을 받아야 한다. 질문 목록이 정적이면 나중에 물을 자리가 없다. **✅ 2026-08-10 해소**(사람 결정 · 계약 §7-7-1) — `intents` 가 `radius_m` 을 받는다(`choice 3` 에서만, 다른 choice 면 400) · 규약은 `exclusions` 와 동일(값=확정 · `null`=면 배제 확정 · **키 생략=미확정**) · `choices` 에 **`needs_radius`** 추가(프런트가 칸 띄울 근거) · 승격은 옛 flag 의 확정 표시를 **지운다**(안 지우면 재조회 시 `editable:false` 로 굳는다) · 세 배열 **항목 내 알 수 없는 키 전부 400**. 🔴 프런트가 여분 필드를 보내고 있었다면 그 요청은 이제 400 이다 |
+| 🔴 **충돌이 안 난 파일이 우리 방어선을 지웠다** | PR #224 병합(2026-08-10). 충돌은 `app/main.py` **1건**이라 나머지는 안 봤어야 정상인데, `requirements.txt` 가 **충돌 표시 없이** auto-merge 되며 pyarrow·pyogrio 가 왜 필수인지 적은 주석과 `-c constraints.txt` 지침이 통째로 사라졌다. `main.py` 의 `include_router` 블록도 같은 이유로 PR 쪽으로 넘어가 **`/simulations`(복수) prefix 등록이 빠졌다** — 프런트 경로 5개가 조용히 404 가 될 자리다. 원리는 간단하다: **merge-base 와 우리 HEAD 가 같은 자리면** git 은 상대 변경만 적용한다. 상대 브랜치 베이스가 낡을수록 「우리가 나중에 지킨 것」이 아니라 「우리가 손대지 않은 것」이 통째로 상대 것으로 바뀐다. 같은 PR 이 `lands`·`ahp` (삭제된 파일) import 와 `try/except ImportError: None` 도 되살리려 했다 | 충돌 개수는 **위험의 크기가 아니다.** 병합 후 `git diff HEAD` 로 **수정된 기존 파일 전부**를 읽는다(신규 파일은 건너뛰어도 된다 — 겹칠 게 없다). 상대 브랜치의 merge-base 를 먼저 보고 (`git merge-base HEAD <br>`), 그 뒤 우리가 한 작업 목록을 **되돌려졌는지 기준으로** 훑는다. 주석은 코드가 아니라 잘 지워지는데, **왜 필수인지 적은 주석이 지워지면 다음 사람이 그 핀을 뺀다** |
 
 ---
 
@@ -532,13 +533,22 @@ D:\obsidian_claude\10_OmniSite\
           편집 가능해진다(값은 `제안값` 으로 보존, 원본 픽스처는 무변경).
           `fixture` 는 게이트가 없으므로 되돌리지 **않는다**(되돌리면 STEP2 가 멈춘다).
 ✅ 라우터 표면 확정  /api 경로 **9개**(auth 2·audit 2·pipeline 5)  2026-08-05 갱신
-       🔴 `merge_Back` 은 **26개**다(2026-08-10 실측 — `app.routes` 에서 직접 셈).
-          auth 2 · audit 2 · pipeline 5 · simulation **5 × 두 prefix**
-          (`/simulation`·`/simulations`) · upload **7**.
-          "20개" 로 적어뒀던 건 틀렸다 — upload 를 3개로 알고 있었는데 화면1 재작성
-          (2026-08-09)에서 7개가 됐고, 여기 숫자만 안 고쳤다. 두 prefix 라
-          simulation 은 **하나 늘면 둘 는다**(2026-08-10 `GET /candidates` 추가).
-          `develop2` 는 아직 9개다. **어느 브랜치를 보고 있는지부터 확인할 것.**
+       🔴 `merge_Back_2` 는 **31개**다(2026-08-10 PR #224 병합 후 실측 — `app.routes`).
+          auth **4**(PR #221 듀얼 토큰) · audit 2 · pipeline 5 · simulation **5 × 두 prefix**
+          (`/simulation`·`/simulations`) · upload 7 · **stakeholders 2 · report 1**(PR #224).
+          "20개"·"26개" 로 적어뒀던 건 그때그때 틀렸다 — upload 를 3개로 알던 시절,
+          auth 를 2개로 알던 시절의 숫자가 그대로 남았다. 두 prefix 라 simulation 은
+          **하나 늘면 둘 는다**. `develop2` 는 아직 9개다.
+          **어느 브랜치를 보고 있는지부터 확인할 것.**
+       🔴 **화면5 토론 엔진은 둘이다**(PR #224 병합, 2026-08-10). 하나로 합치지 않았다 —
+          **A 대립 토론**(찬반 + evaluator · `app/core/sim_ai/` · `/simulation(s)/stream`,
+          동현님) · **B 다인 토론**(이해관계자 페르소나 N명 · `app/core/stakeholder_mode/` ·
+          `/stakeholders/*`, 민영님). 입력은 공통이다 — **화면4 에서 사람이 고른 추천입지**.
+          어느 쪽으로 갈지는 **프런트가 정한다**(분기 UI 동현님 담당). 프롬프트·평가 로직을
+          고칠 때 **어느 엔진 얘기인지 먼저 확인한다** — 한쪽만 바뀐다.
+          화면6 도 둘이다: 기존 **PDF**(`pdf_service.py`, playwright) · 신규 **HWPX**
+          (`/report/download/hwpx`). ⚠ `generate_qr_png_bytes` 는 예외를 전부 삼키고
+          `b""` 를 돌려준다 — `qrcode` 가 없으면 **QR 없는 문서가 조용히 나간다**(원칙 1·4).
        services/dummy(4248ff3) · api/v1/{ahp,lands}.py(7f66fd9) 삭제.
        ahp_service 는 **미구현이 아니라 폐기** — 만들면 안 된다.
        🔴 `gis_service` 를 여기 같이 넣었던 건 **틀렸다**(정정 2026-08-06, 사람 지시).
