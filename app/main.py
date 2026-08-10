@@ -65,6 +65,18 @@ from app.api.v1 import upload
 #       우리가 고치지 않고 **이슈로 넘긴다** — 인계 문서:
 #       obsidian 10_OmniSite/04_이슈/2026-08-04_GH이슈_import시점_외부접속.md
 
+# ── 다인 토론(B) · HWPX 보고서 — PR #224 (민영님) ────────────────────────────
+#    `stakeholders` = 이해관계자 동적 생성 + 다인 토론 그래프(app/core/stakeholder_mode/)
+#    `report`       = 화면6 의 두 번째 출력 형식(HWPX). 기존 PDF 경로는 그대로 둔다.
+#    둘 다 import 시점 외부접속이 없다(확인함) — 위 upload·simulations 와 사정이 다르다.
+#
+# 🔴 PR #224 의 원본은 `auth, lands, ahp, …` 였고 pipeline·upload 를
+#    `try/except ImportError: None` 으로 감싸고 있었다. 둘 다 안 받았다:
+#      · `lands`·`ahp` 는 **삭제된 파일**이다(7f66fd9, 폐기 확정). import 하면 기동이 죽는다
+#      · try/except 는 라우터가 사라져도 서버가 뜨게 만든다 → 프런트엔 404 로만 보인다.
+#        "실패하면 건너뛰기"는 조용한 실패다(원칙 1). 못 붙일 이유가 있으면 위처럼 **적는다**
+from app.api.v1 import stakeholders, report
+
 # Uvicorn 콘솔 로거 인스턴스 획득 (터미널에 INFO 로그가 바로 노출되도록 설정)
 logger = logging.getLogger("uvicorn.error")
 
@@ -130,12 +142,9 @@ app.add_middleware(
 app.include_router(
     auth.router, prefix=settings.API_V1_STR + "/auth", tags=["Authentication"]
 )
-# 🔴 아래 2개는 뺐다. **둘 다 폐기가 아니다** — 사유가 하나로 같다:
-#    `RagVectorStorage()` 를 모듈 최상단에서 만들어 import 가 525.7초 걸린다.
-#    등록하면 uvicorn 기동이 9분이 된다. 상세와 인계 이슈는 파일 상단 주석 참조.
-#    (/lands · /ahp 는 성격이 다르다 — 그건 폐기라서 라우터 파일째 삭제했다)
-#    /simulation 과 /simulations 두 prefix 로 **같은 라우터를 두 번** 등록하고 있었다 —
-#    되살릴 때 한쪽만 살리면 프런트 경로가 조용히 404 가 된다. 둘 다 같이 처리할 것.
+# 🔴 `/simulation` 과 `/simulations` 두 prefix 로 **같은 라우터를 두 번** 등록한다 —
+#    한쪽만 등록하면 프런트 경로가 조용히 404 가 된다. 둘 다 같이 처리할 것.
+#    (PR #224 병합에서 복수형이 빠져 있었다. 충돌 표시 없이 사라진 자리다)
 app.include_router(
     simulations.router,
     prefix=settings.API_V1_STR + "/simulation",
@@ -158,6 +167,17 @@ app.include_router(
     pipeline.router,
     prefix=settings.API_V1_STR + "/pipeline",
     tags=["Pipeline Run"],
+)
+# 다인 토론(B) · HWPX — PR #224
+app.include_router(
+    stakeholders.router,
+    prefix=settings.API_V1_STR + "/stakeholders",
+    tags=["Dynamic Stakeholders"],
+)
+app.include_router(
+    report.router,
+    prefix=settings.API_V1_STR + "/report",
+    tags=["Report Generation"],
 )
 
 

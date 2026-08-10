@@ -50,3 +50,8 @@ class SseMessagePacket(BaseModel):
     )
     message: str = Field(..., description="실시간 출력 텍스트 토큰")
     is_finished: bool = Field(False, description="스트리밍 종료 여부")
+
+class StreamRequest(BaseModel):
+    parcel_id: int
+    facility_type: str
+    audit_data: Optional[dict] = None
