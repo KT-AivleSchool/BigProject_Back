@@ -2,7 +2,11 @@ from typing import List
 import logging
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import PGVector
-from app.config import settings
+from app.config import settings, DB_CONNECT_TIMEOUT
+
+# 🔴 PGVector 는 psycopg(libpq) 로 붙는다 — 여기는 `connect_timeout` 이 맞다.
+#    (asyncpg 를 쓰는 `db/session.py` 는 `timeout` 이다. 이름이 다르니 복붙 금지.)
+_PGVECTOR_ENGINE_ARGS = {"connect_args": {"connect_timeout": DB_CONNECT_TIMEOUT}}
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +41,7 @@ class RagVectorStorage:
                 collection_name="statutes_collection",
                 connection_string=self.connection_string,
                 embedding_function=self.embeddings,
+                engine_args=_PGVECTOR_ENGINE_ARGS,
             )
         except Exception as e:
             logger.warning(
@@ -50,6 +55,7 @@ class RagVectorStorage:
                 collection_name="feedback_collection",
                 connection_string=self.connection_string,
                 embedding_function=self.embeddings,
+                engine_args=_PGVECTOR_ENGINE_ARGS,
             )
         except Exception as e:
             logger.warning(f"⚠️ Vector DB (PGVector) 피드백 콜렉션 초기화 실패: {e}")
@@ -98,6 +104,48 @@ class RagVectorStorage:
             logger.error(f"[RAG Error] Statute Data Insert Error: {e}")
             raise e
 
+    def delete_statute_chunks(self, **equals) -> int:
+        """statutes_collection 에서 metadata 완전일치 청크만 지운다. 지운 행 수 반환.
+
+        같은 파일을 다시 올리면 옛 청크가 남아 **같은 조문이 두 번 인용**된다.
+        LangChain PGVector 에는 메타데이터 조건 삭제가 없어 여기서 SQL 로 한다
+        (콜렉션 행은 건드리지 않는다 — 지우면 재적재가 "Collection not found" 로 죽는다).
+
+        조건을 하나도 안 주면 전량 삭제가 되므로 **거부한다**. 전량 삭제는
+        `ingest_statutes.py --no-clean` 없이 돌리는 쪽의 일이다.
+        """
+        if not equals:
+            raise ValueError("삭제 조건이 없다. 전량 삭제는 이 함수로 하지 않는다.")
+
+        from sqlalchemy import create_engine, text as sql_text
+
+        where = " AND ".join(
+            f"cmetadata->>'{k}' = :v{i}" for i, k in enumerate(equals)
+        )
+        params = {f"v{i}": str(v) for i, v in enumerate(equals.values())}
+
+        engine = create_engine(self.connection_string)
+        try:
+            with engine.begin() as conn:
+                row = conn.execute(
+                    sql_text(
+                        "SELECT uuid FROM langchain_pg_collection WHERE name = :n"
+                    ),
+                    {"n": "statutes_collection"},
+                ).fetchone()
+                if row is None:
+                    return 0
+                res = conn.execute(
+                    sql_text(
+                        "DELETE FROM langchain_pg_embedding "
+                        f"WHERE collection_id = :cid AND {where}"
+                    ),
+                    {"cid": row[0], **params},
+                )
+                return res.rowcount or 0
+        finally:
+            engine.dispose()
+
     async def retrieve_similar_statutes(
         self, query: str, top_k: int = 3, facility_type: str = None
     ) -> List[dict]:
@@ -116,8 +164,15 @@ class RagVectorStorage:
             recall_k = max(top_k * 3, 15)
             search_kwargs = {"k": recall_k}
 
-            # [A-2] 시설 종류별 조례가 metadata로 분류되어 있지 않으므로 강제 필터링 제거
-            # (대신 query 텍스트 자체에 facility_type이 포함되어 있어 의미론적 검색으로 충분히 커버됨)
+            # 🔴 2026-08-09 필터 복구. 예전 주석은 "시설 종류별 조례가 metadata로
+            #    분류되어 있지 않으므로 강제 필터링 제거" 였는데 **사실이 아니다** —
+            #    실측하면 statutes_collection 222청크 전부 `facility_type` 을 달고 있고
+            #    값도 둘로 갈려 있다(흡연부스 178 · 전기차충전소 44).
+            #    필터가 없으면 흡연부스 토론에 전기차 충전소 조례가 근거로 섞인다.
+            #    적재기(`ingest_statutes.py`)는 "서비스는 항상 필터를 건다"를 전제로
+            #    문서별 태깅까지 해뒀다 — 한쪽만 빠져 있었다.
+            if facility_type:
+                search_kwargs["filter"] = {"facility_type": facility_type}
 
             # [A-3] 유사도 임계치 검사 및 점수 포함 검색
             docs_with_scores = (
@@ -125,6 +180,20 @@ class RagVectorStorage:
                     query, **search_kwargs
                 )
             )
+
+            # 필터로 0건이면 **태깅이 어긋난 것인지** 조례가 없는 것인지 갈린다.
+            # 둘은 처치가 다르므로 구분해서 남긴다 — 조용히 빈 배열만 주면
+            # "관련 조례 없음" 으로 읽힌다(원칙 4).
+            if not docs_with_scores and facility_type:
+                probe = await self.statutes_store.asimilarity_search_with_relevance_scores(
+                    query, k=1
+                )
+                if probe:
+                    logger.warning(
+                        f"[RAG] facility_type='{facility_type}' 로 걸러 0건인데 "
+                        f"필터 없이는 결과가 있다. 적재 메타데이터의 facility_type 값과 "
+                        f"요청 값이 어긋났을 수 있다(정확일치 검색)."
+                    )
 
             # 검색 결과가 없을 경우 안전한 빈 배열 반환
             if not docs_with_scores:

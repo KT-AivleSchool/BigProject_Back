@@ -504,19 +504,30 @@ def profile_file(
     )
 
 
+def list_dataset_files(folder: str) -> list[str]:
+    """dataset_id 가 붙을 데이터 파일 경로를 **부여 순서 그대로** 돌려준다.
+
+    `profile_folder` 가 쓰는 규칙 자체다. 별도 함수로 뺀 이유는 프로파일을
+    돌리지 않고도 "이 폴더에 파일을 넣으면 번호가 어떻게 밀리는지" 를 물어야 하는
+    곳(업로드 API)이 있기 때문이다. 규칙을 그쪽에 다시 쓰면 사본이 되고,
+    사본은 갈라져도 안 터진다 — 번호만 조용히 달라진다.
+    """
+    paths = []
+    for ext in DATA_EXTENSIONS:
+        paths += glob.glob(os.path.join(folder, f"*{ext}"))
+    # 데이터 파일만, 파일명 가나다순으로 확정(실행 간 번호 안정성 — OS 나열 순서 의존 X)
+    return sorted(
+        pp for pp in set(paths) if not os.path.basename(pp).startswith(_SKIP_PREFIXES)
+    )
+
+
 def profile_folder(folder: str, max_rows: int = PROFILE_MAX_ROWS) -> dict:
     """데이터셋 폴더 → {dataset_id: profile}.
     dataset_id 는 파일명 가나다순 '01','02'… (별도 매핑 파일 없음).
     txt/md(조례)·'_'·'.' 로 시작하는 부속 파일은 제외. 실패 파일은 건너뛰고 경고."""
     if not os.path.isdir(folder):
         raise FileNotFoundError(f"데이터셋 폴더 없음: {folder}")
-    paths = []
-    for ext in DATA_EXTENSIONS:
-        paths += glob.glob(os.path.join(folder, f"*{ext}"))
-    # 데이터 파일만, 파일명 가나다순으로 확정(실행 간 번호 안정성 — OS 나열 순서 의존 X)
-    data_paths = sorted(
-        pp for pp in set(paths) if not os.path.basename(pp).startswith(_SKIP_PREFIXES)
-    )
+    data_paths = list_dataset_files(folder)
 
     print("[profile] dataset_id — 파일명 가나다순으로 01,02… 부여")
     print(
