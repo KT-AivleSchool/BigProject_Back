@@ -596,6 +596,13 @@ D:\obsidian_claude\10_OmniSite\
        🔴 `merge_Back_2` 는 **31개**다(2026-08-10 PR #224 병합 후 실측 — `app.routes`).
           auth **4**(PR #221 듀얼 토큰) · audit 2 · pipeline 5 · simulation **5 × 두 prefix**
           (`/simulation`·`/simulations`) · upload 7 · **stakeholders 2 · report 1**(PR #224).
+          🔴 **31개 중 「돌려본 것」은 그보다 적다**(2026-08-10 로그 실측). 구현됐다고
+          실행 근거가 생기는 게 아니다. `pipeline` 5 · `upload` 7 · `simulations`(복수) 5 ·
+          `report/hwpx` 1 = **실행 확인됨**. `simulation`(단수) 5 는 안 쳤지만
+          **같은 라우터 객체**라(`main.py:148·153`) 핸들러가 동일하다. `auth` 4 는
+          통과했으나 **InMemoryDB 목**이다. 🔴 **`audit` 2 · `stakeholders` 2(B 다인
+          토론)는 한 번도 안 쳤다** — PR #224 로 들어온 뒤 미실행. 장부는
+          `02_작업일지\2026-08-10.md` §18-3.
           "20개"·"26개" 로 적어뒀던 건 그때그때 틀렸다 — upload 를 3개로 알던 시절,
           auth 를 2개로 알던 시절의 숫자가 그대로 남았다. 두 prefix 라 simulation 은
           **하나 늘면 둘 는다**. `develop2` 는 아직 9개다.
