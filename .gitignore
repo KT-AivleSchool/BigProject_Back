@@ -83,6 +83,9 @@ runs/
 uvicorn.out
 uvicorn.out.log
 uvicorn.err.log
+# 🔴 위 세 줄은 **파일명 고정**이라 포트를 붙인 이름(`uvicorn_8000.log`)이 그대로
+#    untracked 로 샜다(2026-08-10). 이름을 바꿔 띄우는 사람이 있으므로 패턴으로 받는다.
+uvicorn_*.log
 *.out
 
 # 백업 사본. 기준선을 되돌릴 일이 생기면 git 이력에서 꺼낸다 —

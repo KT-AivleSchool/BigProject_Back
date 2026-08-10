@@ -214,6 +214,7 @@ URL 이 트레이스백에 실릴 수 있고, **하필 그때가 로그를 제�
     "score_grid": null,
     "exclusion": null
   },
+  "loaded": null,
   "error": null,
   "started_at": "2026-08-04T14:02:11",
   "finished_at": null
@@ -229,6 +230,7 @@ URL 이 트레이스백에 실릴 수 있고, **하필 그때가 로그를 제�
 | `steps[].status` | `idle` \| `running` \| `done` \| `failed` |
 | `steps[].sec` | 완료된 단계의 소요 초(float). 미완료면 `null` |
 | `artifacts[name]` | 생성됐으면 **GET URL 문자열**, 아직이면 `null` |
+| `loaded` | 이 run 이 **DB 에 넣은 것**. 안 넣었으면 `null` (3-1) |
 | `error` | `failed` 일 때만 문자열. 그 외 `null` |
 | `started_at` / `finished_at` | ISO 8601. 진행 중이면 `finished_at` 은 `null` |
 
@@ -243,6 +245,35 @@ URL 이 트레이스백에 실릴 수 있고, **하필 그때가 로그를 제�
   엔드포인트** `GET /runs/{run_id}/log` 로 나간다(1절, 2026-08-05 추가).
   ⚠ 여기 "API 로 내보내지 않는다"고 적혀 있던 건 그 엔드포인트가 생기기 전 문장이다
   (2026-08-10 정정). 상태를 적은 문장은 되돌리는 변경에서 같이 지워야 한다.
+
+### 3-1. `loaded` — 이 run 이 DB 에 넣은 것 (2026-08-10 신설)
+
+```json
+"loaded": {
+  "run_id": "r_20260810_006",
+  "audit_rules": 13,
+  "booth_candidates": 20
+}
+```
+
+| 값 | 뜻 |
+|---|---|
+| `null` | 이 run 은 **아무것도 적재하지 않았다.** `fixture`·`hitl` 은 계획에 적재 칸이 아예 없고(8-5), `full` 도 적재 칸에 닿기 전까지는 `null` 이다 |
+| 객체 | 넣었다. `run_id` 는 프런트가 `GET /api/v1/simulations/candidates` 의 **`run_id` 파라미터에 그대로 넣을 값**이다 |
+
+- **`run_id` 를 값으로 준다.** 프런트가 "full 이면 최상위 run_id 와 같다"는 규칙을
+  따로 들고 있게 하지 않는다 — 규칙을 양쪽이 각자 구현하면 언젠가 갈린다.
+- 행 수의 출처는 **적재기 자신**이다. 두 로더가 마지막에 `[LOADED] table=… run_id=… rows=…`
+  한 줄을 찍고 러너가 그것만 읽는다. 러너가 DB 에 다시 세면 **적재 이후에 다른 실행이
+  건드린 값**을 이 run 의 성과로 적게 된다(원칙 4·5).
+  러너는 그 줄의 `run_id` 가 이 run 과 다르면 **단계를 `failed` 로 닫는다** —
+  적재기가 `--run` 을 무시하고 정본에 넣었는데 status 만 맞게 적히면,
+  프런트가 `/candidates?run_id=` 로 조회했을 때 0건이 나온다.
+- 🔴 **2026-08-10 이전에 만들어진 run 에는 이 키가 없다.** `read_status` 가 `null` 로
+  채우는데, 그 `null` 은 "적재 안 함"뿐 아니라 **"기록이 없다"** 도 포함한다.
+  산출물 키와 달리 디스크를 보고 사실을 복원할 수 없기 때문이다(행 수를 아는 건
+  그때 돌았던 적재기뿐이다). 구분이 필요하면 **`steps` 의 `적재-감리`·`적재-후보`
+  칸 상태**를 본다 — 그게 그 run 의 사실이다.
 
 ---
 
@@ -648,39 +679,104 @@ API 프로세스가 할 일이 아니다. 못 한 건 못 했다고 내보낸다
 → 화면 2b 의 S9 판정 표는 **읽기 전용**이다. 뒤집으려면 새 run 을 시작해야 한다.
 버튼을 붙이지 않거나, 붙인다면 "다음 실행에 반영"임을 화면에 적어야 한다.
 
-### 7-7. 미해결 — `save_to_exclusion_cache` 전역 쓰기
+### 7-7. ✅ 해소 — 배제반경 캐시 제거 · 배제는 전부 사람이 본다 (2026-08-10)
 
-`apply_radius_answer:720` 이 run 폴더 **밖**에 쓴다:
+**있던 문제.** `apply_radius_answer` 가 run 폴더 **밖**(`data_임시/search_cache/
+<prefix>_exclusion_radius_cache.json`, 키 = `facility_type`)에 확정값을 적었고,
+`enrich_hitl_flags` 가 다음 실행에서 그 값을 **묻지 않고 채웠다**(`from_cache`).
+같은 함수에 두 번째 자동 확정도 있었다 — 조례 텍스트에 시설유형과 반경 숫자가
+**둘 다 substring 으로 있으면** `confirmed=True`. 둘 다 flag 를 안 만들어서
+**게이트A 화면에 아예 안 뜬다.**
+
+**왜 고쳤나.** 그건 substring 대조다 — 「제5조의 10m 가 이 시설 얘기인지」까지는
+모른다. 근거는 되지만 확정은 아니다. 자동으로 끝까지 가야 할 때는 `mode:"fixture"`
+가 따로 있으므로, HITL 은 **"사람이 전부 본다"** 가 뜻의 전부여야 한다. (사람 지시)
+
+**바뀐 것.**
+
+| 항목 | 전 | 후 |
+|---|---|---|
+| 캐시 | `load/save_to_exclusion_cache` · `EXCLUSION_CACHE_PATH` · `_DOMAIN["cache_path"]` | **삭제**(코드·`config.py`·기존 json 3개) |
+| 조례 대조 | `confirmed=True` 로 확정 | flag 의 **`제안값`·`출처`·`근거_시설_일치`** 로 강등 |
+| `hard_exclusion` role | 일부만 flag | **전부** `confirmed=False` + `exclusion_radius_missing` flag |
+| `mode:"hitl"` 입력 | 픽스처의 옛 `confirmed:true` 를 그대로 → `editable:false` | `_prepare_dirs` 가 **run 안의 사본만** `reset_exclusion_confirmations()` 로 되돌림(값은 `제안값` 으로 보존) |
+| 미확정인 채 STEP2 | 완주하고 `report.json` gap 에만 남음 | **`SystemExit`**(`assert_exclusions_confirmed`, `gam2_clean_data.clean_domain` 진입부) |
+
+- 확정은 **그 run 안에서만** 유효하다. 다음 실행은 다시 묻는다.
+- 되돌림은 `runs/<id>/step1/` 의 **사본**에만 한다. 원본 픽스처는 안 건드린다.
+- `fixture` 모드는 게이트가 없으므로 되돌리지 **않는다** — 되돌리면 STEP2 가 멈춘다.
+  픽스처 reviewed 의 배제 5건은 모두 `confirmed:true` 라 그대로 통과한다(57/57 유지).
+- 게이트A 는 flag 가 없는 `hard_exclusion` role 도 질문으로 만든다. 안 물으면
+  STEP2 가 멈췄을 때 **답할 방법이 없어** run 이 죽는다. `_apply_audit` 은 그 답을
+  적을 flag 를 필요하면 만든다.
+- ✅ **배제 승격(`choice: 3`)의 반경은 같은 항목에서 받는다** (2026-08-10 추가, 사람 결정).
+  한때 "남은 구멍"으로 적어뒀던 건이다 — 아래 §7-7-1 참조.
+
+### 7-7-1. 배제 승격(`choice: 3`)의 반경 · 항목 내 키 검사 (2026-08-10)
+
+**있던 문제.** `apply_intent_answer(…, 3)` 은 `배제반경_m: null · confirmed: false` 인
+`hard_exclusion` role 을 **새로** 만든다. §7-7 로 미확정은 STEP2 에서 막히는데,
+게이트A 질문 목록은 **답변 전에** 만들어지므로 *그때 없던* role 의 질문이 있을 수
+없다. 실측 —
+
+| 시도 | 결과 |
+|---|---|
+| `intents: [{choice:3, radius_m:30}]` | **200 인데 값이 버려진다** — 저장된 `배제반경_m` 은 `null` |
+| `exclusions: [{dataset_id:"02", role_index:0, radius_m:30}]` (같은 요청) | `400 게이트에 없는 대상입니다` |
+| 배열 순서를 바꿔서 | 같음 — 질문 목록이 정적이다 |
+
+앞의 것이 더 나쁘다. `_apply_audit` 은 payload **최상위 키**만 화이트리스트로 막고
+**항목 내부는 안 봤다** → 프런트는 200 을 성공으로 읽고, run 은 STEP2 에서 죽는다.
+같은 이유로 `exclusions` 의 `radius_m` 오타(`radius_mm`)는 「건너뜀 = 미확정 유지」로
+읽혔다. 둘 다 조용한 실패다(원칙 1·4).
+
+**바뀐 것.**
+
+- `intents` 항목이 **`radius_m` 을 받는다**(`choice: 3` 에서만. 다른 choice 에 실으면 400).
+  규약은 `exclusions` 와 같다 — 값 = 확정 · `null` = 반경 없이 면으로 확정 ·
+  **키 생략 = 미확정 유지**(그 run 은 STEP2 에서 멈춘다).
+- 질문의 `choices` 에 **`needs_radius`** 를 넣었다. 프런트가 반경 칸을 띄울 근거다
+  (`needs_weight` 와 같은 자리). 추가 필드라 기존 응답을 안 깬다.
+- 승격은 roles 를 통째로 갈아치우므로 **옛 flag 의 확정 표시를 지운다.**
+  안 지우면 게이트를 다시 열었을 때 그 항목이 `editable: false` 로 굳는다(실측).
+- `exclusions`·`intents`·`code_prefixes` **항목 안의 알 수 없는 키는 전부 400.**
+
 ```
-data_임시/search_cache/exclusion_radius_cache.json   키 = facility_type ("금연구역")
+exclusions    dataset_id · role_index · radius_m
+intents       dataset_id · choice · weight · radius_m
+code_prefixes dataset_id · op_index · prefix
 ```
-**도메인 구분이 없다.** 흡연에서 확정한 "금연구역 50m" 가 성동구에도 적용된다.
 
-- 픽스처 회귀(57/57)는 **위험하지 않다.** 캐시는 `enrich_hitl_flags`(STEP1 감리 시점)
-  에서만 읽히고, 픽스처 모드는 `reviewed.json` 을 통째로 덮기 때문이다. (실측 확인)
-- 남는 위험은 **도메인 간 오염**뿐이다. 화면1(실제 감리 실행)을 붙일 때 다룬다.
-  그때 `apply_radius_answer` 에 `cache=False` 를 추가할지 결정한다 — 정본 수정이라
-  사람 승인이 필요하다.
-
-**부분 완화(2026-08-05).** 게이트A 답변을 적용하기 전에 `set_domain(domain)` 을 부른다.
-`gam2_audit_judgment_test` 의 캐시 경로가 도메인별 폴더 아래로 잡히므로, **API 를
-통해 들어온 답변끼리는** 섞이지 않는다. 단 CLI 로 직접 돌린 결과와의 관계는 그대로다 —
-근본 해결이 아니라 **격리 범위를 API 안으로 좁힌 것**이다. 위 항목은 살아 있다.
+🔴 **프런트가 여분 필드를 보내고 있었다면 그 요청은 이제 400 이다.** 조용히 버리던
+것을 드러낸 것이므로 의도된 변경이다.
 
 ### 7-8. 검증 결과 (2026-08-05 실측)
 
 두 가지를 확인했다. 둘 다 서버를 재시작하지 않고 러너를 **in-process** 로 불러 돌렸다.
 
-**① 게이트 로직 단위 — 37/37 통과** (`app\tools\check_hitl_gate.py 흡연`, LLM 호출 0회)
+**① 게이트 로직 단위 — 57/57 통과** (`app\tools\check_hitl_gate.py 흡연`, LLM 호출 0회)
+(2026-08-10 에 `[7]`(§7-7) 10항목 + `[8]`(§7-7-1) 10항목을 더해 37 → **57**.
+아래 목록은 앞 37개다)
 
 - 계획 배열·재개 위치(`gate:` 칸에서 재개하지 않는다)
-- 게이트A 질문 — 기존 run 의 `reviewed.json` 에서 배제 3 · 의도 0 · 지역코드 1,
-  전부 읽기 전용. `op_index` 로 실제 op(`filter_by_code_prefix`)를 찾는지
+- 게이트A 질문 — 기존 run 의 `reviewed.json` 에서 배제 **5**(2026-08-10 이전엔 3 —
+  flag 없는 role 2건을 안 물었다) · 의도 0 · 지역코드 1, 전부 읽기 전용.
+  `op_index` 로 실제 op(`filter_by_code_prefix`)를 찾는지
 - 게이트A 답변 — 확정분 수정 400 · 없는 대상 400 · 알 수 없는 필드 400 ·
   가점인데 weight 누락/0 400 · 반경 범위 400 · prefix 빈값 400 · 정상 적용 후 값 확인
 - 게이트B 검증 — 반경 누락 · admin 에 반경 · 충돌 미확정 · 없는 지표 · 범위 · 합 0 ·
   알 수 없는 필드 전부 400
 - 답변 → CLI 인자 왕복. `_parse_radius_arg`·`_parse_weight_arg`(정본 파서)로 되읽어 일치
+- `[8]` 배제 승격 반경·항목 내 키 검사 10항목 (2026-08-10 추가, §7-7-1) —
+  `needs_radius` 는 `choice 3` 에만 True · 승격 대상엔 exclusion 질문이 **없다**(그래서
+  여기서 받아야 한다) · `radius_m` 적용 후 STEP2 통과 · `null` 도 확정 · 키 생략은
+  STEP2 차단 · `choice 1` 에 `radius_m` 400 · 세 배열의 오타 필드 각각 400
+- `[7]` 배제 전부 재확인·캐시 제거 10항목 (2026-08-10 추가) — 캐시 함수·상수 부재 ·
+  `reset_exclusion_confirmations` 가 `hard_exclusion` **개수만큼** 되돌리는지 ·
+  되돌린 뒤 `제안값` 이 보존되는지 · 5건 전부 `editable` · 픽스처는
+  `assert_exclusions_confirmed` 통과하고 되돌린 문서는 **차단**되는지 ·
+  flag 없는 배제에 답하면 `배제반경_m`·`confirmed`·`source=human_confirmed` 가 써지는지 ·
+  `_prepare_dirs` 가 fixture 사본은 확정 유지 / hitl 사본만 전부 미확정 / **원본은 무변경**
 
 **② 완주 무회귀 — fixture · hitl 두 모드가 같은 값에 도달**
 (`app\tools\check_hitl_e2e.py 흡연`, 제안 패스 때문에 LLM 1회)
@@ -699,7 +795,13 @@ data_임시/search_cache/exclusion_radius_cache.json   키 = facility_type ("금
 `[] == []` 으로 통과했다 — **아무것도 안 본 채 초록불**이다. 지금은 비교 항목이
 비어 있으면 `SystemExit` 로 멈춘다. 대조기가 조용히 통과하면 회귀보다 나쁘다.
 
-hitl 쪽 답변은 게이트A `{}`(질문 4건 전부 읽기 전용) ·
+🔴 **hitl 쪽 게이트A 답변은 2026-08-10 에 `{}` 가 아니게 됐다**(§7-7).
+`_prepare_dirs` 가 배제 확정을 전부 되돌리므로 **5건 전부 편집 가능**이고, 답을
+안 내면 STEP2 가 `SystemExit` 로 멈춘다. `check_hitl_e2e.py` 는 이제 각 질문의
+`제안값`(없으면 `radius_m`)을 그대로 승인해 답을 만든다 — **픽스처가 확정했던
+바로 그 값**이라 대조의 뜻(같은 답 → 같은 값)은 그대로다. 배제 말고 편집 가능한
+질문이 있으면 답을 지어낼 수 없으므로 스크립트가 멈춘다.
+
 게이트B 는 **픽스처 반경**(`07+02=150,06+03=300,08=50,09=150,10=250`)과
 `slider_proposed` 그대로였다. 게이트B 가 제안한 LLM 반경
 (`07+02=300,06+03=300,08=100,09=50,10=200`)을 그대로 쓰면 값이 달라지는 게
@@ -827,6 +929,9 @@ STEP4 는 `topN.geojson` **파일만** 쓴다. 화면5 는 테이블 **두 개**
   재생할 때마다 다시 넣는 건 적재가 아니라 누적이다.
 - 적재기는 같은 `(domain, run_id)` 만 지우고 다시 넣는다. 다른 도메인·정본 행은 안 건드린다.
 - 개수는 **파일에 있는 만큼 전부**다. 적재기에 20 이 박혀 있지 않다.
+- 두 칸이 끝나면 `status.json` 의 **`loaded`** 에 넣은 결과가 남는다(3-1).
+  프런트는 거기 있는 `run_id` 를 `/candidates` 에 그대로 넘기면 된다 —
+  "full 이면 run_id 와 같다"는 규칙을 따로 들고 있을 필요가 없다.
 
 ✅ **같은 도메인 2회차 누적 해소 (2026-08-10, 사람 승인 · 6절 B안).** 적재는 예전부터
 `(domain, run_id)` 단위 교체였는데 읽는 쪽만 `(domain, target_facility)` 로 걸러

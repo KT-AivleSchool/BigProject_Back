@@ -126,13 +126,26 @@ d = wait(rid2, ("awaiting_hitl", "failed", "succeeded"))
 print("   status =", d["status"], "· gate =", (d.get("gate") or {}).get("id"))
 assert d["status"] == "awaiting_hitl" and d["gate"]["id"] == "audit", d
 qs = d["gate"]["questions"]
-print(f"   게이트A 질문 {len(qs)}건 · 편집가능 {sum(q['editable'] for q in qs)}건")
-if any(q["editable"] for q in qs):
-    sys.exit(
-        "🔴 픽스처인데 편집 가능한 질문이 있다 — 답을 만들 수 없다. "
-        "감리 결과가 픽스처가 아니거나 editable 판정이 틀렸다."
-    )
-R.submit_gate(rid2, "audit", {"run_id": rid2})  # 고칠 게 없다 = 빈 답
+ed = [q for q in qs if q["editable"]]
+print(f"   게이트A 질문 {len(qs)}건 · 편집가능 {len(ed)}건")
+# 🔴 2026-08-10 — hitl 모드는 배제 확정을 **전부 제안값으로 되돌린다**(사람이 전부 본다).
+#    그래서 예전처럼 빈 답을 낼 수 없다. 답은 **제안값 = 픽스처가 확정했던 값**이고,
+#    같은 답을 넣으면 fixture 와 같은 값이 나와야 한다 — 그게 이 대조의 뜻이다.
+#    배제 말고 편집 가능한 게 있으면 픽스처가 아니다(답을 지어낼 수 없다).
+other = [(q["kind"], q["dataset_id"]) for q in ed if q["kind"] != "exclusion"]
+if other:
+    sys.exit(f"🔴 배제 말고 편집 가능한 질문이 있다 — 답을 만들 수 없다: {other}")
+exclusions = [
+    {
+        "dataset_id": q["dataset_id"],
+        "role_index": q["role_index"],
+        # 제안값이 없으면 role 에 실린 값(= 픽스처 확정값)을 그대로 승인한다.
+        "radius_m": q["proposed_m"] if q["proposed_m"] is not None else q["radius_m"],
+    }
+    for q in ed
+]
+print("   답변 배제반경 =", [(e["dataset_id"], e["radius_m"]) for e in exclusions])
+R.submit_gate(rid2, "audit", {"run_id": rid2, "exclusions": exclusions})
 
 d = wait(rid2, ("awaiting_hitl", "failed", "succeeded"))
 print("   status =", d["status"], "· gate =", (d.get("gate") or {}).get("id"))

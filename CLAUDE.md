@@ -75,6 +75,10 @@ MVP: 용산구 흡연부스 / 2차: 성동구 재활용정거장.
 | 🔴 **무TTL 키가 캐시 정책을 죽인다** | 위 시딩은 키에 TTL 을 안 줬다. compose 는 `--maxmemory-policy volatile-lru` 라 **TTL 있는 키만** evict 한다 → 원본 바이트(흡연 `data/` 만 537MB · 단일 최대 279MB)가 한도를 채우면 Redis 가 **모든 쓰기를 OOM 으로 거절**한다. 지오코딩·지목 캐시가 같이 죽는데, 원인은 "캐시를 보존하려고" 고른 정책이다 | 무TTL 로 넣을 값은 **크기 상한이 있는 것만**이다. `--maxmemory` 를 올리는 건 시간을 버는 것이지 고치는 게 아니다. 시딩 키는 TTL 필수(`seed_redis.py --ttl`, 기본 24h) |
 | 🔴 **부분 복원이 조용히 통과한다** | 같은 PR 의 복원 함수는 Redis 접속 실패·키 누락을 전부 `warning` 으로 넘기고 `{}` 를 반환했다. 호출자는 「스테이징 결과가 비었으면 안 쓴다」만 봤다 → **반만 복원되면 그대로 주입**되고 파이프라인이 일부 데이터셋으로 완주한다. 지표가 0 이 아니라 **작아질 뿐**이라 안 걸린다 | 복원은 **전량·크기 대조**가 있어야 복원이다. 매니페스트(`__manifest__` 키)에 (상대경로 → 바이트수)를 남기고 하나라도 어긋나면 `raise`. 실측 확인: 키 1개를 지우고 재복원 → `RuntimeError: 매니페스트 3개 중 2개만` |
 | 🔴 **확인 문구가 삭제 범위를 축소해서 말한다** | `reset_db_redis.py` 는 `input()` 하나로 `public` 스키마를 통째로 DROP 하는데 문구는 "**파이프라인** 데이터가 삭제됩니다" 였다. 실측하면 **39테이블 688.1MB** 이고 지적도(`cadastral_lands`)·경계 3종처럼 다시 만드는 데 몇 시간 걸리는 것이 대부분이다. 게다가 실패를 `print` 로 삼켜 rc=0 으로 끝난다 | 파괴적 도구는 **지울 것을 전부 나열한 뒤** 승인을 받는다. 범위를 좁게 말하는 확인은 확인이 아니다(원칙 4). 저장소 관례대로 **계획만 출력이 기본**, `--yes` + `'DELETE'` 타이핑으로만 실행 |
+| 🔴 **표시값인 줄 알았는데 입력값이었다** | `simulations.py` 가 토론 시작 상태를 `css_pro/css_con = random.choice(["LOW","MEDIUM","HIGH"])` 로 잡았다. 화면에 뜨는 지표라 "표시가 흔들린다" 로 읽히지만, 이 값은 `graph.pro_node`·`con_node` 가 **1라운드 시스템 프롬프트를 고르는 키**다(`css_high.txt` "충분한 근거 없이는 양보하지 마세요" ↔ `css_low.txt` "가능한 빠르게 합의점을 찾으세요"). 라운드 2부터는 수용도로 결정론 재매핑되지만 **1라운드가 이후 전부의 입력**이라 결과 시나리오까지 갈린다. 같은 후보지·같은 감리 근거로 돌려도 매번 다르다 — 안 터지고 값만 틀린다 | 프런트에 나가는 값을 볼 때 **그 값이 어디로 또 흘러가는지**를 센다. "표시용"이라는 판단은 소비자를 세어 본 뒤에만 할 수 있다. **✅ 2026-08-10 제거**(사람 결정 A안) — `INITIAL_CSS_LEVEL = "HIGH"` 로 고정. 새로 정한 값이 아니라 **이미 세 곳에 선언돼 있던 기본값**이다(`state.get("css_pro","HIGH")` · `CSS_PROMPT_TEMPLATE` 폴백 · `_map_css_by_score(0.0)`). 값과 출처는 `result_json["determinism"]` 에 남긴다 |
+| 🔴 **점수가 내용이 아니라 라운드 수를 따라 올라갔다** | 위 건을 추적하다 나온 두 번째 결함. `evaluator.txt` 와 `graph.py` 의 호출 문구가 **"조금이라도 타협 여지가 생겼다면 무조건 이전 점수보다 상향"** 이었다 — 한 방향 지시라 근거 없이 같은 말을 되풀이해도 점수가 오른다. 토론자 프롬프트도 짝을 이뤄 "**라운드가 거듭될수록** 양보를 모색하라" 였다. 최종 시나리오 A/B/C 는 이 점수로 갈린다(`reporter.txt`) → **토론 내용과 무관하게 라운드만 채우면 A 가 나온다** | 평가 프롬프트에 **한 방향만** 허용하면 그건 평가가 아니라 카운터다. 상향·하향·유지를 다 열고, **무엇이 점수를 움직였는지 근거 대목을 반환**하게 한다. 생산자(토론자)와 소비자(평가자) 프롬프트는 **같이** 고친다 — 한쪽만 고치면 평가할 내용 자체가 안 생긴다. ✅ 2026-08-10 수정(사람 지시) |
+| 🔴 **자동 확정이 flag 를 안 남겨 HITL 화면에서 사라졌다** | `enrich_hitl_flags` 에 배제반경 자동 확정이 **둘** 있었다: ⓐ 사람이 한 번 답한 값을 run 폴더 **밖**(`search_cache/<prefix>_exclusion_radius_cache.json`, 키=`facility_type`)에 적어두고 다음 실행에서 묻지 않고 채움 ⓑ 조례 텍스트에 시설유형과 반경 숫자가 **둘 다 substring 으로 있으면** `confirmed=True`. 둘 다 **flag 를 안 만든다** → 게이트A 질문 목록에 아예 안 뜬다. 실측: 픽스처 배제 5건 중 06 지하철역·07 버스정류소는 `hitl_flags []` 라 **HITL 인데 사람이 볼 기회가 없었다.** ⓑ 는 「제5조의 10m 가 이 시설 얘기인지」를 모른다 — **근거는 되지만 확정은 아니다** | 질문 목록을 flag 같은 **부산물**에서 만들면 그 부산물을 안 만드는 경로가 곧 **구멍**이 된다. 목록은 **본체**(여기선 `hard_exclusion` role)에서 만들고 flag 는 부가정보로만 쓴다. **✅ 2026-08-10 제거**(사람 지시 · 계약 §7-7) — 캐시 삭제(`load/save_to_exclusion_cache`·`EXCLUSION_CACHE_PATH`·json 3개) · 조례 대조는 `제안값`·`출처`·`근거_시설_일치` 로 **강등** · 게이트A 가 flag 없는 role 도 질문으로 만들고 `_apply_audit` 이 답 적을 flag 를 만든다 · 미확정인 채 STEP2 진입은 `SystemExit`(`assert_exclusions_confirmed`). 확정은 **그 run 안에서만** 유효하다. `hitl` 은 `_prepare_dirs` 가 **run 안 사본만** 되돌린다(원본 픽스처 무변경) — `fixture` 는 게이트가 없으니 되돌리지 **않는다**(되돌리면 STEP2 가 멈춘다). 47/47 · 픽스처 57/57 |
+| 🔴 **검증이 최상위 키에서 멈췄다** | 위 건을 막고 나서 「배제 승격」이 막다른 길이 됐다. `apply_intent_answer(…, choice=3)` 은 `배제반경_m: null · confirmed: false` 인 `hard_exclusion` 을 **새로** 만드는데, 게이트A 질문 목록은 **답변 전에** 만들어져 그 role 의 질문이 없다 → `exclusions` 로 답하면 `400 게이트에 없는 대상`. 그런데 `intents` 항목에 `radius_m` 을 실으면 **200 인데 값이 버려졌다** — `_apply_audit` 이 payload **최상위 키**만 화이트리스트로 막고 **항목 내부는 안 봤다.** 프런트는 성공으로 읽고 run 은 STEP2 에서 죽는다. 같은 이유로 `exclusions` 의 `radius_m` 오타(`radius_mm`)가 「건너뜀 = 미확정 유지」로 읽혔다 | 화이트리스트는 **한 겹만 치면 안 친 것과 같다** — 바깥을 막고 안을 안 보면, 거절당할 줄 알았던 필드가 조용히 사라진다. 「답이 새 대상을 만드는」 질문은 **그 답과 같은 항목에서** 후속 값을 받아야 한다. 질문 목록이 정적이면 나중에 물을 자리가 없다. **✅ 2026-08-10 해소**(사람 결정 · 계약 §7-7-1) — `intents` 가 `radius_m` 을 받는다(`choice 3` 에서만, 다른 choice 면 400) · 규약은 `exclusions` 와 동일(값=확정 · `null`=면 배제 확정 · **키 생략=미확정**) · `choices` 에 **`needs_radius`** 추가(프런트가 칸 띄울 근거) · 승격은 옛 flag 의 확정 표시를 **지운다**(안 지우면 재조회 시 `editable:false` 로 굳는다) · 세 배열 **항목 내 알 수 없는 키 전부 400**. 🔴 프런트가 여분 필드를 보내고 있었다면 그 요청은 이제 400 이다 |
 
 ---
 
@@ -146,7 +150,7 @@ python app\tools\check_loader_health.py <도메인>     :: 좌표계·행정동 
 python app\tools\check_ordinance_select.py <도메인>  :: 조례 조문 선별
 python app\tools\check_exclusion_state.py <도메인>   :: 배제 레이어 면적
 python app\tools\check_fixture.py <도메인>           :: 회귀 픽스처 대조 (S12) [--restore]
-python app\tools\check_hitl_gate.py <도메인>         :: A2 — HITL 게이트 단위 37항목 (runs/ 불필요)
+python app\tools\check_hitl_gate.py <도메인>         :: A2 — HITL 게이트 단위 57항목 (runs/ 불필요)
 python app\tools\check_hitl_e2e.py <도메인>          :: A2 — fixture ↔ hitl 완주 대조 (🔴 LLM 1회)
 python app\tools\check_upload_api.py                 :: 업로드 API 25항목 (in-process TestClient)
                                                      :: [--no-ingest] 벡터 적재·검색 제외 → 16항목·LLM 0회
@@ -357,7 +361,12 @@ D:\obsidian_claude\10_OmniSite\
                                        `_select_audit_rules` 도메인 조건 · 테스트 산출물 제거 ·
                                        §9-5 화면1→3 배선 결함 → **§10 `mode:"full"` 로 해소** ·
                                        §11 업로드→화면6 **완주 실측** ·
-                                       **§12 `audit_rules` run_id 정렬**(정본 어휘 통일 · A안 철회 경위)
+                                       **§12 `audit_rules` run_id 정렬**(정본 어휘 통일 · A안 철회 경위) ·
+                                       **§13 프런트 요청 3건** — `has_fixture`(러너 판정 재사용) ·
+                                       토론 초기 CSS 무작위 제거 + 평가/토론 프롬프트 정정 ·
+                                       `status.json` **`loaded`** 신설 ·
+                                       **§13-5 재시작 후 살아 있는 서버 실측**(토론 2회 —
+                                       수용도가 라운드가 아니라 **근거**를 따라 움직인다)
   02_작업일지\2026-08-09.md           ← DSN 기본값 제거 4곳 · _reap_orphans 부팅1회 ·
                                        scalar_first · 낡은 주석 정정 · 누락 테이블 생성 ·
                                        감리 로더 재작성 · **§7 STEP5 저장 B안 적용**
@@ -481,6 +490,16 @@ D:\obsidian_claude\10_OmniSite\
           🔴 **화면 번호와 STEP 번호를 섞어 쓰지 말 것**(프런트 설계 §3). "화면1→3"
           은 화면 번호이고 **화면2 를 건너뛴다는 뜻이 아니다** — 1·2·3 을 잇는다는 뜻이다.
        산출물 화이트리스트 8키(reviewed·exclusion 포함) · 응답 media_type 명시
+       ✅ **`status.json` 에 `loaded` 신설**(2026-08-10, 사람 결정 · 계약 3-1).
+          이 run 이 **DB 에 넣은 것**이다 — `{run_id, audit_rules, booth_candidates}`,
+          안 넣었으면 `null`(fixture·hitl 은 계획에 적재 칸이 없다).
+          프런트는 여기 있는 `run_id` 를 `/candidates` 에 그대로 넘긴다 —
+          "full 이면 run_id 와 같다"는 **규칙을 양쪽이 각자 구현하지 않게** 값으로 준다.
+          행 수는 적재기가 찍는 약속된 줄(`[LOADED] table=… run_id=… rows=…`)에서만
+          읽는다. 러너가 DB 에 다시 세면 **적재 이후 남이 건드린 값**을 이 run 의
+          성과로 적게 된다. 그 줄의 run_id 가 어긋나면 단계를 `failed` 로 닫는다.
+          ⚠ 옛 run 은 키가 없어 `null` 로 채워지는데, 그 `null` 은 "기록 없음"도
+          포함한다 — 구분이 필요하면 `steps` 의 `적재-감리`·`적재-후보` 칸을 본다
        화이트리스트에 키를 추가하면 **옛 run 의 status.json 에는 그 키가 없다**
        (생성 시점 ARTIFACTS 로 굳는다) → `read_status` 가 빠진 키만 디스크 보고
        채운다. 있는 값은 안 건드리고 파일에도 안 쓴다
@@ -492,7 +511,7 @@ D:\obsidian_claude\10_OmniSite\
        HITL 은 파이프라인이 멈춰서 사람을 기다리는 게이트다. **재실행 0회.**
        `mode: "hitl"` · `POST /runs/{id}/hitl/{audit,weight}` ·
        `status: awaiting_hitl` + `gate` 로 멈추고 POST 로 이어간다
-       게이트A(STEP1 끝: 배제반경·데이터의도·지역코드 — 확정분은 **읽기 전용**) ·
+       게이트A(STEP1 끝: 배제반경·데이터의도·지역코드) ·
        게이트B(STEP3 중간: [R] 집계반경 + [W] 슬라이더 -1~+1 을 **한 게이트로**).
        게이트B 앞에 `--propose-only` 제안 패스 1회(9.6초, LLM mini 1회)를 둔다 —
        제안값은 돌려봐야 나오고, API 쪽에서 다시 구현하면 CLI 와 갈라진다
@@ -505,8 +524,13 @@ D:\obsidian_claude\10_OmniSite\
           gam2_audit_judgment_test 4개 · run_weight_model 3개 · 나머지 전부 0개
        정본(`gam2_*`) 수정 없음. 답변 적용은 `apply_radius_answer`·
        `apply_intent_answer`·`apply_weight_hitl` **정본 함수로만** 한다
-       검증 — `check_hitl_gate.py` 37/37 · `check_hitl_e2e.py` 로
+       검증 — `check_hitl_gate.py` **57/57** · `check_hitl_e2e.py` 로
        fixture ↔ hitl **10항목 전부 일치**(같은 답을 넣으면 같은 값이 나온다)
+       ✅ **배제는 이제 hitl·full 에서 전부 사람이 본다**(2026-08-10, 사람 지시 · 계약 §7-7).
+          "확정분은 읽기 전용" 이라고 적어뒀던 건 폐기한다 — `_prepare_dirs` 가
+          **run 안의 사본만** `reset_exclusion_confirmations()` 로 되돌려 5건 전부
+          편집 가능해진다(값은 `제안값` 으로 보존, 원본 픽스처는 무변경).
+          `fixture` 는 게이트가 없으므로 되돌리지 **않는다**(되돌리면 STEP2 가 멈춘다).
 ✅ 라우터 표면 확정  /api 경로 **9개**(auth 2·audit 2·pipeline 5)  2026-08-05 갱신
        🔴 `merge_Back` 은 **26개**다(2026-08-10 실측 — `app.routes` 에서 직접 셈).
           auth 2 · audit 2 · pipeline 5 · simulation **5 × 두 prefix**

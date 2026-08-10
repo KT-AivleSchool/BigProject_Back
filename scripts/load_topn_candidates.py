@@ -268,6 +268,11 @@ def main() -> int:
     print(f"[land_id] 공간조인 성공 {len(inserted) - len(no_land)} / 실패(NULL) {len(no_land)}")
     top1 = next((i for i, rk, _ in inserted if rk == 1), None)
     print(f"[TOP1] booth_candidates.id = {top1}  ← 화면5 가 쓸 parcel_id")
+    # 🔴 러너(`pipeline_runner._LOADED_RE`)가 읽는 **약속된 한 줄**이다.
+    #    status.json 의 `loaded` 가 여기서 나온다. 형식을 바꾸면 status 가 조용히
+    #    비고, 프런트는 "적재 안 됨"으로 읽는다(원칙 4). 위의 사람용 출력들과 달리
+    #    이 줄은 소비자가 있다 — 지우거나 문구를 손보지 말 것.
+    print(f"[LOADED] table=booth_candidates run_id={run_id} rows={len(inserted)}")
     return 0
 
 

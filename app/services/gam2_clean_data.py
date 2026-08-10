@@ -424,6 +424,10 @@ def clean_domain(domain_dir: str, csv_preview: bool = False, prune: bool = True)
     with open(result_path, encoding="utf-8") as f:
         doc = json.load(f)
     results = doc.get("results", [])
+    # 🔴 배제 미확정이면 여기서 멈춘다(2026-08-10 사람 결정). 예전엔 그대로 완주해
+    #    report.json 의 gap 에만 남았다 — 배제가 빠진 Top-N 이 화면4·5 로 갔다.
+    #    CLI·러너 어느 쪽으로 들어와도 STEP2 는 이 함수를 지나므로 여기 한 곳이면 된다.
+    A.assert_exclusions_confirmed(doc, src=result_path)
     fac = doc.get("facility_inference", {}) or {}
     facility, region = fac.get("facility"), fac.get("region")
     if not facility or not region:

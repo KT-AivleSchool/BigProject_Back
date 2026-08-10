@@ -50,6 +50,28 @@ class CandidateNotFound(Exception):
     """`parcel_id` 로 booth_candidates 를 못 찾았다. 좌표를 지어내지 않고 멈추기 위한 예외."""
 
 
+# 토론 1라운드의 CSS(갈등 민감도) 초기값.
+#
+# 🔴 예전엔 `random.choice(["LOW","MEDIUM","HIGH"])` 였다. 이건 표시값이 아니라
+#    **1라운드 프롬프트를 갈아끼우는 값**이다 — `graph.pro_node:109`·`con_node:149` 가
+#    이 값으로 `css_{high,medium,low}.txt` 중 하나를 고른다("근거 없이는 양보하지
+#    마세요" ↔ "가능한 빠르게 합의점을 찾으세요"). 같은 후보지·같은 감리 근거로도
+#    토론 내용이 매번 달라졌고, 라운드 1은 이후 라운드 전부의 입력이라 결과까지 갈렸다.
+#    안 터지고 값만 틀린다.
+#
+# HIGH 로 고정한 이유 — **새로 정한 값이 아니라 이미 선언돼 있던 기본값**이다.
+#    ① `graph.py:109/149` 의 `state.get("css_pro", "HIGH")` ② `prompts.py:62` 의
+#    `CSS_PROMPT_TEMPLATE` 폴백 ③ 수용도 0.0 에서 출발하므로
+#    `graph._map_css_by_score(0.0) == "HIGH"` — 라운드 1만 따로 놀지 않는다.
+#    라운드 2부터는 예나 지금이나 evaluator 의 수용도 점수로 결정론적으로 다시 매핑된다.
+#
+# 도메인 값이 아니라 **토론 진행 방식**이라 원칙 2(하드코딩 금지)에 걸리지 않는다.
+# 대신 값과 출처를 `result_json["determinism"]` 에 남긴다 — 안 남기면 AI 가 판정한
+# 초기값처럼 읽힌다(원칙 4).
+INITIAL_CSS_LEVEL = "HIGH"
+INITIAL_CSS_SOURCE = "deterministic_default"
+
+
 def _scenario_code(scenario: dict) -> str | None:
     """시나리오 객체에서 A/B/C 를 뽑는다. 못 뽑으면 None (추측하지 않는다)."""
     raw = str(scenario.get("scenario") or "").strip().upper()
@@ -442,7 +464,9 @@ async def run_debate_and_publish(
                 "lat": row.lat,
                 "lng": row.lng,
                 "jibun": f"후보지 #{parcel.id} (실제 위치 기반)",
-                "intensity_level": "보통",  # Fallback default
+                # ⚠ 측정값이 아니다. 산출 근거가 없어 고정값을 쓰고 있고,
+                #   그 사실을 `result_json["determinism"]` 에 남긴다(원칙 4).
+                "intensity_level": "보통",
                 "ahp_weights": audit_meta.get("ahp_weights", {}),
             }
 
@@ -539,12 +563,12 @@ async def run_debate_and_publish(
             print("=" * 60 + "\n")
 
             timestamp = datetime.datetime.now().isoformat()
-            import random
 
             initial_state = {
                 "messages": [],
-                "css_pro": random.choice(["LOW", "MEDIUM", "HIGH"]),
-                "css_con": random.choice(["LOW", "MEDIUM", "HIGH"]),
+                # 무작위 아님. 근거는 INITIAL_CSS_LEVEL 주석 참조.
+                "css_pro": INITIAL_CSS_LEVEL,
+                "css_con": INITIAL_CSS_LEVEL,
                 "round_count": 0,
                 "current_phase": "debate",
                 "eval_score": 0.0,
@@ -706,6 +730,17 @@ async def run_debate_and_publish(
                                 "conflict_factors": current_state.get(
                                     "ahp_weights", {}
                                 ),
+                                # 이 토론에 들어간 값 중 **측정된 게 아닌 것**을 밝힌다.
+                                # 안 적으면 AI 가 판정한 값처럼 읽힌다(원칙 4).
+                                "determinism": {
+                                    "initial_css_pro": INITIAL_CSS_LEVEL,
+                                    "initial_css_con": INITIAL_CSS_LEVEL,
+                                    "initial_css_source": INITIAL_CSS_SOURCE,
+                                    # ⚠ intensity_level 은 아직 측정값이 아니다
+                                    #   (`gis_data` 조립부의 고정값). 산출할 근거가
+                                    #   생기기 전까지는 그 사실을 여기 남긴다.
+                                    "intensity_level_source": "hardcoded_default",
+                                },
                             }
 
                             # 최종 JSON을 DB에 저장 (ConflictSimulation)

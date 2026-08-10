@@ -171,6 +171,11 @@ async def main() -> int:
 
     print(f"[교체] 기존 {deleted.rowcount}행 삭제 → {len(rows)}행 삽입")
     print(f"[결과] audit_rules 전체 {total}행")
+    # 🔴 러너(`pipeline_runner._LOADED_RE`)가 읽는 **약속된 한 줄**이다.
+    #    status.json 의 `loaded` 가 여기서 나온다. 형식을 바꾸면 status 가 조용히
+    #    비고, 프런트는 "적재 안 됨"으로 읽는다(원칙 4). 위의 사람용 출력들과 달리
+    #    이 줄은 소비자가 있다 — 지우거나 문구를 손보지 말 것.
+    print(f"[LOADED] table=audit_rules run_id={run_id} rows={len(rows)}")
     return 0
 
 

@@ -39,7 +39,13 @@ if _ROOT not in _sys.path:
 
 from app import config
 from app.services.gam2_audit_ops_catalog import describe_all
-from app.config import STEP1_OUTPUT_DIR, SEARCH_CACHE_DIR, EXCLUSION_CACHE_PATH
+from app.config import STEP1_OUTPUT_DIR
+
+# 🔴 배제반경 캐시는 2026-08-10 제거했다(사람 지시). 예전엔 사람이 한 번 확정한
+#    시설유형→반경을 `<prefix>_exclusion_radius_cache.json` 에 적어두고 다음 실행에서
+#    **묻지 않고 채웠다.** 자동 진행이 필요한 경우는 이제 `mode:"full"` 이 맡는다 —
+#    HITL 은 "사람이 전부 본다"가 뜻의 전부여야 한다. 캐시가 남아 있으면 화면에
+#    안 뜨는 항목이 생기고, 그건 사람이 확인한 것처럼 기록된다(원칙 4).
 
 
 # ── 도메인 컨텍스트 (실행 시 set_domain 으로 채움; 전까지는 기존 기본값) ──
@@ -49,7 +55,6 @@ _DOMAIN = {
     "law": None,
     "fixture": None,
     "profiles": None,
-    "cache_path": EXCLUSION_CACHE_PATH,
 }
 
 
@@ -62,9 +67,6 @@ def set_domain(domain_dir: str) -> None:
         law=p["law"],
         fixture=p["fixture"],
         profiles=p["profiles"],
-        cache_path=os.path.join(
-            SEARCH_CACHE_DIR, f"{p['prefix']}_exclusion_radius_cache.json"
-        ),
     )
 
 
@@ -703,14 +705,14 @@ def apply_radius_answer(
     result: dict, flag: dict, radius_m: int | None, source: str = "human_confirmed"
 ) -> None:
     """HITL 답변을 roles·flag 에 반영(메모리). radius_m=None 이면 '반경 없음(면 배제 등)'.
-    사람이 확정한 값만 confirmed=true → 캐시 저장(다음 실행에서 재사용).
+
+    확정은 **이 run 안에서만** 유효하다. 다음 실행으로 넘기지 않는다(캐시 제거, 2026-08-10).
     """
     idx = flag.get("role_index", 0)
     roles = result.get("roles", [])
     if idx >= len(roles):
         return
     role = roles[idx]
-    ftype = role.get("facility_type")
 
     role["배제반경_m"] = radius_m
     role["confirmed"] = True  # 사람이 확인함 → 확정
@@ -720,9 +722,88 @@ def apply_radius_answer(
     flag["confirmed"] = True
     flag["confirmed_by_human"] = True
 
-    # 사람 확정값만 캐시 (반경이 실제로 있는 경우만 — None 은 캐시 의미 없음)
-    if ftype and radius_m is not None:
-        save_to_exclusion_cache(ftype, radius_m, source, confirmed_by="human")
+
+def reset_exclusion_confirmations(doc: dict) -> int:
+    """이미 확정돼 있던 배제(hard_exclusion)를 **제안값으로 되돌린다**. 반환 = 되돌린 건수.
+
+    `mode:"hitl"` 은 STEP1 을 안 돈다 — 고정된 감리 산출물(픽스처/정본)을 그대로 쓰는데
+    거기엔 예전에 확정된 `confirmed:true` 가 이미 박혀 있다. 그대로 두면 게이트A 가
+    그 항목을 `editable:false` 로 내보내 **사람이 볼 수는 있어도 고칠 수 없다.**
+    "HITL 인데 사람이 전부 확인한다"가 성립하려면 이 값들이 제안값이어야 한다
+    (2026-08-10 사람 지시).
+
+    값은 지우지 않는다 — `배제반경_m`·`source` 는 그대로 두고 flag 의 `제안값` 으로도
+    올린다. 사람이 Enter 로 그대로 승인하면 같은 값이 다시 확정된다.
+    """
+    n = 0
+    for r in doc.get("results", []):
+        flags = r.setdefault("hitl_flags", [])
+        by_idx = {
+            f.get("role_index", 0): f
+            for f in flags
+            if f.get("type") == "exclusion_radius_missing"
+        }
+        for i, role in enumerate(r.get("roles", [])):
+            if role.get("role") != "hard_exclusion":
+                continue
+            was_confirmed = role.get("confirmed") is True
+            f = by_idx.get(i)
+            if f is None:
+                f = {"type": "exclusion_radius_missing", "role_index": i}
+                flags.append(f)
+            if f.get("제안값") is None and role.get("배제반경_m") is not None:
+                f["제안값"] = role["배제반경_m"]
+                f["출처"] = role.get("source") or f.get("출처")
+            f["message"] = (
+                "이전 실행에서 확정된 값입니다(이번 실행에서는 제안값). 다시 확인하세요."
+                if was_confirmed
+                else "배제 대상이나 반경이 확정되지 않았습니다. 확인이 필요합니다."
+            )
+            f["이전_확정"] = was_confirmed
+            # 확정 표시를 지운다 — 남겨두면 게이트A 가 editable:false 로 내보낸다.
+            f.pop("confirmed", None)
+            f.pop("confirmed_by_human", None)
+            role["confirmed"] = False
+            role["need_review"] = True
+            n += 1
+    return n
+
+
+def assert_exclusions_confirmed(doc: dict, src: str = "") -> None:
+    """배제(hard_exclusion) 중 미확정이 하나라도 있으면 **멈춘다**(SystemExit).
+
+    2026-08-10 사람 결정. 예전엔 미확정인 채로 STEP2~4 를 완주하고 `report.json` 의
+    gap(`배제판정_확인요청`)에만 남았다 — 산출물은 정직했지만 **아무도 안 봤고**
+    배제가 빠진 Top-N 이 그대로 화면4·5 로 갔다. 배제는 후보를 지우는 조건이라
+    빠지면 결과가 뒤집힌다. 「경고하고 진행」이 아니라 「멈춤」이 맞다(원칙 1).
+
+    푸는 방법은 하나다 — 게이트A(API `POST /runs/{id}/hitl/audit`) 또는
+    CLI `hitl` 에서 **사람이 반경을 확정**한다. 반경 없이 면으로 배제할 항목은
+    `radius_m: null`(CLI 는 `n`)로 확정한다. 이것도 확정이다.
+    """
+    bad: list[str] = []
+    for r in doc.get("results", []):
+        did = r.get("dataset_id", "?")
+        for i, role in enumerate(r.get("roles", [])):
+            if role.get("role") != "hard_exclusion":
+                continue
+            if role.get("confirmed") is True:
+                continue
+            bad.append(
+                f"  [{did}] roles[{i}] {role.get('facility_type') or role.get('rationale') or '?'}"
+                f"  (배제반경_m={role.get('배제반경_m')} · exclusion_type="
+                f"{role.get('exclusion_type')})"
+            )
+    if not bad:
+        return
+    raise SystemExit(
+        f"🔴 배제 {len(bad)}건이 미확정이라 STEP2 로 넘어가지 않는다"
+        + (f" — {src}" if src else "")
+        + "\n"
+        + "\n".join(bad)
+        + "\n   게이트A(HITL)에서 배제반경을 확정할 것. 반경 없이 면으로 배제할"
+        " 항목은 null(CLI 는 n)로 확정한다 — 그것도 확정이다."
+    )
 
 
 def _read_radius(default: int | None = None) -> int | None | str:
@@ -757,8 +838,7 @@ def _read_radius(default: int | None = None) -> int | None | str:
 def confirm_exclusion_radius(
     enriched_path: str, dataset_id: str, radius_m: int, out_path: str | None = None
 ) -> str:
-    """HITL 담당자가 서핑 제안값을 확인·확정할 때 호출. confirmed=true 로 바꾸고 캐시에 저장.
-    (서핑 제안값은 confirmed=false 라 캐시 안 됨 → 사람이 이 함수로 확정해야 캐시됨)"""
+    """HITL 담당자가 서핑 제안값을 확인·확정할 때 호출. confirmed=true 로 바꾼다."""
     doc = json.load(open(enriched_path, encoding="utf-8"))
     for r in doc["results"]:
         if not r["dataset_id"].startswith(dataset_id):
@@ -767,9 +847,6 @@ def confirm_exclusion_radius(
             if f.get("type") != "exclusion_radius_missing":
                 continue
             idx = f.get("role_index", 0)
-            roles = r.get("roles", [])
-            # facility_type 은 flag 에 중복 저장하지 않는다 — role_index 로 roles[i] 에서 조회.
-            ftype = roles[idx].get("facility_type") if idx < len(roles) else None
             f["제안값"] = radius_m
             f["confirmed_by_human"] = True
             # roles 쪽도 확정 반영
@@ -777,53 +854,9 @@ def confirm_exclusion_radius(
                 r["roles"][idx]["배제반경_m"] = radius_m
                 r["roles"][idx]["confirmed"] = True
                 r["roles"][idx]["need_review"] = False
-            # 사람 확정 → 캐시 저장
-            if ftype:
-                save_to_exclusion_cache(
-                    ftype,
-                    radius_m,
-                    f.get("출처", "human_confirmed"),
-                    confirmed_by="human",
-                )
     path = out_path or enriched_path
     json.dump(doc, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
     return path
-
-
-def load_exclusion_cache(path: str | None = None) -> dict:
-    """시설유형→배제반경 캐시 로드. confirmed=true 로 확인된 값만 들어있다."""
-    import os
-
-    path = path or _DOMAIN["cache_path"]
-    if not os.path.exists(path):
-        return {}
-    try:
-        return json.load(open(path, encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {}
-
-
-def save_to_exclusion_cache(
-    facility_type: str,
-    radius_m,
-    source: str,
-    confirmed_by: str,
-    path: str | None = None,
-) -> None:
-    """confirmed=true 값만 캐시에 저장(호출부에서 confirmed 확인). 키=시설유형."""
-    import os
-    from datetime import date
-
-    path = path or _DOMAIN["cache_path"]
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    cache = load_exclusion_cache(path)
-    cache[facility_type] = {
-        "배제반경_m": radius_m,
-        "출처": source,
-        "confirmed_by": confirmed_by,
-        "date": date.today().isoformat(),
-    }
-    json.dump(cache, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 
 
 def _norm(s: str) -> str:
@@ -838,15 +871,16 @@ def enrich_hitl_flags(
 ) -> dict:
     """LLM 판정을 받은 뒤, 사람 검토가 필요한 항목을 코드가 결정론적으로 hitl_flags에 채운다.
     (LLM 판정 실수와 무관하게 항상 보장 — '판정=LLM, 확정=코드' 원칙)
-    배제 confirmed 는 LLM 이 emit 한 값을 신뢰하지 않고 코드가 조례로 재판정한다:
-      confirmed=True  ⟺  radius 값이 있고 + 시설유형·값이 조례 텍스트에 실제로 있을 때(→캐시)
-      그 외(조례에 없음/값 null/polygon) 전부 → confirmed=False + exclusion_radius_missing(검색·HITL).
-    캐시 히트(사람·조례로 이미 확정)면 즉시 채움.
+
+    🔴 2026-08-10(사람 지시) — **배제(hard_exclusion)는 예외 없이 전부 사람이 본다.**
+       예전엔 두 경로가 사람을 건너뛰었다: ⓐ 캐시 히트(제거됨) ⓑ 조례 텍스트에
+       시설유형·값이 둘 다 있으면 `confirmed=True`. ⓑ 는 substring 대조라
+       「제5조의 10m 가 이 시설 얘기인지」까지는 알 수 없다 — 근거는 되지만
+       확정은 아니다. 자동으로 끝까지 가야 할 때는 `mode:"full"` 이 따로 있다.
+       이제 조례 근거는 **제안값**으로 내려가고, 확정은 사람 답변으로만 붙는다.
     """
     flags = list(pred.get("hitl_flags", []))
-    pred.get("dataset_id", "")
-    cache = load_exclusion_cache()
-    ord_norm = _norm(load_ordinance())  # 현재 도메인 조례 텍스트(검증 근거)
+    ord_norm = _norm(load_ordinance())  # 현재 도메인 조례 텍스트(제안 근거)
     existing = {(f.get("type"), f.get("role_index")) for f in flags}
     for i, r in enumerate(pred.get("roles", [])):
         if r.get("role") != "hard_exclusion":
@@ -855,32 +889,13 @@ def enrich_hitl_flags(
         radius = r.get("배제반경_m")
         is_radius = r.get("exclusion_type", "radius") == "radius"
 
-        # 1) 캐시 히트(사람·조례로 이미 확정된 값) → 즉시 채움
-        if is_radius and radius is None and ftype and ftype in cache:
-            c = cache[ftype]
-            r.update(
-                배제반경_m=c["배제반경_m"],
-                source=c.get("출처"),
-                confirmed=True,
-                need_review=False,
-                from_cache=True,
-            )
-            continue
-
-        # 2) 조례 대조: radius 값 존재 + 시설유형·값이 조례에 실제로 있어야만 confirmed
+        # 조례 대조: radius 값 존재 + 시설유형·값이 조례에 실제로 있으면 **제안값**.
         ftype_in_ord = bool(ftype) and _norm(ftype) in ord_norm
         value_in_ord = radius is not None and str(radius) in ord_norm
-        if is_radius and radius is not None and ftype_in_ord and value_in_ord:
-            r["confirmed"] = True
-            r["need_review"] = False
-            save_to_exclusion_cache(
-                ftype, radius, r.get("source", "ordinance"), confirmed_by="ordinance"
-            )
-            continue
+        ord_backed = bool(is_radius and radius is not None and ftype_in_ord and value_in_ord)
 
-        # 3) 그 외 전부 → 미확정. LLM 자가확정(조례 근거 없는 confirmed)을 여기서 false 로 벗긴다.
-        #    (조례에 없음 / 값 null / polygon) → 검색·사람 확인 대상.
-        #    ※ source·rationale 은 지우지 않는다 — HITL 에서 사람이 판단 근거로 봐야 하므로.
+        # 배제는 전부 미확정으로 내려간다. LLM 자가확정도 여기서 벗긴다.
+        # ※ source·rationale·배제반경_m 은 지우지 않는다 — 사람이 판단 근거로 봐야 하므로.
         r["confirmed"] = False
         r["need_review"] = True
         key = ("exclusion_radius_missing", i)
@@ -891,9 +906,16 @@ def enrich_hitl_flags(
                 {
                     "type": "exclusion_radius_missing",
                     "role_index": i,
-                    "message": "배제 대상이나 조례에서 반경/근거 확인 안 됨(LLM 자가판정). 검색·사람 확인 필요.",
-                    "제안값": None,
-                    "출처": None,
+                    "message": (
+                        "조례에서 시설유형·반경 문구를 찾았습니다(제안값). 같은 시설 규정이 맞는지 확인하세요."
+                        if ord_backed
+                        else "배제 대상이나 조례에서 반경/근거 확인 안 됨(LLM 자가판정). 검색·사람 확인 필요."
+                    ),
+                    "제안값": radius if ord_backed else None,
+                    "출처": (r.get("source") or "ordinance") if ord_backed else None,
+                    # 조례 제안일 때만 의미가 있다. substring 대조라 True 여도
+                    # '그 시설의 규정'임을 보장하지 않는다 — 그래서 사람이 본다.
+                    "근거_시설_일치": ftype_in_ord if ord_backed else None,
                 }
             )
 
@@ -1678,13 +1700,13 @@ def review_hitl(in_path: str | None = None, out_path: str | None = None) -> str:
 
         radius = _read_radius(default=제안)
         if radius == "skip":
-            print("  → 건너뜀 (미확정 유지 — 위치선정 전에 다시 확인 필요)")
+            print("  → 건너뜀 (미확정 유지 — 이 상태로는 STEP2 가 시작되지 않는다)")
             continue
         apply_radius_answer(r, f, radius)
         if radius is None:
             print("  → 반경 없음(면 배제 등)으로 확정")
         else:
-            print(f"  → {radius}m 확정 (캐시 저장 — 다음 실행부터 재사용)")
+            print(f"  → {radius}m 확정 (이 실행에만 적용 — 다음 실행에서 다시 묻는다)")
 
     # ── 2) 데이터 용도 확인 ─────────────────────────────────────────
     pending = [

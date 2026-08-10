@@ -225,9 +225,10 @@ STEP3_OUTPUT_DIR = os.environ.get("OMNISITE_STEP3_DIR", str(DATA_ROOT / "step3_o
 # 위치선정(STEP 4) 산출물 — Top-N·점수면·배제구역. 표출은 DISPLAY_CRS(4326).
 STEP4_OUTPUT_DIR = os.environ.get("OMNISITE_STEP4_DIR", str(DATA_ROOT / "step4_output"))
 
-# 캐시 폴더(배제반경 등 재사용 캐시). 결과물과 분리 관리.
+# 캐시 폴더(지목·지오코딩 등 재사용 캐시). 결과물과 분리 관리.
+# 🔴 `EXCLUSION_CACHE_PATH`(배제반경 캐시)는 2026-08-10 제거했다 — HITL 이 사람을
+#    건너뛰는 경로였다. 자동 진행은 `mode:"full"` 이 맡는다.
 SEARCH_CACHE_DIR = os.environ.get("OMNISITE_CACHE_DIR", str(DATA_ROOT / "search_cache"))
-EXCLUSION_CACHE_PATH = os.path.join(SEARCH_CACHE_DIR, "exclusion_radius_cache.json")
 # 지목 판정 캐시(시설별). 지목 부호는 법정 표준이라 지적도가 갱신돼도 유지된다.
 JIMOK_CACHE_PATH = os.path.join(SEARCH_CACHE_DIR, "jimok_role_cache.json")
 # 시설 물리 파라미터 캐시(시설별) — 설치폭·서비스반경·최소이격.

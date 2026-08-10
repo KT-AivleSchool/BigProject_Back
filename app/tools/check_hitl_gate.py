@@ -115,15 +115,18 @@ try:
     make_run(BASE_DOC, tmp)
     qs = R._questions_audit("r_chk", DOMAIN)
 
+    # 🔴 배제 질문의 기대값은 **flag 가 아니라 `hard_exclusion` role 수**다
+    #    (2026-08-10). flag 없는 배제도 묻는다 — 안 물으면 STEP2 가 미확정으로
+    #    멈췄을 때 답할 자리가 없다. 픽스처 실측: flag 3 · role 5(06·07 은 flag 없음).
     want_ex = want_it = want_cp = 0
     want_radii: list[int] = []
     for r in BASE_DOC.get("results", []):
-        for f in r.get("hitl_flags") or []:
-            if f.get("type") == "exclusion_radius_missing":
+        for role in r.get("roles") or []:
+            if role.get("role") == "hard_exclusion":
                 want_ex += 1
-                role = (r.get("roles") or [])[f.get("role_index", 0)]
                 want_radii.append(role.get("배제반경_m"))
-            elif f.get("type") == "data_intent_unclear":
+        for f in r.get("hitl_flags") or []:
+            if f.get("type") == "data_intent_unclear":
                 want_it += 1
         want_cp += sum(
             1
@@ -460,6 +463,212 @@ try:
         _parse_radius_arg(ra) == {"07+02": 150, "09": 250}
         and _parse_weight_arg(wa) == {"04": 0.5},
     )
+
+    # ── [7] 배제는 전부 사람이 확인한다 (2026-08-10) ────────────────
+    #   캐시·조례 자동 확정을 없앤 뒤의 성질을 고정한다. 하나라도 되살아나면
+    #   게이트 화면에서 항목이 조용히 사라진다 — 그게 원래 결함이었다.
+    print("\n[7] 배제 전부 재확인 · 캐시 제거")
+    from app.services import gam2_audit_judgment_test as A  # noqa: E402
+
+    chk(
+        "배제반경 캐시 함수·상수가 없다",
+        not hasattr(A, "save_to_exclusion_cache")
+        and not hasattr(A, "load_exclusion_cache")
+        and "cache_path" not in A._DOMAIN
+        and not hasattr(__import__("app.config", fromlist=["x"]), "EXCLUSION_CACHE_PATH"),
+    )
+
+    n_hard = sum(
+        1
+        for r in BASE_DOC.get("results", [])
+        for x in r.get("roles") or []
+        if x.get("role") == "hard_exclusion"
+    )
+    doc3 = copy.deepcopy(BASE_DOC)
+    n_reset = A.reset_exclusion_confirmations(doc3)
+    chk(f"되돌린 배제 {n_hard}건", n_reset == n_hard, n_reset)
+    chk(
+        "되돌려도 값은 남는다(제안값)",
+        all(
+            f.get("제안값") is not None
+            for r in doc3["results"]
+            for f in r.get("hitl_flags", [])
+            if f.get("type") == "exclusion_radius_missing"
+        ),
+    )
+    make_run(doc3, tmp, "r_reset")
+    q3 = [q for q in R._questions_audit("r_reset", DOMAIN) if q["kind"] == "exclusion"]
+    chk(f"되돌린 뒤 배제 {n_hard}건 전부 편집 가능",
+        len(q3) == n_hard and all(q["editable"] for q in q3),
+        [(q["dataset_id"], q["editable"]) for q in q3])
+
+    # 픽스처(확정 상태)는 통과, 되돌린 것은 STEP2 진입 차단.
+    try:
+        A.assert_exclusions_confirmed(BASE_DOC, src="픽스처")
+        chk("확정된 감리는 STEP2 통과", True)
+    except SystemExit as e:
+        chk("확정된 감리는 STEP2 통과", False, e)
+    try:
+        A.assert_exclusions_confirmed(doc3, src="되돌린 사본")
+        chk("미확정이면 STEP2 차단", False, "안 멈췄다")
+    except SystemExit as e:
+        chk("미확정이면 STEP2 차단", "미확정" in str(e), str(e).splitlines()[0])
+
+    # flag 가 없던 배제(06·07)에 답하면 flag 를 만들어 확정한다.
+    fl_did = next(
+        (
+            r["dataset_id"]
+            for r in doc3["results"]
+            if any(x.get("role") == "hard_exclusion" for x in r.get("roles") or [])
+        ),
+        None,
+    )
+    if fl_did:
+        fq = next(q for q in q3 if q["dataset_id"] == fl_did)
+        R._apply_audit("r_reset", DOMAIN, q3 + [], {
+            "exclusions": [{"dataset_id": fl_did, "role_index": fq["role_index"],
+                            "radius_m": 40}]})
+        saved = json.loads(
+            (Path(tmp) / "r_reset" / "step1" / f"{PRE}_audit_result_reviewed.json")
+            .read_text(encoding="utf-8")
+        )
+        role = next(
+            r for r in saved["results"] if r["dataset_id"] == fl_did
+        )["roles"][fq["role_index"]]
+        chk(
+            "답변이 role 에 확정으로 박힌다",
+            role.get("배제반경_m") == 40
+            and role.get("confirmed") is True
+            and role.get("source") == "human_confirmed",
+            role,
+        )
+
+    # `_prepare_dirs` — hitl 만 되돌린다. fixture 를 되돌리면 게이트가 없어 STEP2 가 멈춘다.
+    def _rev_conf(rid: str) -> list[bool]:
+        p = Path(tmp) / rid / "step1" / f"{PRE}_audit_result_reviewed.json"
+        d = json.loads(p.read_text(encoding="utf-8"))
+        return [
+            x.get("confirmed") is True
+            for r in d["results"]
+            for x in r.get("roles") or []
+            if x.get("role") == "hard_exclusion"
+        ]
+
+    R._prepare_dirs("r_pd_fix", DOMAIN, R.MODE_FIXTURE)
+    R._prepare_dirs("r_pd_hitl", DOMAIN, R.MODE_HITL)
+    chk("fixture 사본은 확정 그대로", all(_rev_conf("r_pd_fix")), _rev_conf("r_pd_fix"))
+    chk(
+        "hitl 사본은 전부 미확정",
+        _rev_conf("r_pd_hitl") and not any(_rev_conf("r_pd_hitl")),
+        _rev_conf("r_pd_hitl"),
+    )
+    chk(
+        "원본 픽스처는 안 건드린다",
+        json.loads(FIX.read_text(encoding="utf-8")) == BASE_DOC,
+    )
+
+    # ── [8] 배제 승격(choice=3) 은 그 자리에서 반경을 받는다 ────────────
+    #    예전엔 `intents` 에 실은 `radius_m` 이 **200 인데 조용히 버려졌고**,
+    #    `exclusions` 로 우회하면 400 이었다(질문 목록은 답변 전에 고정된다).
+    #    그 run 은 답할 자리가 없는 채 STEP2 에서 죽었다.
+    print("\n[8] 배제 승격(choice=3) — 반경 입력 자리")
+
+    def _mk_intent(rid: str) -> str:
+        """비-배제 데이터셋에 의도 미상 flag 를 심어 intent 질문을 만든다."""
+        d = json.loads(json.dumps(BASE_DOC))
+        t = next(
+            r for r in d["results"]
+            if not any(x.get("role") == "hard_exclusion" for x in r.get("roles") or [])
+        )
+        t.setdefault("hitl_flags", []).append({"type": "data_intent_unclear", "message": "합성"})
+        make_run(d, tmp, rid)
+        return t["dataset_id"]
+
+    i_did = _mk_intent("r_ch3")
+    q8 = R._questions_audit("r_ch3", DOMAIN)
+    iq = next(q for q in q8 if q["kind"] == "intent")
+    chk(
+        "choice=3 만 needs_radius=True",
+        [c["needs_radius"] for c in iq["choices"]] == [False, False, True, False, False],
+        [(c["value"], c.get("needs_radius")) for c in iq["choices"]],
+    )
+    chk(
+        "승격 대상엔 exclusion 질문이 없다(그래서 여기서 받아야 한다)",
+        not [q for q in q8 if q["kind"] == "exclusion" and q["dataset_id"] == i_did],
+    )
+
+    def _promote(rid: str, item: dict) -> dict:
+        did = _mk_intent(rid)
+        R._apply_audit(rid, DOMAIN, R._questions_audit(rid, DOMAIN),
+                       {"intents": [dict(item, dataset_id=did)]})
+        d = json.loads(
+            (Path(tmp) / rid / "step1" / f"{PRE}_audit_result_reviewed.json")
+            .read_text(encoding="utf-8")
+        )
+        return d
+
+    d8 = _promote("r_ch3a", {"choice": 3, "radius_m": 30})
+    role8 = next(r for r in d8["results"] if r["dataset_id"] == i_did)["roles"][0]
+    chk(
+        "radius_m 이 실제로 적용된다",
+        role8.get("배제반경_m") == 30
+        and role8.get("confirmed") is True
+        and role8.get("source") == "human_confirmed",
+        role8,
+    )
+    try:
+        A.assert_exclusions_confirmed(d8, src="chk")
+        chk("확정했으니 STEP2 통과", True)
+    except SystemExit as e:
+        chk("확정했으니 STEP2 통과", False, str(e).splitlines()[0])
+
+    d8b = _promote("r_ch3b", {"choice": 3, "radius_m": None})
+    role8b = next(r for r in d8b["results"] if r["dataset_id"] == i_did)["roles"][0]
+    chk(
+        "radius_m=null 도 확정이다(면으로 배제)",
+        role8b.get("배제반경_m") is None and role8b.get("confirmed") is True,
+        role8b,
+    )
+
+    d8c = _promote("r_ch3c", {"choice": 3})
+    try:
+        A.assert_exclusions_confirmed(d8c, src="chk")
+        chk("키 생략은 미확정 유지 → STEP2 차단", False, "안 멈췄다")
+    except SystemExit as e:
+        chk("키 생략은 미확정 유지 → STEP2 차단", "미확정" in str(e),
+            str(e).splitlines()[0])
+
+    _mk_intent("r_ch3d")
+    q8d = R._questions_audit("r_ch3d", DOMAIN)
+    err(
+        "choice 1 에 radius_m 은 400",
+        lambda: R._apply_audit("r_ch3d", DOMAIN, q8d, {
+            "intents": [{"dataset_id": i_did, "choice": 1, "weight": 0.5, "radius_m": 30}]}),
+        "choice 3",
+    )
+    err(
+        "intents 오타 필드는 400",
+        lambda: R._apply_audit("r_ch3d", DOMAIN, q8d, {
+            "intents": [{"dataset_id": i_did, "choice": 3, "radius_mm": 30}]}),
+        "알 수 없는 필드",
+    )
+    ex_q = next(q for q in q8d if q["kind"] == "exclusion")
+    err(
+        "exclusions 오타 필드는 400(예전엔 '건너뜀' 으로 읽혔다)",
+        lambda: R._apply_audit("r_ch3d", DOMAIN, q8d, {
+            "exclusions": [{"dataset_id": ex_q["dataset_id"],
+                            "role_index": ex_q["role_index"], "radius_mm": 30}]}),
+        "알 수 없는 필드",
+    )
+    cp_q = next((q for q in q8d if q["kind"] == "code_prefix"), None)
+    if cp_q:
+        err(
+            "code_prefixes 오타 필드는 400",
+            lambda: R._apply_audit("r_ch3d", DOMAIN, q8d, {
+                "code_prefixes": [{"dataset_id": cp_q["dataset_id"],
+                                   "op_index": cp_q["op_index"], "prefixx": "111"}]}),
+            "알 수 없는 필드",
+        )
 finally:
     R.run_dir = _orig_run_dir  # type: ignore[assignment]
     shutil.rmtree(tmp, ignore_errors=True)

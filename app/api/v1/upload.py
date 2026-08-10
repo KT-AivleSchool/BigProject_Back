@@ -68,7 +68,11 @@ from app.services.gam2_profile import DATA_EXTENSIONS, list_dataset_files
 
 # 도메인 이름 검증은 파이프라인 러너와 **같은 함수**를 쓴다. 여기서 다시 짜면
 # 한쪽만 고쳐졌을 때 업로드는 통과하는데 실행은 400 이 되는 상태가 생긴다.
-from app.services.pipeline_runner import _validate_domain, RunRequestError
+from app.services.pipeline_runner import (
+    _validate_domain,
+    fixture_blocker,
+    RunRequestError,
+)
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -233,11 +237,27 @@ class DomainItem(BaseModel):
     has_audit_reviewed: bool = Field(
         ..., description="STEP1 감리 확정본이 있는가(= facility_type 자동 판별 가능)"
     )
+    has_fixture: bool = Field(
+        ...,
+        description="mode=fixture·hitl 로 돌릴 수 있는가(= <도메인>_FIX 픽스처가 온전한가). "
+        "false 면 그 두 모드는 400 이다. mode=full 은 픽스처와 무관하다",
+    )
 
 
 @router.get("/domains", response_model=List[DomainItem])
 async def list_domains():
-    """업로드 대상 도메인 목록. 업로드 API 는 전부 domain 이 필수다."""
+    """업로드 대상 도메인 목록. 업로드 API 는 전부 domain 이 필수다.
+
+    `has_fixture` 는 **러너 자신의 사전검사**로 판정한다
+    (`pipeline_runner.fixture_blocker` → `build_commands` → `_load_fixture`).
+    여기서 `Path(f"{name}_FIX").is_dir()` 같은 자체 판정식을 쓰면 안 된다 —
+    실제 조건은 폴더가 아니라 **파일 둘**이라, 폴더만 보면 "가능" 이라 답해놓고
+    실행이 400 으로 죽는다(프런트가 카드 단계에서 막지 못한다).
+
+    막힌 **이유**는 응답에 넣지 않는다. 이유 문자열에 저장소 절대경로가 들어가는데,
+    `GET /pipeline/runs/{id}/log` 는 그 경로를 `<repo>` 로 마스킹해서 내보낸다 —
+    한쪽만 원문으로 내보내면 마스킹이 무의미해진다.
+    """
     out = []
     for name in _known_domains():
         p = domain_paths(name)
@@ -259,6 +279,7 @@ async def list_domains():
                 law_files=len(law),
                 data_files=len(data),
                 has_audit_reviewed=reviewed.is_file(),
+                has_fixture=fixture_blocker(name) is None,
             )
         )
     return out

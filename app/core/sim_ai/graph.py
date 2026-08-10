@@ -247,7 +247,13 @@ async def evaluator_node(state: AgentState) -> dict:
         [
             SystemMessage(content=EVALUATOR_PROMPT),
             HumanMessage(
-                content=f"[이전 라운드 수용도 점수]\n- 찬성측: {prev_pro_acc}\n- 반대측: {prev_con_acc}\n\n이전 대화:\n{history_text}\n\n위 대화 내용 중 '가장 최근 발언'을 바탕으로 평가 JSON을 반환하세요. 타협의 여지가 조금이라도 생겼다면 반드시 이전 점수보다 상향시켜야 합니다."
+                # 🔴 예전엔 "타협의 여지가 조금이라도 생겼다면 반드시 상향"이었다.
+                #    한 방향으로만 움직이라는 지시라 점수가 **발언 내용이 아니라
+                #    라운드 수**를 따라 올라갔다 — 근거 없이 되풀이해도 오른다.
+                #    시나리오 A/B/C 는 이 점수로 갈리므로(reporter.txt) 결과까지 밀린다.
+                #    지금은 상향·하향·유지 판단을 evaluator.txt 에 맡기고, 여기서는
+                #    기준점(이전 점수)과 대화만 넘긴다.
+                content=f"[이전 라운드 수용도 점수]\n- 찬성측: {prev_pro_acc}\n- 반대측: {prev_con_acc}\n\n이전 대화:\n{history_text}\n\n위 대화 내용 중 '가장 최근 발언'에서 실제로 일어난 변화만 반영해 평가 JSON을 반환하세요. 양측을 각각 판단하고, 움직인 이유를 그 발언의 구체적 대목으로 밝히세요."
             ),
         ]
     )

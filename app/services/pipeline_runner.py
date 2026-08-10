@@ -259,6 +259,14 @@ def read_status(run_id: str) -> dict | None:
                 sub, suffix = ARTIFACTS[name]
                 f = run_dir(run_id) / sub / f"{pre}{suffix}"
                 arts[name] = _artifact_url(run_id, name) if f.is_file() else None
+
+    # `loaded` 도 나중에 생긴 필드다(2026-08-10). 옛 run 에는 키가 없다.
+    # 🔴 `null` 로 채우는 건 "적재 안 함"이 아니라 **"기록이 없다"** 까지 포함한다.
+    #    산출물 키처럼 디스크를 보고 사실을 복원할 수가 없다 — 행 수를 아는 건
+    #    그때 돌았던 적재기뿐이고, 지금 DB 에 물어보면 그 뒤 실행이 바꾼 값이 섞인다.
+    #    그래서 지어내지 않고 null 로 두되, **구분이 필요하면 볼 곳을 계약에 적어뒀다**:
+    #    `steps` 의 `적재-감리`·`적재-후보` 칸 상태가 그 run 의 사실이다(계약 3절).
+    doc.setdefault("loaded", None)
     return doc
 
 
@@ -427,6 +435,21 @@ class _Proc:
         self.step_ids = step_ids
         self.argv = argv
         self.markers = markers or {}
+        # 적재 프로세스가 `[LOADED] …` 로 알려준 결과. 안 알려주면 빈 dict 다.
+        self.loaded: dict[str, int] = {}
+
+
+# DB 적재 스크립트가 마지막에 찍는 **약속된 줄**.
+#   `[LOADED] table=audit_rules run_id=r_20260810_006 rows=13`
+#
+# 🔴 왜 자식 stdout 을 읽나 — 행 수를 아는 건 적재기뿐이다. 러너가 DB 에 다시
+#    물어보면 **적재 이후에 다른 실행이 건드렸을 수도 있는 값**을 이 run 의
+#    성과로 기록하게 된다. 그건 사실이 아니다(원칙 4·5).
+#    사람용 로그를 긁는 게 아니라 소비자가 선언한 한 줄을 읽는다 —
+#    `scripts/load_{audit_data,topn_candidates}.py` 의 마지막 print 와 짝이다.
+_LOADED_RE = re.compile(
+    r"^\[LOADED\]\s+table=(?P<table>\w+)\s+run_id=(?P<run_id>\S+)\s+rows=(?P<rows>\d+)\s*$"
+)
 
 
 def _python_exe() -> str:
@@ -460,7 +483,8 @@ def _proc_load_topn(domain: str, run_id: str) -> _Proc:
        프런트는 건널 방법이 없다.
 
     🔴 왜 full 모드에만 붙나 — fixture·hitl 은 **정본 산출물의 재생**이고, 그 Top-N 은
-       이미 `run_id='step4_output'` 으로 DB 에 있다. 재생할 때마다 20행씩 더 쌓으면
+       이미 `run_id='정본'` 으로 DB 에 있다(2026-08-10 어휘 통일 전에는 STEP 폴더
+       이름 `'step4_output'` 이었다). 재생할 때마다 20행씩 더 쌓으면
        시연용 예시 데이터가 실행 이력에 묻힌다. 값이 같은 행을 run 마다 복제하는 건
        적재가 아니라 누적이다.
 
@@ -542,6 +566,30 @@ def build_commands(domain: str) -> list[_Proc]:
     """
     base, _ = _load_fixture(domain)
     return [_proc_of(s, domain, base) for s in ("2", "3-1", "3-2", "4")]
+
+
+def fixture_blocker(domain: str) -> str | None:
+    """`mode: "fixture"`·`"hitl"` 로 이 도메인을 돌릴 수 있는가.
+
+    돌릴 수 있으면 `None`, 못 돌리면 **막는 이유**를 돌려준다.
+
+    🔴 판정을 여기 두는 이유 — `start_run` 이 실제로 하는 사전검사(:820~821)와
+       **같은 식**이어야 한다. 호출자가 "`<도메인>_FIX/` 폴더가 있는가" 로 따로
+       판정하면 응답은 통과라 해놓고 실행이 400 으로 죽는다. 실제 조건은 폴더가
+       아니라 **파일 둘**(`기준값.json`·`reviewed.json`)이고, 거기에 커맨드 조립까지
+       성공해야 한다(`조건` 키가 없으면 `_proc_of` 에서 터진다).
+       그래서 판정식을 복제하지 않고 **같은 함수를 부른다**.
+
+    예외를 삼키지만 조용하지 않다 — 이유를 문자열로 **돌려준다**(원칙 1·4).
+    실행 경로(`start_run`)는 여전히 raise 한다. 여기는 "물어보는" 자리다.
+    """
+    try:
+        build_commands(domain)          # `_load_fixture` 포함
+    except RunRequestError as e:
+        return str(e)
+    except Exception as e:              # 기준값.json 이 깨졌다 · `조건` 키가 없다 …
+        return f"{type(e).__name__}: {e}"
+    return None
 
 
 def _proc_runpipe(domain: str, user_input: str) -> _Proc:
@@ -663,7 +711,23 @@ def _prepare_dirs(run_id: str, domain: str, mode: str = MODE_FIXTURE) -> None:
                 shutil.copyfile(src, d / "step1" / src.name)
 
     # reviewed 는 **픽스처 것으로 덮어쓴다** — 이게 고정의 핵심이다.
-    shutil.copyfile(fix_rev, d / "step1" / f"{pre}_audit_result_reviewed.json")
+    rev = d / "step1" / f"{pre}_audit_result_reviewed.json"
+    shutil.copyfile(fix_rev, rev)
+
+    # 🔴 hitl 모드는 이 사본의 **배제 확정을 전부 제안값으로 되돌린다**(2026-08-10 사람 지시).
+    #    픽스처에는 예전 확정(`confirmed:true`)이 박혀 있어 그대로 두면 게이트A 가
+    #    `editable:false` 로 내보낸다 — 사람이 보기만 하고 못 고친다. 「HITL 인데
+    #    사람이 전부 확인한다」가 성립하지 않는다.
+    #    fixture 는 게이트가 없으므로 되돌리면 STEP2 가 미확정으로 멈춘다 → 손대지 않는다.
+    #    (원본 픽스처가 아니라 **run 안의 사본**만 바꾼다)
+    if mode == MODE_HITL:
+        from app.services import gam2_audit_judgment_test as A
+
+        doc = json.loads(rev.read_text(encoding="utf-8"))
+        n = A.reset_exclusion_confirmations(doc)
+        rev.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+        if n:
+            print(f"[{run_id}] hitl — 배제 {n}건을 제안값으로 되돌림(사람 재확인 대상)")
 
 
 def _child_env(run_id: str) -> dict:
@@ -711,6 +775,14 @@ def _new_status(run_id: str, domain: str, mode: str = MODE_FIXTURE) -> dict:
         "steps": [{"id": i, "label": lb, "status": "idle", "sec": None}
                   for i, lb in step_labels(mode)],
         "artifacts": {k: None for k in ARTIFACTS},
+        # 이 run 이 **DB 에 넣은 것**. 계약 3절.
+        #   null            = 아무것도 안 넣었다 (fixture·hitl 은 계획에 적재 칸이 없다.
+        #                     full 도 적재 칸에 닿기 전까지는 null 이다)
+        #   {run_id, …}     = 넣었다. `run_id` 는 프런트가 `/simulations/candidates`
+        #                     의 `run_id` 파라미터에 그대로 넣을 값이다.
+        # 🔴 프런트가 규칙("full 이면 run_id 와 같다")을 따로 들고 있지 않게 **값으로**
+        #    준다. 규칙을 양쪽이 각자 구현하면 언젠가 갈린다.
+        "loaded": None,
         "error": None,
         "started_at": _now_iso(),
         "finished_at": None,
@@ -899,6 +971,12 @@ def _execute(run_id: str, domain: str, mode: str, start: int = 0) -> None:
                         else _proc_of(stage, domain, base,
                                       *_stage_args(run_id, mode, stage)))
                 _run_one(run_id, doc, proc, log)
+                if proc.loaded:
+                    # 적재 칸이 둘이라 두 번 합류한다. `run_id` 는 _run_one 이
+                    # 자식이 찍은 값과 대조해 통과시킨 것이다.
+                    doc["loaded"] = {"run_id": run_id,
+                                     **(doc.get("loaded") or {}), **proc.loaded}
+                    _write_status(run_id, doc)
                 if stage == "3-2":
                     _assert_provenance(run_id, mode)
         if not paused:
@@ -996,6 +1074,7 @@ def _run_one(run_id: str, doc: dict, proc: _Proc, log) -> None:
         _write_status(run_id, doc)
 
     tail: list[str] = []          # 실패 시 error 로 내보낼 마지막 줄들
+    mismatch: str | None = None   # 적재 run_id 어긋남 (자식이 끝난 뒤에 던진다)
     child = subprocess.Popen(
         proc.argv,
         cwd=str(BASE_DIR),
@@ -1012,6 +1091,18 @@ def _run_one(run_id: str, doc: dict, proc: _Proc, log) -> None:
         if s:
             tail.append(s)
             del tail[:-40]
+        if (m := _LOADED_RE.match(s)):
+            # run_id 도 같이 본다. 적재기가 `--run` 을 무시하고 정본에 넣었다면
+            # 여기서 드러나야 한다 — 이 run 의 성과로 status 에 적히면 프런트가
+            # `/candidates?run_id=` 로 조회했을 때 0건이 나온다(원칙 4).
+            # 🔴 여기서 바로 raise 하지 않는다. 파이프를 읽다 말고 나가면 자식이
+            #    write 에서 막힌 채 남는다. 아래 wait() 뒤에 던진다.
+            if m["run_id"] != run_id:
+                mismatch = (f"적재기가 다른 run_id 로 넣었습니다: "
+                            f"기대 {run_id!r} ≠ 실제 {m['run_id']!r} "
+                            f"(table={m['table']})")
+            else:
+                proc.loaded[m["table"]] = int(m["rows"])
         for sid, marker in proc.markers.items():
             if sid != cur and s.startswith(marker):
                 _step(doc, cur).update(
@@ -1024,12 +1115,13 @@ def _run_one(run_id: str, doc: dict, proc: _Proc, log) -> None:
                 break
     log.flush()
 
-    if child.wait() != 0:
+    if child.wait() != 0 or mismatch:
         if cur:
             _step(doc, cur)["status"] = "failed"
         _refresh_artifacts(doc)
         _write_status(run_id, doc)
-        raise _StepFailed(tail[-1] if tail else f"종료 코드 {child.returncode}")
+        raise _StepFailed(
+            mismatch or (tail[-1] if tail else f"종료 코드 {child.returncode}"))
 
     if cur:
         _step(doc, cur).update(status="done",
@@ -1141,34 +1233,42 @@ def _questions_audit(run_id: str, domain: str) -> list[dict]:
     region = (doc.get("facility_inference") or {}).get("region", "")
     out: list[dict] = []
 
+    def _exclusion_q(did, summary, roles, idx, f):
+        role = roles[idx] if idx < len(roles) else {}
+        return {
+            "kind": "exclusion",
+            "dataset_id": did,
+            "role_index": idx,
+            # flag 가 없는 배제 role 도 질문이 된다 → **role 쪽 확정도 본다.**
+            # flag 만 보면 flag 없는 확정 항목이 editable:true 로 나가 "확정분은
+            # 못 고친다" 규칙이 항목마다 달라진다.
+            "editable": not (f.get("confirmed") or role.get("confirmed")),
+            "summary": summary,
+            "facility_type": role.get("facility_type"),
+            "exclusion_type": role.get("exclusion_type"),
+            "rationale": role.get("rationale", ""),
+            "radius_m": role.get("배제반경_m"),
+            "radius_source": role.get("source"),
+            # 제안값은 확정값이 아니다 — 둘을 한 필드로 합치지 않는다.
+            "proposed_m": f.get("제안값"),
+            "proposal_source": f.get("출처"),
+            "evidence": f.get("근거문장"),
+            # False 면 "다른 시설 규정일 수 있다" — 화면에 경고로 띄울 것
+            "evidence_matches_facility": f.get("근거_시설_일치"),
+        }
+
     for r in doc.get("results", []):
         did = r.get("dataset_id")
         summary = r.get("summary", "")
         roles = r.get("roles") or []
+        asked: set[int] = set()
 
         for f in r.get("hitl_flags") or []:
             ftype = f.get("type")
             if ftype == "exclusion_radius_missing":
                 idx = f.get("role_index", 0)
-                role = roles[idx] if idx < len(roles) else {}
-                out.append({
-                    "kind": "exclusion",
-                    "dataset_id": did,
-                    "role_index": idx,
-                    "editable": not f.get("confirmed"),
-                    "summary": summary,
-                    "facility_type": role.get("facility_type"),
-                    "exclusion_type": role.get("exclusion_type"),
-                    "rationale": role.get("rationale", ""),
-                    "radius_m": role.get("배제반경_m"),
-                    "radius_source": role.get("source"),
-                    # 제안값은 확정값이 아니다 — 둘을 한 필드로 합치지 않는다.
-                    "proposed_m": f.get("제안값"),
-                    "proposal_source": f.get("출처"),
-                    "evidence": f.get("근거문장"),
-                    # False 면 "다른 시설 규정일 수 있다" — 화면에 경고로 띄울 것
-                    "evidence_matches_facility": f.get("근거_시설_일치"),
-                })
+                asked.add(idx)
+                out.append(_exclusion_q(did, summary, roles, idx, f))
             elif ftype == "data_intent_unclear":
                 out.append({
                     "kind": "intent",
@@ -1177,14 +1277,32 @@ def _questions_audit(run_id: str, domain: str) -> list[dict]:
                     "summary": summary,
                     "message": f.get("message", ""),
                     "current_roles": [x.get("role") for x in roles],
+                    # `needs_radius` 는 프런트가 반경 입력칸을 띄울 근거다. 배제로
+                    # 승격하면 반경이 필요한데 그 질문은 **답변 전에** 만들어질 수
+                    # 없으므로(role 이 아직 없다) 같은 항목의 `radius_m` 으로 받는다.
                     "choices": [
-                        {"value": 1, "label": "가점(수요)", "needs_weight": True},
-                        {"value": 2, "label": "감점(민감도)", "needs_weight": True},
-                        {"value": 3, "label": "배제(금지)", "needs_weight": False},
-                        {"value": 4, "label": "위치선정 참조용", "needs_weight": False},
-                        {"value": 5, "label": "잘못 넣음·제외", "needs_weight": False},
+                        {"value": 1, "label": "가점(수요)",
+                         "needs_weight": True, "needs_radius": False},
+                        {"value": 2, "label": "감점(민감도)",
+                         "needs_weight": True, "needs_radius": False},
+                        {"value": 3, "label": "배제(금지)",
+                         "needs_weight": False, "needs_radius": True},
+                        {"value": 4, "label": "위치선정 참조용",
+                         "needs_weight": False, "needs_radius": False},
+                        {"value": 5, "label": "잘못 넣음·제외",
+                         "needs_weight": False, "needs_radius": False},
                     ],
                 })
+
+        # 🔴 flag 가 없는 배제도 **묻는다**(2026-08-10). 배제는 미확정이면 STEP2 가
+        #    멈추는데(`assert_exclusions_confirmed`), 게이트에 안 뜨면 답할 방법이
+        #    없어 run 이 죽는다. 지금 두 경로(`enrich_hitl_flags`·
+        #    `reset_exclusion_confirmations`)가 flag 를 보장하지만, 보장이 깨졌을 때
+        #    조용히 사라지는 쪽이 아니라 **묻는 쪽**으로 넘어져야 한다.
+        for idx, role in enumerate(roles):
+            if role.get("role") != "hard_exclusion" or idx in asked:
+                continue
+            out.append(_exclusion_q(did, summary, roles, idx, {}))
 
         for oi, op in enumerate(r.get("cleaning_ops") or []):
             if op.get("op_id") != "filter_by_code_prefix":
@@ -1321,6 +1439,38 @@ def _num_in(v, lo: float, hi: float, what: str) -> float:
     return float(v)
 
 
+def _only_keys(item: dict, allowed: tuple[str, ...], what: str) -> None:
+    """항목 안의 알 수 없는 키를 400 으로 막는다.
+
+    🔴 최상위 키는 예전부터 막았는데 **항목 내부는 안 봤다**(2026-08-10 실측).
+       그래서 `radius_m` 오타(`radius_mm`)가 「건너뜀 = 미확정 유지」로 읽히고,
+       `intents` 에 실은 `radius_m` 은 **200 인데 값이 버려졌다.** 조용히 버리면
+       프런트는 성공으로 읽고 run 은 STEP2 에서 죽는다(원칙 1·4).
+    """
+    if not isinstance(item, dict):
+        raise RunRequestError(f"{what} 항목은 객체여야 합니다: {item!r}")
+    bad = [k for k in item if k not in allowed]
+    if bad:
+        raise RunRequestError(
+            f"{what} 에 알 수 없는 필드: {bad}. 쓸 수 있는 것: {list(allowed)}")
+
+
+def _exclusion_flag(result: dict, role_index: int, message: str) -> dict:
+    """`exclusion_radius_missing` flag 를 찾고, 없으면 만든다.
+
+    질문은 flag 가 없는 배제 role 로도 만들어진다(`_questions_audit`). 없다고 답을
+    버리면 사람이 답한 것이 조용히 사라지고 STEP2 는 미확정이라며 멈춘다.
+    """
+    flags = result.setdefault("hitl_flags", [])
+    for f in flags:
+        if f.get("type") == "exclusion_radius_missing" and f.get("role_index", 0) == role_index:
+            return f
+    flag = {"type": "exclusion_radius_missing", "role_index": role_index,
+            "message": message, "제안값": None, "출처": None}
+    flags.append(flag)
+    return flag
+
+
 def _apply_audit(run_id: str, domain: str, questions: list[dict], payload: dict) -> None:
     """게이트A 답을 reviewed.json 에 반영한다. **정본 함수를 그대로 부른다.**
 
@@ -1339,11 +1489,12 @@ def _apply_audit(run_id: str, domain: str, questions: list[dict], payload: dict)
     doc = json.loads(path.read_text(encoding="utf-8"))
     by_id = {r.get("dataset_id"): r for r in doc.get("results", [])}
 
-    # `save_to_exclusion_cache` 가 쓰는 캐시 경로를 도메인별로 확정한다.
-    # 안 부르면 다른 도메인의 캐시 파일에 쓴다(계약 7-7).
+    # 정본 함수들이 쓰는 도메인 경로(프리픽스·data·law)를 확정한다.
+    # (배제반경 캐시는 2026-08-10 제거됐다 — 확정은 이 run 안에서만 유효하다)
     A.set_domain(domain)
 
     for item in payload.get("exclusions") or []:
+        _only_keys(item, ("dataset_id", "role_index", "radius_m"), "exclusions")
         q = _q(questions, "exclusion", dataset_id=item.get("dataset_id"),
                role_index=item.get("role_index"))
         if not q["editable"]:
@@ -1355,12 +1506,11 @@ def _apply_audit(run_id: str, domain: str, questions: list[dict], payload: dict)
         if radius is not None:
             radius = _int_in(radius, 1, 5000, f"[{q['dataset_id']}] 배제반경(m)")
         r = by_id[q["dataset_id"]]
-        flag = next(f for f in r["hitl_flags"]
-                    if f.get("type") == "exclusion_radius_missing"
-                    and f.get("role_index", 0) == q["role_index"])
-        A.apply_radius_answer(r, flag, radius)
+        A.apply_radius_answer(
+            r, _exclusion_flag(r, q["role_index"], "게이트A 에서 직접 확정"), radius)
 
     for item in payload.get("intents") or []:
+        _only_keys(item, ("dataset_id", "choice", "weight", "radius_m"), "intents")
         q = _q(questions, "intent", dataset_id=item.get("dataset_id"))
         if not q["editable"]:
             raise RunRequestError(
@@ -1378,9 +1528,33 @@ def _apply_audit(run_id: str, domain: str, questions: list[dict], payload: dict)
         elif weight is not None:
             raise RunRequestError(
                 f"[{q['dataset_id']}] weight 는 choice 1·2 에서만 씁니다.")
-        A.apply_intent_answer(by_id[q["dataset_id"]], choice, weight)
+        if choice != 3 and "radius_m" in item:
+            raise RunRequestError(
+                f"[{q['dataset_id']}] radius_m 은 choice 3(배제 승격)에서만 씁니다.")
+
+        r = by_id[q["dataset_id"]]
+        A.apply_intent_answer(r, choice, weight)
+
+        # 🔴 배제 승격은 **반경을 같은 항목에서 받는다**(2026-08-10, 사람 결정).
+        #    `apply_intent_answer(…, 3)` 은 `배제반경_m: None · confirmed: False` 인
+        #    role 을 새로 만든다 → 미확정이라 STEP2 가 멈추는데
+        #    (`assert_exclusions_confirmed`), 게이트A 질문 목록은 **답변 전에** 만들어져
+        #    이 role 의 질문이 없다. 그래서 `exclusions` 로도 답할 수 없었다(400).
+        #    여기서 안 받으면 그 run 은 **답할 자리가 없는 채** 죽는다.
+        if choice == 3:
+            # roles 를 통째로 갈아치웠으므로 옛 확정은 무효다. 지우지 않으면 게이트를
+            # 다시 열었을 때 `editable: false` 로 굳는다(실측).
+            flag = _exclusion_flag(r, 0, "게이트A 배제 승격 — 반경 확정")
+            for k in ("confirmed", "confirmed_by_human", "제안값", "출처", "근거_시설_일치"):
+                flag.pop(k, None)
+            if "radius_m" in item:      # 키 생략 = 미확정 유지(exclusions 와 같은 규약)
+                radius = item["radius_m"]
+                if radius is not None:
+                    radius = _int_in(radius, 1, 5000, f"[{q['dataset_id']}] 배제반경(m)")
+                A.apply_radius_answer(r, flag, radius)
 
     for item in payload.get("code_prefixes") or []:
+        _only_keys(item, ("dataset_id", "op_index", "prefix"), "code_prefixes")
         q = _q(questions, "code_prefix", dataset_id=item.get("dataset_id"),
                op_index=item.get("op_index"))
         if not q["editable"]:
