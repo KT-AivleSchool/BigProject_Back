@@ -6,14 +6,45 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.db
+    # EC2 내부(로컬 루프백) 또는 도커 네트워크 통신만 허용 (보안)
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 를 .env 에 설정할 것}
       POSTGRES_DB: omnisite
     volumes:
       - omnisite_postgres_data:/var/lib/postgresql/data
+    restart: always
+
+  redis:
+    image: redis:7-alpine
+    container_name: omnisite-redis-cache
+    ports:
+      - "127.0.0.1:6379:6379"
+    command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD 를 .env 에 설정할 것} --maxmemory 512mb --maxmemory-policy allkeys-lru
+    restart: always
+
+  api:
+    container_name: omnisite-fastapi
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      # 외부에서 직접 8000에 접근해야 한다면 "0.0.0.0:8000:8000" 으로 변경해야 함 (기본 127.0.0.1 바인딩)
+      - "8000:8000"
+    environment:
+      # api 컨테이너는 도커 네트워크 내에서 'db'와 'redis' 호스트명으로 접근
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/omnisite
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+    env_file:
+      - .env
+    volumes:
+      - ./data_임시:/code/data_임시
+      - ./runs:/code/runs
+    depends_on:
+      - db
+      - redis
     restart: always
 
 volumes:
