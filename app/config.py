@@ -23,7 +23,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 try:
     from dotenv import load_dotenv
 
-    load_dotenv()  # 같은 폴더의 .env 를 읽어 환경변수로
+    # 경로를 명시한다 — cwd 가 저장소 루트가 아닐 때(자식 프로세스·스크립트) 못 찾는다.
+    # 🔴 `override=True` 는 쓰지 않는다. 러너가 자식에게 넘기는 `OMNISITE_*` 를 누가
+    #    `.env` 에 적으면 run 격리가 **조용히** 깨진다(`_child_env` 가 무력화된다).
+    #    실제 환경변수가 파일을 이긴다 — 그게 주입의 의미다.
+    _env_path = Path(__file__).resolve().parent.parent / ".env"
+    load_dotenv(dotenv_path=_env_path)
 except ImportError:
     pass  # dotenv 미설치 시 시스템 환경변수만 사용
 
@@ -402,9 +407,15 @@ class Settings(BaseSettings):
     VWORLD_API_KEY: str = os.getenv("VWORLD_API_KEY", "")
 
     # 보안 및 JWT 인증 설정
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "SUPER_SECRET_TOKEN_OMNISITE_2026_KEY")
+    # 🔴 기본값을 두지 않는다(2026-08-10, PR #221 통합). 예전엔
+    #    `"SUPER_SECRET_TOKEN_OMNISITE_2026_KEY"` 가 박혀 있었다 — 저장소에 있는 값으로
+    #    서명하면 **아무나 토큰을 위조할 수 있다.** DATABASE_URL 과 같은 이유다:
+    #    기본값이 있으면 빠뜨렸을 때 조용히 약한 설정으로 뜬다(원칙 1).
+    #    생성: python -c "import secrets; print(secrets.token_urlsafe(48))"
+    SECRET_KEY: str = _require_env("SECRET_KEY")
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 1주일
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))  # 15분
+    REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))  # 7일
 
     # pydantic_settings v2 규격 설정
     model_config = SettingsConfigDict(
