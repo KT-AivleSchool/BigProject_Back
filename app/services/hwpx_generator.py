@@ -1,4 +1,5 @@
 import io
+import logging
 import zipfile
 import urllib.parse
 from datetime import datetime
@@ -6,6 +7,8 @@ from typing import Dict, Any
 from xml.sax.saxutils import escape as xml_escape
 
 import re
+
+logger = logging.getLogger("uvicorn.error")
 
 def strip_emojis(text: str) -> str:
     """
@@ -45,12 +48,27 @@ def format_official_time(ts_str: str) -> str:
         dt = datetime.now()
     return f"{dt.hour:02d}:{dt.minute:02d}"
 
-def generate_qr_png_bytes(url: str) -> bytes:
+def generate_qr_png_bytes(url: str) -> tuple[bytes, str]:
     """
     URL을 기반으로 PNG 포맷의 QR 코드 이미지 바이너리를 생성합니다.
+    성공하면 `(png_bytes, "")`, 실패하면 `(b"", 사유)` 를 돌려줍니다.
+
+    🔴 예전엔 모든 예외를 삼키고 `b""` 만 돌려줬다 — QR 이 통째로 빠진 문서가
+       **조용히** 나가고 왜 없는지도 남지 않았다(원칙 1·4). 실제로 `qrcode` 미설치
+       상태에서 그렇게 나갔고, 원인을 카카오 API 키로 짐작하게 만들었다.
+       여기서 `raise` 하지 않는 이유는 QR 이 본문의 **보조 정보**여서다(URL 텍스트가
+       이미 문서에 있다). 대신 **사유를 돌려주고 문서와 로그에 적는다.**
+    ⚠ 이 함수는 URL 문자열만 받는다 — **카카오/네이버 API 키와 무관**하다.
+       링크는 `map.kakao.com/link/map/...` 처럼 주소·좌표로만 만든다.
     """
     try:
         import qrcode
+    except ImportError as e:
+        reason = f"qrcode 패키지 미설치 ({e})"
+        logger.warning("[HWPX] QR 생성 실패 — %s", reason)
+        return b"", reason
+
+    try:
         qr = qrcode.QRCode(
             version=1,
             error_correction=qrcode.constants.ERROR_CORRECT_M,
@@ -62,9 +80,33 @@ def generate_qr_png_bytes(url: str) -> bytes:
         img = qr.make_image(fill_color="black", back_color="white")
         buf = io.BytesIO()
         img.save(buf, format="PNG")
-        return buf.getvalue()
-    except Exception:
-        return b""
+        return buf.getvalue(), ""
+    except Exception as e:
+        reason = f"{type(e).__name__}: {e}"
+        logger.warning("[HWPX] QR 생성 실패 — %s (url=%s)", reason, url)
+        return b"", reason
+
+
+def qr_slot_xml(pic_id: int, image_ref: str, png: bytes, reason: str) -> str:
+    """QR 자리에 들어갈 XML. 이미지가 없으면 **대체 문구**를 대신 넣는다.
+
+    빈 문자열을 넣으면 자리 자체가 사라져 "원래 QR 이 없는 양식"처럼 보인다.
+    없으면 없다고 적는다(원칙 4) — 읽는 사람이 URL 을 직접 칠 수 있게.
+    """
+    if png:
+        return f"""
+        <hp:run>
+            <hp:pic id="{pic_id}" zOrder="0" numberingType="PICTURE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES">
+                <hc:offset x="0" y="0"/>
+                <hc:orgSz width="2800" height="2800"/>
+                <hc:curSz width="2800" height="2800"/>
+                <hc:img binaryItemIDRef="{image_ref}"/>
+            </hp:pic>
+        </hp:run>"""
+    return f"""
+        <hp:run>
+            <hp:t>       [ X ] QR 코드 생성 실패 - 위 URL 을 주소창에 직접 입력하십시오. (사유: {xml_escape(strip_emojis(reason))})</hp:t>
+        </hp:run>"""
 
 def build_hwpx_report(data: Dict[str, Any]) -> bytes:
     """
@@ -93,15 +135,37 @@ def build_hwpx_report(data: Dict[str, Any]) -> bytes:
     kakao_map_url = xml_escape(raw_kakao_url)
     naver_map_url = xml_escape(raw_naver_url)
 
-    # QR 코드 PNG 바이너리 동적 생성
-    kakao_qr_png = generate_qr_png_bytes(raw_kakao_url)
-    naver_qr_png = generate_qr_png_bytes(raw_naver_url)
-    has_qr = len(kakao_qr_png) > 0 and len(naver_qr_png) > 0
+    # QR 코드 PNG 바이너리 동적 생성.
+    # 🔴 예전엔 `has_qr = 둘 다 성공` 이라 **한쪽만 실패해도 둘 다 사라졌다.**
+    #    지금은 각각 판정한다 — 되는 건 넣고 안 되는 자리에만 대체 문구가 들어간다.
+    kakao_qr_png, kakao_qr_err = generate_qr_png_bytes(raw_kakao_url)
+    naver_qr_png, naver_qr_err = generate_qr_png_bytes(raw_naver_url)
 
     official_date = xml_escape(format_official_date(timestamp_raw))
     official_time = xml_escape(format_official_time(timestamp_raw))
 
     mimetype_content = b"application/hwp+zip"
+
+    # 실제로 zip 에 넣을 이미지만 manifest 에 적는다. 선언과 내용물이 어긋나면
+    # 한글이 파일을 못 연다 — 아래 `z.writestr` 와 **같은 목록**을 쓴다.
+    qr_images = [(name, png) for name, png in
+                 (("image1.png", kakao_qr_png), ("image2.png", naver_qr_png)) if png]
+    manifest_images = "".join(
+        f'<manifest:file-entry manifest:full-path="BinData/{name}" '
+        f'manifest:media-type="image/png"/>' for name, _ in qr_images)
+    # 🔴 이미지 선언은 **네 군데**에 있다 — manifest.xml · content.hpf · header.xml ·
+    #    section0.xml(본문 `<hp:pic>`). 하나만 고치면 나머지가 없는 이미지를 가리켜
+    #    한글이 파일을 못 연다. 전부 같은 `qr_images` 목록에서 만든다.
+    hpf_images = "".join(
+        f'<item id="{name.split(".")[0]}" href="BinData/{name}" media-type="image/png"/>'
+        for name, _ in qr_images)
+    header_images = ""
+    if qr_images:
+        binlist = "".join(
+            f'<hc:bindata id="{name.split(".")[0]}" '
+            f'binDataRef="{name.split(".")[0]}" format="png"/>' for name, _ in qr_images)
+        header_images = (f'<hh:bindataCnt count="{len(qr_images)}"/>'
+                         f'<hh:bindataList>{binlist}</hh:bindataList>')
 
     manifest_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0">
@@ -109,7 +173,7 @@ def build_hwpx_report(data: Dict[str, Any]) -> bytes:
     <manifest:file-entry manifest:full-path="Contents/header.xml" manifest:media-type="text/xml"/>
     <manifest:file-entry manifest:full-path="Contents/section0.xml" manifest:media-type="text/xml"/>
     <manifest:file-entry manifest:full-path="Contents/content.hpf" manifest:media-type="text/xml"/>
-    {"<manifest:file-entry manifest:full-path=\"BinData/image1.png\" manifest:media-type=\"image/png\"/><manifest:file-entry manifest:full-path=\"BinData/image2.png\" manifest:media-type=\"image/png\"/>" if has_qr else ""}
+    {manifest_images}
 </manifest:manifest>
 """
 
@@ -122,7 +186,7 @@ def build_hwpx_report(data: Dict[str, Any]) -> bytes:
     <manifest>
         <item id="header" href="Contents/header.xml" media-type="text/xml"/>
         <item id="section0" href="Contents/section0.xml" media-type="text/xml"/>
-        {"<item id=\"image1\" href=\"BinData/image1.png\" media-type=\"image/png\"/><item id=\"image2\" href=\"BinData/image2.png\" media-type=\"image/png\"/>" if has_qr else ""}
+        {hpf_images}
     </manifest>
     <spine>
         <itemref idref="section0"/>
@@ -133,7 +197,7 @@ def build_hwpx_report(data: Dict[str, Any]) -> bytes:
     header_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <hh:head xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head" xmlns:hc="http://www.hancom.co.kr/hwpml/2011/core">
     <hh:beginNum page="1" footnote="1" endnote="1" pic="1" tbl="1" equation="1"/>
-    {"<hh:bindataCnt count=\"2\"/><hh:bindataList><hc:bindata id=\"image1\" binDataRef=\"image1\" format=\"png\"/><hc:bindata id=\"image2\" binDataRef=\"image2\" format=\"png\"/></hh:bindataList>" if has_qr else ""}
+    {header_images}
 </hh:head>
 """
 
@@ -188,26 +252,9 @@ def build_hwpx_report(data: Dict[str, Any]) -> bytes:
         </hp:p>
         """
 
-    # 지도 QR 이미지 XML 구문 생성 (있는 경우)
-    kakao_qr_xml = """
-        <hp:run>
-            <hp:pic id="1001" zOrder="0" numberingType="PICTURE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES">
-                <hc:offset x="0" y="0"/>
-                <hc:orgSz width="2800" height="2800"/>
-                <hc:curSz width="2800" height="2800"/>
-                <hc:img binaryItemIDRef="image1"/>
-            </hp:pic>
-        </hp:run>""" if has_qr else ""
-
-    naver_qr_xml = """
-        <hp:run>
-            <hp:pic id="1002" zOrder="0" numberingType="PICTURE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES">
-                <hc:offset x="0" y="0"/>
-                <hc:orgSz width="2800" height="2800"/>
-                <hc:curSz width="2800" height="2800"/>
-                <hc:img binaryItemIDRef="image2"/>
-            </hp:pic>
-        </hp:run>""" if has_qr else ""
+    # 지도 QR 이미지 XML — 실패한 자리에는 대체 문구가 들어간다(빈칸으로 두지 않는다)
+    kakao_qr_xml = qr_slot_xml(1001, "image1", kakao_qr_png, kakao_qr_err)
+    naver_qr_xml = qr_slot_xml(1002, "image2", naver_qr_png, naver_qr_err)
 
     # 표준 공문서 (이모지/색상 전면 제거)
     section0_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -350,9 +397,8 @@ def build_hwpx_report(data: Dict[str, Any]) -> bytes:
         z.writestr('Contents/content.hpf', content_hpf)
         z.writestr('Contents/header.xml', header_xml)
         z.writestr('Contents/section0.xml', section0_xml)
-        if has_qr:
-            z.writestr('BinData/image1.png', kakao_qr_png)
-            z.writestr('BinData/image2.png', naver_qr_png)
+        for name, png in qr_images:
+            z.writestr(f'BinData/{name}', png)
 
     buffer.seek(0)
     return buffer.getvalue()
