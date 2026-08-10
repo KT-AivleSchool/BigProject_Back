@@ -33,12 +33,19 @@ services:
       - "127.0.0.1:6379:6379"
     # 캐시 영속화(#203 ①): AOF(유실 거의 0) + RDB(스냅샷 백업) + 볼륨(컨테이너 삭제에도 보존)
     # volatile-lru: TTL 있는 키만 evict → 무TTL 캐시(지오코딩 12분·지목 LLM)는 보존됨
+    #
+    # 🔴 maxmemory 512mb → 2gb (PR #220 통합, 2026-08-10). 원본 데이터를 Redis 에
+    #    바이트로 넣는 도구(`app/tools/seed_redis.py`)가 생겨서다 — 흡연 `data/` 하나가
+    #    537MB(단일 최대 279MB)라 512mb 로는 못 들어간다.
+    #    ⚠ 그 키들은 **TTL 을 반드시 준다**(`seed_redis.py --ttl`, 기본 24h).
+    #    무TTL 로 넣으면 volatile-lru 가 못 걷어내서 한도에 닿는 순간 **지오코딩 캐시
+    #    쓰기까지 OOM 으로 막힌다** — 캐시를 보존하려던 정책이 캐시를 죽인다.
     command:
       - redis-server
       - --requirepass
       - ${REDIS_PASSWORD:?REDIS_PASSWORD 를 .env 에 설정할 것}
       - --maxmemory
-      - 512mb
+      - 2gb
       - --maxmemory-policy
       - volatile-lru
       - --appendonly

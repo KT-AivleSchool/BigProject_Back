@@ -71,6 +71,10 @@ MVP: 용산구 흡연부스 / 2차: 성동구 재활용정거장.
 | 🔴 **다리를 하나만 놓았다** | full 모드 1회차(`r_20260810_001`)가 `succeeded` 인데 화면5 가 0.4초에 죽었다. 적재 칸이 `booth_candidates` 만 넣고 `audit_rules` 를 안 넣었다 — 화면5 는 **어디를**(후보점)과 **무엇을 근거로**(감리 규칙) **둘 다** 읽는다. 목록은 20행이 정상으로 뜨니 "후보는 있는데 토론이 안 된다" 로 보인다. 파이프라인 산출물을 DB 로 옮기는 지점을 셀 때 **STEP4 만 세고 STEP1 을 안 셌다** | 화면 하나가 읽는 테이블을 **전부** 센다. 산출물→DB 다리는 STEP 개수만큼 있을 수 있다. 적재를 **한 칸에 몰지 않는다** — 두 프로세스를 한 칸에 넣으면 어느 쪽이 실패했는지 진행 표시에서 사라진다. ✅ 2026-08-10 `적재-감리`·`적재-후보` 두 칸으로 분리 |
 | 🔴 **적재 키와 조회 키가 다르다** | 위 건을 고친 뒤 같은 도메인을 두 번 돌리니 `audit_rules` 가 **26행**(hard 10 · positive 16, 고유 요인명은 14). 적재기는 `(domain, run_id)` 를 교체하는데 `_select_audit_rules` 는 `(domain, target_facility)` 만 본다 → 근거가 두 배, AHP 가중치가 묽어진다. **예외가 안 난다.** `booth_candidates` 는 같은 사고가 안 나는데, 조회(`/candidates`)가 최신 run 하나만 돌려주기 때문이다 — **짝이 한쪽만 맞춰져 있었다** | 테이블마다 **적재 단위 ↔ 조회 단위**를 짝지어 적어둔다. 한쪽을 고치면 다른 쪽을 같이 본다. 🔴 **어긋났을 때 어느 쪽을 고칠지가 진짜 갈림길이다.** 나는 처음에 "적재기를 domain 단위 전량 교체로" (A안) 권고했다 — **맞는 쪽(저장)을 틀린 쪽(조회)에 맞추는** 안이었다. `audit_rules` 는 STEP1 **산출물**이고 두 적재기는 이미 `(domain, run_id)` 로 옳게 교체하고 있었다. 실측 없이 "고치기 쉬운 쪽"을 고르면 방향이 뒤집힌다. **✅ 2026-08-10 해소**(B안, 사람 승인) — 조회에 `run_id` 추가(값은 `booth_candidates` 행에서, 요청으로 안 받는다) + 정본 run_id 어휘 통일: 예전엔 STEP 폴더 이름을 넣어 `audit_rules='step1_output'` ↔ `booth_candidates='step4_output'` 로 갈렸는데, run_id 는 "어느 STEP 폴더에서 왔나"가 아니라 **"어느 실행에서 나왔나"** 다 → 양쪽 다 **`'정본'`**(기존 33행 마이그레이션). 실측: 26행 저장 ↔ **13행 조회**, 규칙 없는 run 은 **0.56초**에 정지(고치기 전엔 남의 run 근거로 39.5초 완주). 계약 §6·§8-9 |
 | **입력 파일 이름만 바꿔도 모드 하나가 죽는다** | `fixture` 모드가 STEP2 에서 10.6초 만에 `FileNotFoundError: …\흡연\fixture\profiles.json`. 누군가 그 파일을 `fix_profiles.json` 으로 바꿔놓았다(sha256 은 동일). `gam2_audit_judgment_test.build_fixtures()` 는 없으면 만들어 주지만 `gam2_clean_data.py` 는 안 만든다 → **STEP1 을 안 도는 fixture 모드에서만** 드러난다. `.gitignore` 대상이라 clone 에도 없다 | 모드마다 **첫 칸이 다르면 선행 파일도 다르다.** 한 모드가 돈다고 다른 모드가 도는 게 아니다. 재생성: `python app\services\gam2_profile.py data_임시\<도메인>` |
+| 🔴 **캐시로 바꿔치기하면 업로드가 안 보인다** | PR #220 이 부팅 시 `data_임시/흡연/` 을 Redis 에 바이트로 시딩하고, `_child_env` 가 **Redis 에 키가 있으면** `OMNISITE_DATA_ROOT` 를 `runs/<id>/raw_data` 로 갈아끼우게 했다. 그런데 화면1 업로드(`upload.py:109`)는 **디스크**에 쓴다 → 부팅 이후 올린 파일은 파이프라인에 **영원히 안 들어간다**(서버를 다시 띄우기 전까지). 예외가 안 나고 값만 옛것이 된다. 2026-08-10 에 업로드→STEP0~4→토론→PDF 를 9분 11초로 관통한 경로가 통째로 무력화된다 | 데이터 경로를 **가로채는** 최적화는 「원본이 바뀌는 지점」을 전부 세고 나서 넣는다. 캐시는 **쓰는 쪽도 같은 캐시를 봐야** 캐시다 — 한쪽만 보면 그건 캐시가 아니라 **분기**다. ✅ 통합하되 **배선하지 않았다** — `seed_redis.py` 로 사람이 명시적으로 넣고 꺼낸다 |
+| 🔴 **무TTL 키가 캐시 정책을 죽인다** | 위 시딩은 키에 TTL 을 안 줬다. compose 는 `--maxmemory-policy volatile-lru` 라 **TTL 있는 키만** evict 한다 → 원본 바이트(흡연 `data/` 만 537MB · 단일 최대 279MB)가 한도를 채우면 Redis 가 **모든 쓰기를 OOM 으로 거절**한다. 지오코딩·지목 캐시가 같이 죽는데, 원인은 "캐시를 보존하려고" 고른 정책이다 | 무TTL 로 넣을 값은 **크기 상한이 있는 것만**이다. `--maxmemory` 를 올리는 건 시간을 버는 것이지 고치는 게 아니다. 시딩 키는 TTL 필수(`seed_redis.py --ttl`, 기본 24h) |
+| 🔴 **부분 복원이 조용히 통과한다** | 같은 PR 의 복원 함수는 Redis 접속 실패·키 누락을 전부 `warning` 으로 넘기고 `{}` 를 반환했다. 호출자는 「스테이징 결과가 비었으면 안 쓴다」만 봤다 → **반만 복원되면 그대로 주입**되고 파이프라인이 일부 데이터셋으로 완주한다. 지표가 0 이 아니라 **작아질 뿐**이라 안 걸린다 | 복원은 **전량·크기 대조**가 있어야 복원이다. 매니페스트(`__manifest__` 키)에 (상대경로 → 바이트수)를 남기고 하나라도 어긋나면 `raise`. 실측 확인: 키 1개를 지우고 재복원 → `RuntimeError: 매니페스트 3개 중 2개만` |
+| 🔴 **확인 문구가 삭제 범위를 축소해서 말한다** | `reset_db_redis.py` 는 `input()` 하나로 `public` 스키마를 통째로 DROP 하는데 문구는 "**파이프라인** 데이터가 삭제됩니다" 였다. 실측하면 **39테이블 688.1MB** 이고 지적도(`cadastral_lands`)·경계 3종처럼 다시 만드는 데 몇 시간 걸리는 것이 대부분이다. 게다가 실패를 `print` 로 삼켜 rc=0 으로 끝난다 | 파괴적 도구는 **지울 것을 전부 나열한 뒤** 승인을 받는다. 범위를 좁게 말하는 확인은 확인이 아니다(원칙 4). 저장소 관례대로 **계획만 출력이 기본**, `--yes` + `'DELETE'` 타이핑으로만 실행 |
 
 ---
 
@@ -149,6 +153,15 @@ python app\tools\check_upload_api.py                 :: 업로드 API 25항목 (
 python app\tools\check_postgis_parity.py <도메인>    :: S5 — geopandas ↔ PostGIS 술어 **값** 대조
 python app\tools\bench_postgis.py <도메인>           :: S5 — 같은 술어 **속도** 대조
                                                      :: (둘 다 도커 필요. PGIS_DSN 으로 접속지 지정)
+python app\tools\check_auth_dual_token.py            :: 듀얼 토큰 — 발급·refresh(RTR)·로그아웃
+                                                     :: (PR #221. 검증이 InMemoryDB 목이라 실 DB 확인은 별도)
+
+:: 운영 도구 (PR #220 통합 — 전부 수동. 자동으로 안 돈다)
+python app\tools\get_cache.py {geocode|jimok|list} [질의]   :: Redis 캐시 조회(읽기 전용)
+python app\tools\seed_redis.py seed  <도메인> [--ttl 86400] :: 도메인 폴더 → Redis 바이트
+python app\tools\seed_redis.py stage <도메인> <복원폴더>     :: Redis → 폴더 (매니페스트 전량 대조)
+python app\tools\reset_db_redis.py                          :: 계획만 출력. --yes + 'DELETE' 입력으로 실행
+                                                     :: 🔴 public 스키마 **전부** DROP 한다(실측 39테이블 688MB)
 
 :: 파이프라인
 python app\services\gam2_run_pipeline.py <도메인> "<지역> <시설> 부지 선정"
@@ -335,6 +348,9 @@ D:\obsidian_claude\10_OmniSite\
                                        `scalar_first`(→`scalars().first()`) ·
                                        weasyprint 는 **애초에 거짓**이었다(playwright 를 쓴다).
                                        실측 `/results/1` 200 · `/report/1` 86,260 bytes PDF
+                                       ⚠ **그 1행은 2026-08-10 정리 때 지웠다**(손입력 후보점 ·
+                                       domain·run_id 가 NULL 이라 화면5 가 못 쓴다) → 지금 `/results/1`
+                                       은 404 다. 회귀가 아니다. 살아 있는 예는 `/results/2`
   02_작업일지\2026-08-10.md           ← 🔴 **최신.** §8 관통 테스트 2경로(경로A 기존DB ·
                                        경로B 업로드→STEP0~4→적재→토론→PDF) ·
                                        §9 DSN 127.0.0.1 고정 + connect_timeout ·

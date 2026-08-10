@@ -86,7 +86,11 @@ DB_CONNECT_TIMEOUT = int(os.environ.get("DB_CONNECT_TIMEOUT", "10"))
 # ══════════════════════════════════════════════════════════════════
 # 1. 비밀값 — .env 에서 로드 (코드/설정에 값 자체는 두지 않음)
 # ══════════════════════════════════════════════════════════════════
-VWORLD_KEY = os.environ.get("VWORLD_KEY", "")
+# 🔴 브이월드 키는 이름이 둘이다 — 파이프라인은 `VWORLD_KEY`, 서버 지오코더는
+#    `VWORLD_API_KEY` 를 읽는다. 한쪽만 채우면 나머지 갈래가 **조용히** 실패한다
+#    (.env.example §4 에 적혀 있던 함정). 양쪽에서 서로를 폴백으로 본다 —
+#    둘 다 비면 여전히 빈 문자열이라 「키 없음」은 그대로 드러난다.
+VWORLD_KEY = os.environ.get("VWORLD_KEY") or os.environ.get("VWORLD_API_KEY", "")
 DATA_GO_KR_KEY = os.environ.get("DATA_GO_KR_KEY", "")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 LAW_GO_KR_OC = os.environ.get("LAW_GO_KR_OC", "")  # 법제처 국가법령정보 OC값(조례 취득)
@@ -404,7 +408,8 @@ class Settings(BaseSettings):
     # AI 및 외부 연동 API 설정
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     KAKAO_REST_API_KEY: str = os.getenv("KAKAO_REST_API_KEY", "")
-    VWORLD_API_KEY: str = os.getenv("VWORLD_API_KEY", "")
+    # 위 VWORLD_KEY 와 **같은 키의 다른 이름**이다. 서로를 폴백으로 본다(:93 주석 참조).
+    VWORLD_API_KEY: str = os.getenv("VWORLD_API_KEY") or os.getenv("VWORLD_KEY", "")
 
     # 보안 및 JWT 인증 설정
     # 🔴 기본값을 두지 않는다(2026-08-10, PR #221 통합). 예전엔
