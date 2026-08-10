@@ -90,13 +90,18 @@ async def save_audit_feedback(
     [장천명 풀스택] RAG 환류 오염 방지(Model Collapse)를 위해 실증 적용 결과를 VerifiedPrecedent 테이블에 격리 적재하는 API
     """
     try:
+        # 🔴 2026-08-09 컬럼명 정정. 예전엔 `parcel_id=simulation_id` 였다 —
+        #    이름은 필지인데 값은 시뮬레이션 id 였고, 나머지 5개는 실 DB 에 아예
+        #    없는 컬럼이라 이 저장은 **항상 실패**했다(verified_precedents 0행).
+        #    `matched_scenario`→`actual_scenario`(예측이 아니라 실측이라 이 이름),
+        #    `extracted_text`→`document_ocr_text` 로 실 DB 컬럼에 흡수했다.
         new_precedent = VerifiedPrecedent(
-            parcel_id=simulation_id,
+            conflict_simulation_id=simulation_id,
             document_no=document_no,
-            matched_scenario=matched_scenario,
+            actual_scenario=matched_scenario,
             similarity_score=similarity_score,
             classification_status=classification_status,
-            extracted_text=extracted_text,
+            document_ocr_text=extracted_text,
         )
         db.add(new_precedent)
         await db.commit()
