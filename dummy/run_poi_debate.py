@@ -2,7 +2,8 @@ import asyncio
 import sys
 import os
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# 🔴 `dummy/` 안에 있으므로 저장소 루트는 **두 단계 위**다(2026-08-10 이동).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.db.session import AsyncSessionLocal
 from app.services.gis_service import GisService

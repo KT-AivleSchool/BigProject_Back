@@ -5,7 +5,9 @@ import folium
 import psycopg2
 from shapely import wkt as shapely_wkt
 
-ROOT = Path(__file__).resolve().parent
+# 🔴 이 파일은 `dummy/` 안에 있다(2026-08-10 이동). 저장소 루트는 **두 단계 위**다 —
+#    `.parent` 로 두면 `import app…` 이 조용히 안 된다.
+ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 

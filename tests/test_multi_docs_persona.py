@@ -1,6 +1,11 @@
 import os
 import asyncio
+import sys
+from pathlib import Path
 from unittest.mock import MagicMock
+
+# 🔴 `tests/` 안에 있으므로 저장소 루트는 **두 단계 위**다(2026-08-10 이동).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # 1. DB(PostgreSQL) 연결 없이 빠르게 AI 토론만 단독 테스트하기 위한 Mocking
 # (Docker DB가 꺼져있어도 에러 없이 실행되도록 가짜 객체로 대체합니다)

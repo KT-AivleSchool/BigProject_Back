@@ -3,9 +3,15 @@
 - 작성된 동적 이해관계자 파이프라인 로직(발굴->정제->평가)이 LangChain과 연동되어 정상 작동하는지 더미 데이터를 주입하여 검증하는 터미널 실행용 파일입니다.
 """
 import asyncio
-from langchain_openai import ChatOpenAI
-from app.core.stakeholder_mode.services.stakeholder_generator import StakeholderGenerator
-from app.config import settings
+import sys
+from pathlib import Path
+
+# 🔴 `tests/` 안에 있으므로 저장소 루트는 **두 단계 위**다(2026-08-10 이동).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from langchain_openai import ChatOpenAI  # noqa: E402
+from app.core.stakeholder_mode.services.stakeholder_generator import StakeholderGenerator  # noqa: E402
+from app.config import settings  # noqa: E402
 
 async def main():
     # Initialize LLM

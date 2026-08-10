@@ -17,7 +17,9 @@ import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
 
-ROOT = Path(__file__).resolve().parent
+# 🔴 이 파일은 `dummy/` 안에 있다(2026-08-10 이동). 저장소 루트는 **두 단계 위**다 —
+#    아래 `BASE` 도 ROOT 기준이라 `.parent` 로 두면 경로가 통째로 어긋난다.
+ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 

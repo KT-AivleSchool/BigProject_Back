@@ -42,7 +42,8 @@ omnisite-redis-cache (Redis, AOF 영속화)
 
 > 모든 로더는 **멱등 가드**(대상 0행/시군구 미적재일 때만) — 재실행해도 중복 안 됨.
 > 실행: `python scripts/load_XXX.py`(DRY-RUN) → `--commit`(실제 적재).
-> ❌ 루트의 `load_cleaned_data.py`는 옛 CSV(`app/data/04.최종_데이터/`) 소실로 **작동 불가(폐기)**.
+> ❌ `dummy/load_cleaned_data.py`는 옛 CSV(`app/data/04.최종_데이터/`) 소실로 **작동 불가(폐기)**.
+> 2026-08-10 에 루트에서 `dummy/` 로 옮겼다(폐기물이 루트에 있으면 현역으로 읽힌다).
 
 ### 2-3. 팀 공유 (seed)
 | 파일 | 역할 |

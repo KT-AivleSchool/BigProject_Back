@@ -1,20 +1,27 @@
+import os
+
 import pandas as pd
 from pathlib import Path
 from sqlalchemy import create_engine, text
 
-# ── 접속 정보 (비밀번호만 수정) ─────────────────────────
-DB_USER = "postgres"
-DB_PASS = "9816"
-DB_HOST = "127.0.0.1"
-DB_PORT = "5432"
-DB_NAME = "postgres"
+# 🔴 2026-08-10 — 여기 비밀번호가 **평문으로 박혀 있었다**(`DB_PASS = "9816"`).
+#    2026-08-07 로컬 DB 침해가 정확히 그 계열(약한·공개된 자격증명)이었고,
+#    `show_map.py` 는 같은 이유로 이미 제거된 상태였는데 **이 파일만 남아 있었다.**
+#    기본값을 두지 않는다 — 없으면 조용히 엉뚱한 곳에 붙는 대신 여기서 멈춘다(원칙 1).
+DSN = os.environ.get("DATABASE_URL")
+if not DSN:
+    raise SystemExit(
+        "DATABASE_URL 이 없다. `.env` 를 읽어 환경변수로 넣고 다시 실행할 것 "
+        "(이 스크립트는 app.config 를 쓰지 않는 독립 일회성 로더다)."
+    )
 
-DATA_DIR = Path(r"C:\Users\User\Desktop\BP\data")
+# 🔴 작성자 PC 절대경로(`C:\\Users\\User\\Desktop\\BP\\data`)였다 — 다른 PC 에서는
+#    아무 파일도 못 찾는데 그 사실이 첫 조회까지 안 드러난다. 환경변수로 받는다.
+DATA_DIR = Path(os.environ.get("LOAD_DATA_DIR", ""))
+if not DATA_DIR.is_dir():
+    raise SystemExit(f"LOAD_DATA_DIR 폴더가 없다: {DATA_DIR!s}")
 
-engine = create_engine(
-    f"postgresql+psycopg2://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}",
-    connect_args={"client_encoding": "utf8"},
-)
+engine = create_engine(DSN, connect_args={"client_encoding": "utf8"})
 
 
 def find_file(keyword: str) -> Path | None:

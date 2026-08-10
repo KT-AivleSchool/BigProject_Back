@@ -1,7 +1,14 @@
 import asyncio
 import json
-from app.core.stakeholder_mode.graph.dynamic_builder import dynamic_discussion_graph
-from app.core.stakeholder_mode.schemas.persona import PersonaConfig
+import sys
+from pathlib import Path
+
+# 🔴 `tests/` 안에 있으므로 저장소 루트는 **두 단계 위**다(2026-08-10 이동).
+#    pytest 는 `pythonpath = .` 로 되지만 `python tests/…py` 직접 실행은 안 된다.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from app.core.stakeholder_mode.graph.dynamic_builder import dynamic_discussion_graph  # noqa: E402
+from app.core.stakeholder_mode.schemas.persona import PersonaConfig  # noqa: E402
 
 async def main():
     # 1. 목업 동적 페르소나 생성

@@ -117,5 +117,7 @@ E2E("공간 배제 검증")가 6번에 직결 → **6번 → 5번** 순서.
 
 ## 참고: 정리 대상 파일
 
-- `poc_statute_ingest.py` — PoC 원본. `statute_parser.py`로 승격 완료 → **삭제 가능** (git untracked)
+- `dummy/poc_statute_ingest.py` — PoC 원본. `statute_parser.py`로 승격 완료.
+  🔴 "git untracked 라 삭제 가능" 은 **틀렸다** — 실측하면 tracked 다(2026-08-10).
+  지우지 않고 루트에서 `dummy/` 로 옮겼다. 이력이 필요하면 git 에서 꺼낸다.
 - `omnisite_backup.sql` — 임시 백업으로 추정, 정리 여부 확인 필요

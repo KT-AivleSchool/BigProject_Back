@@ -1,15 +1,24 @@
 import os
 import glob
 import asyncio
-from app.core.stakeholder_mode.services.spatial_context import extract_spatial_context
-from app.core.stakeholder_mode.schemas.stakeholder import CandidateSite, OrdinanceContext
-from app.core.stakeholder_mode.graph.builder import stakeholder_graph
 import json
+import sys
+from pathlib import Path
+
+# 🔴 `tests/` 안에 있으므로 저장소 루트는 **두 단계 위**다(2026-08-10 이동).
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
+
+from app.core.stakeholder_mode.services.spatial_context import extract_spatial_context  # noqa: E402
+from app.core.stakeholder_mode.schemas.stakeholder import CandidateSite, OrdinanceContext  # noqa: E402
+from app.core.stakeholder_mode.graph.builder import stakeholder_graph  # noqa: E402
 
 async def main():
     # 1. 파일 경로 탐색
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    shared_data_dir = os.path.join(base_dir, "shared_data")
+    # 🔴 `shared_data/` 는 **저장소 루트** 기준이다. 예전엔 `__file__` 옆을 봤는데
+    #    그 폴더는 이 저장소에 없다 — 옮기기 전에도 "파일을 찾을 수 없습니다" 로
+    #    끝나고 있었다(2026-08-10 실측). 이동 때문에 깨진 게 아니다.
+    shared_data_dir = os.path.join(str(REPO_ROOT), "shared_data")
     
     topN_files = glob.glob(os.path.join(shared_data_dir, "*", "*", "*topN.geojson"))
     if not topN_files:

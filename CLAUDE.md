@@ -228,6 +228,36 @@ N 을 따로 들고 있지 않다. **`--spacing` 은 개수가 아니라 후보�
 (`analyze_clean_perf.py`) 하나만 남는다.
 스크립트는 `__file__` 에서 **두 단계 위**를 저장소 루트로 잡는다(옮기면서 같이 고쳤다).
 
+🔴 **저장소 루트 정리 (2026-08-10, 사람 지시).** 루트에 `.py` 15개가 널려 있었다.
+참조를 코드 기준으로 전수로 세고 옮겼다 — 루트에 남은 `.py` 는 **`ingest_statutes.py` 하나**다
+(데이터팀 조례 시드 로더. `app/core/data_pipeline/statute_parser.py` 를 부르는 현역).
+
+| 이동처 | 파일 | 성격 |
+|---|---|---|
+| `tests/` | `test_api_client` `test_dynamic_discussion` `test_multi_docs_persona` `test_spatial_persona` `test_stakeholder_generator` | 실행용 테스트 스크립트 |
+| `dummy/` | `check_db` `diag` `load_cleaned_data` `load_data` `poc_statute_ingest` `run_ai_console` `run_ai_console_rag` `run_poi_debate` `show_map` | 일회성·폐기·콘솔 도구 |
+
+🔴 **`diag.py`·`load_data.py` 가 「파이프라인이 쓴다」고 적었던 건 틀렸다**(정정 2026-08-10).
+`grep diag` 가 잡은 건 전부 **`--no-diag` CLI 플래그**였고, `upload.py` 의
+`load_data`·`ingest_statutes` 는 **주석 문구**였다. 실제 `import` 는 **0회**다.
+부분문자열 일치를 참조로 세면 안 옮겨도 될 것을 못 옮긴다 — `import X` / `from X` 로 센다.
+
+옮길 때 같이 고친 것 —
+- **`sys.path` 부트스트랩.** `python dummy/x.py` 는 `sys.path[0]` 이 `dummy/` 라
+  `import app…` 이 안 된다. 자기 폴더를 루트로 잡던 6개는 **두 단계 위**로 바꾸고,
+  없던 것들은 세 줄을 넣었다. 검증: **낯선 cwd(`C:\`)에서 10개 전부 import 성공.**
+- **`pytest.ini` 의 `--ignore` 경로.** 🔴 없는 경로를 무시하는 건 **에러가 아니다** —
+  옛 경로를 그대로 두면 조용히 아무것도 안 거르고 CI 에서 collection 에러로 되살아난다.
+  `norecursedirs` 에 `dummy` 추가.
+- **`dummy/load_data.py` 의 평문 비밀번호**(`DB_PASS = "9816"`). `show_map.py` 는
+  2026-08-07 침해 대응 때 이미 제거됐는데 **이 파일만 남아 있었다.** 같은 사고의
+  잔재는 한 파일만 고치면 안 고친 것과 같다 → `DATABASE_URL` 없으면 `SystemExit`.
+- 참조 문서 3곳(`MULTI_STAKEHOLDER_ARCHITECTURE.md` · `RAG_업그레이드_잔여작업_가이드.md` ·
+  `docs/데이터팀_DB_구조_가이드.md`)의 경로도 같이 고쳤다.
+
+⚠ `dummy/` 는 **패키지가 아니다**(`__init__.py` 없음). 예전 `app/services/dummy/` 사고는
+**같은 모듈명이 두 곳에 있어서** 났다 — 여기 것들은 정본과 이름이 겹치지 않는다.
+
 ### 흡연 회귀 기준 (고정 조건에서만 유효)
 
 **기준은 픽스처다** — `data_임시/흡연_FIX/` (2026-08-04 재고정, S5(A) 계측 추가).
@@ -547,8 +577,20 @@ D:\obsidian_claude\10_OmniSite\
           어느 쪽으로 갈지는 **프런트가 정한다**(분기 UI 동현님 담당). 프롬프트·평가 로직을
           고칠 때 **어느 엔진 얘기인지 먼저 확인한다** — 한쪽만 바뀐다.
           화면6 도 둘이다: 기존 **PDF**(`pdf_service.py`, playwright) · 신규 **HWPX**
-          (`/report/download/hwpx`). ⚠ `generate_qr_png_bytes` 는 예외를 전부 삼키고
-          `b""` 를 돌려준다 — `qrcode` 가 없으면 **QR 없는 문서가 조용히 나간다**(원칙 1·4).
+          (`/report/download/hwpx`).
+          ✅ **QR 조용한 실패 제거**(2026-08-10, 사람 지시). `generate_qr_png_bytes` 는
+          예외를 전부 삼키고 `b""` 만 돌려줬다 — QR 이 통째로 빠진 문서가 **왜 없는지도
+          없이** 나갔다(원칙 1·4). 이제 `(png, 사유)` 를 돌려주고, 실패하면 그 자리에
+          **`[ X ] QR 코드 생성 실패 … (사유: …)`** 대체 문구가 들어간다 + `warning` 로그.
+          🔴 이 함수는 주소·좌표로 **URL 문자열만** 만든다 — **카카오/네이버 API 키와 무관**하다.
+          실제 원인은 `qrcode` 패키지 미설치였다(PR #224 병합 때 설치).
+          🔴 이미지 선언이 **네 군데**다(`manifest.xml` · `content.hpf` ·
+          `header.xml`의 `<hh:bindataList>` · `section0.xml`의 `<hp:pic>`). 한 곳만 고치면
+          나머지가 **zip 에 없는 이미지**를 가리켜 한글이 파일을 못 연다 — 넷 다 같은
+          `qr_images` 목록에서 만든다. 한쪽만 실패해도 **성공한 쪽은 그대로 들어간다**
+          (예전엔 `has_qr = 둘 다 성공` 이라 하나 실패하면 둘 다 사라졌다).
+          실측: 정상 4,441 B/이미지 2/선언 (2,2,2) · 전체실패 2,844 B/(0,0,0)/대체문구 2 ·
+          한쪽실패 이미지 1 + `<hp:pic>` 1 + 대체문구 1. 네 XML 전부 파싱 통과.
        services/dummy(4248ff3) · api/v1/{ahp,lands}.py(7f66fd9) 삭제.
        ahp_service 는 **미구현이 아니라 폐기** — 만들면 안 된다.
        🔴 `gis_service` 를 여기 같이 넣었던 건 **틀렸다**(정정 2026-08-06, 사람 지시).

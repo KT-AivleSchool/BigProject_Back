@@ -63,10 +63,17 @@ app/core/stakeholder_mode/
 - **`multi_party_discussion_prompts.py`**:
   - 다자간 토론 공통 규칙(`COMMON_SYSTEM_PROMPT`), 갈등 민감도(`CSS_PROMPT_TEMPLATE`), 최종 보고서(`REPORTER_PROMPT`), 동적 프롬프트 생성 함수(`build_multi_party_prompt`) 포함
 
-### 📁 루트 단위/통합 테스트 스크립트
-- **`test_dynamic_discussion.py`**: 다자간 동적 토론 LangGraph 엔드투엔드(E2E) 실행 스크립트
-- **`test_stakeholder_generator.py`**: 안건 및 조례 기반 이해관계자 자동 도출 스크립트
-- **`test_spatial_persona.py`**: 지리공간 200m 버퍼 연산 및 전체 워크플로우 검증 스크립트
+### 📁 `tests/` 단위/통합 테스트 스크립트
+
+🔴 2026-08-10 에 **루트에서 `tests/` 로 옮겼다.** 파이프라인·API 가 부르지 않는
+실행용 스크립트다(참조 0회 확인). 저장소 루트를 `sys.path` 에 올리는 세 줄을
+같이 넣었으므로 `python tests/<파일>.py` 로 그대로 실행된다.
+
+- **`tests/test_dynamic_discussion.py`**: 다자간 동적 토론 LangGraph 엔드투엔드(E2E) 실행 스크립트
+- **`tests/test_stakeholder_generator.py`**: 안건 및 조례 기반 이해관계자 자동 도출 스크립트
+- **`tests/test_spatial_persona.py`**: 지리공간 200m 버퍼 연산 및 전체 워크플로우 검증 스크립트
+  - ⚠ 이 스크립트가 찾는 `shared_data/` 는 **이 저장소에 없다.** 옮기기 전에도
+    "topN.geojson 파일을 찾을 수 없습니다" 로 끝나고 있었다(2026-08-10 실측).
 
 ---
 
