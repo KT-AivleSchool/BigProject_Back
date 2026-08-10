@@ -43,13 +43,23 @@ _MEDIA_TYPES: dict[str, str] = {
 class RunRequest(BaseModel):
     domain: str
     mode: str = runner.MODE_FIXTURE
+    # ↓ mode="full" 전용. 다른 모드에서 주면 400 이다 — 받아놓고 안 쓰면
+    #   호출자는 반영됐다고 읽는다(원칙 4). 판정은 `runner.start_run` 한 곳에서 한다.
+    #
+    # user_input : 사용자 의도. STEP0.5 가 여기서 **시설·지역을 확정**한다.
+    #              예 "용산구 흡연부스 부지 선정". 없으면 400 (추측하지 않는다).
+    # topn       : STEP4 가 뽑을 후보 개수. 기본 20.
+    #              화면4 목록의 길이이자 화면5 가 고를 수 있는 후보의 수다.
+    user_input: str | None = None
+    topn: int | None = None
 
 
 @router.post("/runs", status_code=202)
 def create_run(req: RunRequest):
     """실행 시작 → 202 `{"run_id": ...}`. run_id 는 **백엔드가 만든다.**"""
     try:
-        run_id = runner.start_run(req.domain, req.mode)
+        run_id = runner.start_run(req.domain, req.mode,
+                                  user_input=req.user_input, topn=req.topn)
     except runner.RunRequestError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except runner.RunConflict as e:

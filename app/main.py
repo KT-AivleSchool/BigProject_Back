@@ -34,9 +34,15 @@ from app.api.v1 import auth, audit, pipeline
 #    2026-08-04 에 내가 폐기로 잘못 분류했다가 정정했다.
 #    막고 있던 `pdf_service` import(구 15행)는 **함수 안으로 옮겨 해소**했다.
 #    남은 차단 요인은 딱 하나 — 아래 `sim_ai/graph.py:57` 의 import 시점 접속이다.
-#    ※ 화면6(PDF)은 별건이다. `pdf_service.py`(9be3851) ·
-#      `report_template.html`(2bd69ef 에서 삭제) 복구 + weasyprint(GTK3) 가 필요하다.
-#      재작성이 아니라 **복구 + 환경**이며, 그 사정은 그 함수 주석에 적어뒀다.
+#    ※ 화면6(PDF) — 🔴 **아래 옛 주석은 틀렸다. 지금은 된다**(2026-08-09 실측 정정).
+#      예전 주석: "`pdf_service.py`·`report_template.html` 복구 + weasyprint(GTK3) 필요".
+#      2026-08-04 에 두 파일이 잠깐 지워졌던 시점 기준으로 적었고, 복구된 뒤에도
+#      주석만 남았다. 실측: 두 파일 모두 **존재**하고 `pdf_service.py` 는 weasyprint 가
+#      아니라 **playwright(chromium headless)** 를 쓴다. weasyprint 는 코드 참조가
+#      **0회**다(import 하면 libgobject 로 실패하지만 아무도 안 부른다).
+#      실제 생성도 확인했다 — 33,335 bytes, 헤더 `%PDF-`.
+#      교훈: 안 고친 주석은 남이 요구사항으로 옮겨 적는다. 실제로 프런트 쪽에
+#      "weasyprint GTK 미설치로 화면6 막힘"으로 전달됐다(원칙 4·5).
 from app.api.v1 import simulations
 
 #
@@ -75,6 +81,16 @@ async def lifespan(app: FastAPI):
         f"🔗 [DB Engine] SQLAlchemy async engine initialized ({settings.PROJECT_NAME})"
     )
     logger.info("⚡ [Redis Pool] Redis connection pool initialized.")
+
+    # 🔴 이전 서버가 죽어 'running' 인 채 남은 run 을 여기서 **한 번만** 닫는다.
+    #    안 닫으면 프런트가 영원히 폴링한다(계약 4절). 예전엔 `read_status` 마다
+    #    돌아서 runs/ 전수 스캔이 초당 수 회 일어났고, 그 읽기가 `_write_status` 의
+    #    os.replace 와 부딪혀 WinError 5 로 run 이 조용히 죽었다(2026-08-08).
+    #    판정식이 `started_at < _SERVER_BOOT` 라 **답은 부팅 시점에 이미 고정**이다.
+    from app.services import pipeline_runner
+
+    pipeline_runner.reap_orphans()
+    logger.info("🧹 [Runs] 이전 서버의 중단된 run 정리 완료.")
 
     yield
 

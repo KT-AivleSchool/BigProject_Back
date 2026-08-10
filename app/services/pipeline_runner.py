@@ -39,15 +39,22 @@ from app.config import BASE_DIR, DOMAIN_ROOT, domain_prefix, settings
 
 RUNS_ROOT = Path(BASE_DIR) / "runs"
 SERVICES_DIR = Path(BASE_DIR) / "app" / "services"
+SCRIPTS_DIR = Path(BASE_DIR) / "scripts"
 
 MODE_FIXTURE = "fixture"
 # 게이트 모드. 파이프라인이 **원래 갖고 있던** 사람 확정 지점에서 멈춘다.
 #   fixture 는 무입력 완주(회귀 검증용)라 게이트가 없어야 한다 — 사람 입력이 끼는 순간
 #   check_fixture 57/57 이 재현 불가가 된다. 두 모드를 섞지 않는 이유가 그것이다.
 MODE_HITL = "hitl"
-MODES = (MODE_FIXTURE, MODE_HITL)
+# 업로드한 도메인을 **STEP0(프로파일링)부터** 도는 모드 (2026-08-10 신설, 사람 결정).
+#   fixture·hitl 은 둘 다 `<도메인>_FIX/` 가 있어야 시작한다 — 즉 **업로드로 만든
+#   도메인은 API 로 한 단계도 못 돌았다.** 화면1(업로드)→화면2(감리확인)→화면3(가중치)
+#   가 이어지려면 STEP0·STEP1 이 계획 안에 있어야 한다.
+#   막혀 있던 건 코드가 아니라 **값의 출처**였다(`_FULL_COND` 주석 참조).
+MODE_FULL = "full"
+MODES = (MODE_FIXTURE, MODE_HITL, MODE_FULL)
 
-# 서버가 뜬 시각. 이전 서버 프로세스가 남긴 'running' 을 구분하는 데 쓴다(_reap_orphans).
+# 서버가 뜬 시각. 이전 서버 프로세스가 남긴 'running' 을 구분하는 데 쓴다(reap_orphans).
 #
 # 🔴 **초 단위로 자른다.** `started_at` 이 `isoformat(timespec="seconds")` 로 기록되기
 #    때문이다. 자르지 않으면 부팅과 같은 초에 시작된 run 은
@@ -59,7 +66,7 @@ MODES = (MODE_FIXTURE, MODE_HITL)
 _SERVER_BOOT = datetime.now().replace(microsecond=0)
 
 _LOCK = threading.Lock()
-# status.json 쓰기 직렬화. 실행 스레드·폴링(_reap_orphans)·게이트 답변이 동시에 쓴다.
+# status.json 쓰기 직렬화. 실행 스레드·부팅정리(reap_orphans)·게이트 답변이 동시에 쓴다.
 # Windows 의 os.replace 는 대상이 열려 있으면 PermissionError 로 터진다.
 _IO_LOCK = threading.Lock()
 # 🔴 위 락으로 **부족하다.** 읽는 쪽은 락 밖이라 폴링이 status.json 을 열고 있으면
@@ -108,6 +115,39 @@ _GAM4_MARKERS: dict[str, str] = {
     "4-2": "[C] 지표 정의·부착",
     "4-3": "[H] 선정",
 }
+
+# full 모드는 앞에 STEP0·STEP1 두 칸이 더 붙는다.
+#   🔴 이 둘을 **모든 모드에 같이 두지 않는다.** fixture 는 STEP1 을 안 돌리므로
+#      영원히 idle 인 단계가 화면에 남는다 — 진행률이 거짓말을 한다(원칙 4).
+#      그래서 단계 목록은 mode 에서 유도한다(`step_labels`).
+#      뒤에 붙는 적재 두 칸도 같은 이유로 full 에만 있다 — fixture·hitl 은 정본
+#      산출물이 이미 DB 에 있어 적재하지 않는다(`_proc_load_topn` 주석).
+#
+# 🔴 적재가 **두 칸**인 이유 — 화면5 로 넘어가려면 다리가 둘 다 있어야 한다.
+#    후보점(`booth_candidates`)만 넣으면 목록은 뜨는데 토론이 첫 줄에서 죽는다:
+#    `_select_audit_rules` 가 읽을 `audit_rules` 가 그 도메인에 없기 때문이다
+#    (2026-08-10 실측 — `r_20260810_001` 이 여기서 막혔다. 다행히 조용히 죽지 않고
+#    "적재된 (도메인, 시설)" 을 세어 알려줬다).
+#    한 칸에 두 프로세스를 넣지 않는다 — 어느 쪽이 실패했는지 진행 표시에서 사라진다.
+_STEP_LABELS_FULL: list[tuple[str, str]] = [
+    ("0", "프로파일링 · 시설/지역 확정"),
+    ("1", "감리 판정 · 상위법 검색"),
+] + STEP_LABELS + [
+    ("적재-감리", "감리 규칙 DB 적재 (토론 근거)"),
+    ("적재-후보", "후보점 DB 적재 (화면5 목록)"),
+]
+
+# gam2_run_pipeline.py 의 `_step()` 이 찍는 구분선 머리글.
+#   "▶ STEP 0.5 시설·지역 확정" 은 마커에 **일부러 없다** — 뒤의 공백 하나로
+#   "▶ STEP 0 " 과 갈린다. 0.5 를 단계로 세면 계약의 단계 수가 또 늘어난다.
+_RUNPIPE_MARKERS: dict[str, str] = {
+    "0": "▶ STEP 0 ",
+    "1": "▶ STEP 1 ",
+}
+
+
+def step_labels(mode: str) -> list[tuple[str, str]]:
+    return _STEP_LABELS_FULL if mode == MODE_FULL else STEP_LABELS
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -162,10 +202,12 @@ def _write_status(run_id: str, doc: dict) -> None:
        예외가 아니라 **정상 동작**이다.
 
     🔴 그래도 os.replace 는 터진다 — 락은 **쓰는 쪽끼리만** 직렬화한다(2026-08-08 실측).
-       읽는 쪽(`read_status` → `_reap_orphans` 가 `runs/*/status.json` 을 **전수 스캔**한다)은
-       이 락 밖이고, 파이썬 `open()` 은 `FILE_SHARE_DELETE` 를 안 준다 → **누가 읽고 있는
-       동안엔 replace 가 거부된다.** 예상했던 WinError 32(사용 중)가 아니라 **WinError 5**
-       (액세스 거부)로 온다 — 번호가 달라 안 걸렸다.
+       읽는 쪽은 이 락 밖이고, 파이썬 `open()` 은 `FILE_SHARE_DELETE` 를 안 준다 →
+       **누가 읽고 있는 동안엔 replace 가 거부된다.** 예상했던 WinError 32(사용 중)가
+       아니라 **WinError 5**(액세스 거부)로 온다 — 번호가 달라 안 걸렸다.
+       (2026-08-09 — 경합의 주범이던 `read_status` 안의 전수 스캔은 제거했다. 폴러가
+        자기 run 하나만 읽으므로 겹칠 확률이 크게 준다. 재시도는 그대로 남긴다 —
+        확률이 준 것이지 0이 된 게 아니다.)
        `r_20260808_001` 이 이걸로 시작 같은 초에 죽었다. 읽기는 순간이므로 짧게
        재시도하면 넘어간다. 끝내 안 되면 **raise 한다** — 조용히 넘기면 status 가
        옛 값인 채로 남아 거짓말을 한다(원칙 1·4).
@@ -196,8 +238,13 @@ def read_status(run_id: str) -> dict | None:
 
        **있는 값은 건드리지 않는다.** 빠진 키만 디스크를 보고 채운다 — 기록을 고쳐
        쓰는 게 아니라 빠진 칸을 사실로 메우는 것이다. 파일에도 쓰지 않는다.
+
+    🔴 이 함수는 **읽기만 한다**(2026-08-09). 예전엔 첫 줄에서 `_reap_orphans()` 를 불러
+       `runs/*/status.json` 을 전수 스캔하며 **남의 파일에 썼다.** 함수명이 `read_` 인데
+       부작용이 있었고, 그래서 out-of-process 검증이 남이 돌리던 run 을 닫는 사고가
+       났다(CLAUDE.md 「읽기인 줄 알았는데 쓰기」). 고아 정리는 `reap_orphans()` 로
+       분리해 **부팅 때 한 번만** 부른다(`app/main.py` lifespan).
     """
-    _reap_orphans()
     p = _status_path(run_id)
     if not p.is_file():
         return None
@@ -215,13 +262,21 @@ def read_status(run_id: str) -> dict | None:
     return doc
 
 
-def _reap_orphans() -> None:
-    """서버가 죽어 중단된 run 을 failed 로 닫는다.
+def reap_orphans() -> None:
+    """서버가 죽어 중단된 run 을 failed 로 닫는다. **부팅 때 한 번만 부른다.**
 
     안 하면 status 가 'running' 인 채로 남아 프런트가 **영원히 폴링한다.**
     계약 4절('succeeded 또는 failed 가 되면 멈춘다')이 지켜지지 않는다.
     판정 근거: 이 서버 부팅 시각보다 먼저 시작됐는데 아직 진행 중으로 적혀 있다
     = 이전 프로세스의 것이다.
+
+    🔴 왜 부팅 1회인가(2026-08-09). **답이 부팅 시점에 이미 고정돼 있다.** 판정식이
+       `started_at < _SERVER_BOOT` 이므로, 이 서버가 시작한 run 은 영원히 대상이 아니고
+       이전 서버의 run 은 부팅 순간 전부 확정돼 있다. 그런데 예전엔 `read_status` 마다
+       불려서 **폴러 2개 × 초당 ~1.2회 × runs 39개**를 스캔했다. 그 읽기가 `_IO_LOCK`
+       밖이라 `_write_status` 의 `os.replace` 가 WinError 5 로 터졌다
+       (`배포후_작업일지\\20260808_파이프라인_실행중단_WinError5.md`). 스캔 자체가
+       필요 없던 게 아니라 **횟수가 필요 없었다.**
     """
     if not RUNS_ROOT.is_dir():
         return
@@ -268,6 +323,81 @@ def _load_fixture(domain: str) -> tuple[dict, Path]:
     return json.loads(base.read_text(encoding="utf-8")), rev
 
 
+# ── full 모드의 실행 조건 ─────────────────────────────────────────────
+# 🔴 이 값들이 **하드코딩 금지(원칙 2)에 걸리지 않는 이유**를 여기 남긴다.
+#    원칙 2 가 막는 것은 **도메인 값**(시설명·지목·배제반경·지역코드)이다.
+#    아래 넷은 도메인이 아니라 **계산 방식**이다 — 거리감쇠 함수·정규화 스케일·
+#    후보점 격자 간격. 용산 흡연부스든 성동 재활용정거장이든 같은 값을 쓴다.
+#    도메인마다 갈려야 하는 값(반경·가중치)은 여기 없다. 그건 게이트에서 사람이 준다.
+#
+#    그래도 **기본값을 조용히 쓰지는 않는다.** CLI 기본값은 `scale=minmax`·
+#    `decay=null` 이라 아래와 다르고, 그 차이 하나만으로 Top-N 이 통째로 갈린다
+#    (2026-08-10 실측). 즉 "안 주면 알아서 되겠지" 가 성립하지 않는 자리다.
+#    그래서 러너가 **명시적으로 선언하고**, 그 선언을 `runs/<id>/params.json` 에
+#    적어 산출물에서 되짚을 수 있게 한다(원칙 4).
+#    출처: `data_임시/흡연_FIX/기준값.json` 의 `조건` (2026-08-03 고정 기준선).
+_FULL_COND: dict = {
+    "alpha": 0.3,
+    "decay": {"func": "gaussian", "sigma_ratio": 1 / 3},
+    "scale": "log",
+    "spacing": 20,
+}
+
+# STEP4 Top-N 기본 개수. `gam4_site_select.py --topn` 의 기본값과 같다.
+TOPN_DEFAULT = 20
+TOPN_MAX = 200
+
+
+def _full_conditions(domain: str, topn: int) -> dict:
+    """full 모드의 `base` — 픽스처 대신 **선언된 조건**을 쓴다.
+
+    `STEP3_가중치` 는 **일부러 비운다.** full 모드의 반경은 게이트B 에서만 온다 —
+    빈 dict 를 두면 `_radius_arg` 가 멈추므로, 게이트를 안 거치고 3-2 에 닿는
+    경로가 생기면 조용히 도는 대신 터진다(원칙 1).
+    """
+    return {
+        "조건": dict(
+            _FULL_COND,
+            candidates=f"{domain_prefix(domain)}_후보_지적도필지.gpkg",
+            topn=topn,
+        ),
+        "STEP3_가중치": {},
+    }
+
+
+def _params_path(run_id: str) -> Path:
+    return run_dir(run_id) / "params.json"
+
+
+def _write_params(run_id: str, params: dict) -> None:
+    """이 run 의 요청 파라미터. status.json 스키마(계약 3절)를 늘리지 않는다.
+
+    게이트에서 스레드가 끝났다가 답변 POST 로 **새 스레드가 이어받으므로**
+    `user_input`·`topn` 은 메모리에 둘 수 없다. 상태는 전부 디스크에 있다.
+    """
+    _params_path(run_id).write_text(
+        json.dumps(params, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _read_params(run_id: str) -> dict:
+    p = _params_path(run_id)
+    return json.loads(p.read_text(encoding="utf-8")) if p.is_file() else {}
+
+
+def _load_conditions(domain: str, mode: str, run_id: str | None = None) -> dict:
+    """실행 조건(`base`)을 모드에 맞는 출처에서 가져온다.
+
+    fixture·hitl → `<도메인>_FIX/기준값.json`  (없으면 400)
+    full         → `_full_conditions`          (픽스처를 요구하지 않는다)
+    """
+    if mode != MODE_FULL:
+        return _load_fixture(domain)[0]
+    topn = TOPN_DEFAULT
+    if run_id:
+        topn = _read_params(run_id).get("topn") or TOPN_DEFAULT
+    return _full_conditions(domain, topn)
+
+
 def _radius_arg(base: dict) -> str:
     """`--radius` 문자열을 픽스처의 지표별 radius_m 에서 조립한다.
 
@@ -276,10 +406,13 @@ def _radius_arg(base: dict) -> str:
     EOFError 로 죽는다 — 조용히 넘어가지 않으므로 그대로 둔다.
     """
     parts = [f"{iid}={v['radius_m']}"
-             for iid, v in base["STEP3_가중치"].items()
+             for iid, v in (base.get("STEP3_가중치") or {}).items()
              if v.get("radius_m") is not None]
     if not parts:
-        raise RunRequestError("픽스처의 STEP3_가중치 에 radius_m 이 하나도 없습니다.")
+        raise RunRequestError(
+            "실행 조건에 radius_m 이 하나도 없습니다. "
+            "(fixture·hitl 이면 기준값.json 의 STEP3_가중치, "
+            "full 이면 게이트B 답변이 반경의 유일한 출처다)")
     return ",".join(parts)
 
 
@@ -316,6 +449,56 @@ def _python_exe() -> str:
 
 def _svc(name: str) -> str:
     return str(SERVICES_DIR / name)
+
+
+def _proc_load_topn(domain: str, run_id: str) -> _Proc:
+    """STEP4 산출물 → `booth_candidates` 적재. **화면4 와 화면5 사이의 유일한 다리다.**
+
+    🔴 왜 러너가 부르나 — 이걸 사람이 손으로 돌리게 두면 full 모드는 화면4 에서
+       끝난다. 화면5 는 `GET /simulations/candidates` 로 목록을 받아 그중 하나를
+       고르는데, 그 목록의 출처가 이 테이블이기 때문이다. 다리가 CLI 한 줄이면
+       프런트는 건널 방법이 없다.
+
+    🔴 왜 full 모드에만 붙나 — fixture·hitl 은 **정본 산출물의 재생**이고, 그 Top-N 은
+       이미 `run_id='step4_output'` 으로 DB 에 있다. 재생할 때마다 20행씩 더 쌓으면
+       시연용 예시 데이터가 실행 이력에 묻힌다. 값이 같은 행을 run 마다 복제하는 건
+       적재가 아니라 누적이다.
+
+    적재기는 같은 `(domain, run_id)` 만 지우고 다시 넣는다 — 새 run_id 라 지울 게
+    없고, 다른 도메인·정본 행은 안 건드린다. `--run` 을 주므로 시설명도 **이 run 의**
+    reviewed.json 에서 읽는다(정본이 아니라).
+
+    🔴 `_python_exe()` 가 **아니라** `sys.executable` 이다. 이건 파이프라인 스크립트가
+       아니라 DB 스크립트다 — geopandas·shapely 를 안 쓰고 `psycopg`·`app.config` 만
+       쓴다. 그 둘이 있는 건 서버 환경이지 `OMNISITE_PYTHON` 이 아니다(이 저장소는
+       두 환경이 갈려 있다). 여기서 파이프라인 쪽을 부르면 마지막 칸에서
+       ModuleNotFoundError 로 죽는다 — 다 돌린 뒤에.
+    """
+    return _Proc(("적재-후보",),
+                 [sys.executable, str(SCRIPTS_DIR / "load_topn_candidates.py"),
+                  domain, "--run", run_id, "--yes"])
+
+
+def _proc_load_audit(domain: str, run_id: str) -> _Proc:
+    """STEP1 확정본(reviewed) → `audit_rules` 적재. **화면5 토론의 근거다.**
+
+    🔴 왜 후보점 적재만으로는 모자라나 — 화면5 는 두 테이블을 읽는다.
+       `booth_candidates` 는 **어디를** 논의할지, `audit_rules` 는 **무엇을 근거로**
+       논의할지다. 앞만 넣으면 `/candidates` 목록은 정상으로 보이는데 `/stream` 이
+       첫 줄에서 멈춘다 — 프런트에는 "후보는 있는데 토론이 안 된다" 로 보인다.
+
+    🔴 `reviewed` 를 쓴다. `audit_result.json` 은 LLM 제안값이고 게이트A 에서 사람이
+       고친 값은 reviewed 에만 있다. `--run` 을 주므로 **이 run 의** reviewed 다 —
+       정본(`step1_output/`)을 읽으면 남의 실행 결과를 근거로 토론하게 된다.
+
+    적재기는 `(domain, run_id)` 단위로 교체하고, 읽는 쪽(`_select_audit_rules`)도
+    `domain` 으로 거른다. 두 도메인이 같은 시설을 써도 근거가 섞이지 않는다.
+
+    `sys.executable` 인 이유는 `_proc_load_topn` 과 같다 — DB 스크립트다.
+    """
+    return _Proc(("적재-감리",),
+                 [sys.executable, str(SCRIPTS_DIR / "load_audit_data.py"),
+                  domain, "--run", run_id])
 
 
 def _weight_args(base: dict, radius: str, weight: str | None,
@@ -361,6 +544,19 @@ def build_commands(domain: str) -> list[_Proc]:
     return [_proc_of(s, domain, base) for s in ("2", "3-1", "3-2", "4")]
 
 
+def _proc_runpipe(domain: str, user_input: str) -> _Proc:
+    """STEP0(프로파일링·시설/지역 확정) + STEP1(감리 판정·상위법 검색).
+
+    `gam2_run_pipeline.py` 한 프로세스가 둘 다 담당한다 — CLI 와 같은 코드다.
+    이 스크립트의 CLI 는 argparse 가 아니라 **위치인자 2개**(도메인, 사용자 입력)이고
+    `--` 로 시작하는 토큰만 플래그로 본다. 그래서 사용자 입력이 `--` 로 시작하면
+    조용히 플래그로 먹힌다 — `start_run` 이 미리 막는다.
+    """
+    return _Proc(("0", "1"),
+                 [_python_exe(), _svc("gam2_run_pipeline.py"), domain, user_input],
+                 markers=_RUNPIPE_MARKERS)
+
+
 def _proc_of(stage: str, domain: str, base: dict,
              radius: str | None = None, weight: str | None = None) -> _Proc:
     """단계 하나의 커맨드. **조립은 여기 한 곳뿐이다.**
@@ -387,10 +583,14 @@ def _proc_of(stage: str, domain: str, base: dict,
                                     "human" if radius else "fixture"))
     if stage == "4":
         # STEP4 위치 선정. 한 프로세스가 4-1·4-2·4-3 을 전부 담당한다.
-        return _Proc(("4-1", "4-2", "4-3"),
-                     [py, _svc("gam4_site_select.py"), domain,
-                      "--spacing", str(cond["spacing"])],
-                     markers=_GAM4_MARKERS)
+        argv = [py, _svc("gam4_site_select.py"), domain,
+                "--spacing", str(cond["spacing"])]
+        # 🔴 `topn` 이 있을 때만 붙인다. fixture 의 기준값.json 에는 이 키가 없고,
+        #    없던 인자를 "기본값과 같으니 붙여도 된다"고 넣는 순간 실행 조건이
+        #    픽스처가 아니라 러너에서 온 것이 된다(원칙 4). 값이 같아도 출처가 다르다.
+        if cond.get("topn") is not None:
+            argv += ["--topn", str(cond["topn"])]
+        return _Proc(("4-1", "4-2", "4-3"), argv, markers=_GAM4_MARKERS)
     raise ValueError(f"알 수 없는 단계: {stage!r}")
 
 
@@ -426,7 +626,7 @@ def _new_run_id() -> str:
     return f"r_{day}_{max(used, default=0) + 1:03d}"
 
 
-def _prepare_dirs(run_id: str, domain: str) -> None:
+def _prepare_dirs(run_id: str, domain: str, mode: str = MODE_FIXTURE) -> None:
     """run 별 출력 폴더 + **감리 입력 고정**.
 
     STEP1 도 가른다 — 계약 5절에는 STEP2~4 만 적혀 있지만, 그대로 두면
@@ -442,6 +642,13 @@ def _prepare_dirs(run_id: str, domain: str) -> None:
     d = run_dir(run_id)
     for sub in ("step1", "step2", "step3", "step4"):
         (d / sub).mkdir(parents=True, exist_ok=True)
+
+    # 🔴 full 모드는 여기서 **아무것도 복사하지 않는다.** 감리를 이 run 안에서 직접
+    #    돌리므로 step1 산출물이 run 폴더에 새로 생긴다. 정본 step1_output 을 복사해
+    #    두면 감리가 실패했을 때 **남의 도메인/이전 실행 결과로 그대로 진행**한다 —
+    #    안 터지고 값만 틀리는 전형이다(원칙 1·4).
+    if mode == MODE_FULL:
+        return
 
     _, fix_rev = _load_fixture(domain)
     pre = domain_prefix(domain)
@@ -502,7 +709,7 @@ def _new_status(run_id: str, domain: str, mode: str = MODE_FIXTURE) -> dict:
         "mode": mode,
         "status": "queued",
         "steps": [{"id": i, "label": lb, "status": "idle", "sec": None}
-                  for i, lb in STEP_LABELS],
+                  for i, lb in step_labels(mode)],
         "artifacts": {k: None for k in ARTIFACTS},
         "error": None,
         "started_at": _now_iso(),
@@ -524,9 +731,21 @@ def _step(doc: dict, step_id: str) -> dict:
 #    재실행은 0회다. 게이트에서 **스레드가 끝나고**, 답이 오면 그 다음 칸부터
 #    새 스레드가 이어 간다. 진행 상태는 전부 디스크(status.json · run 폴더)에 있으므로
 #    서버가 재시작돼도 답변 POST 로 이어갈 수 있다.
+#
+#    🔴 `full` 은 `hitl` 앞에 **STEP0·1 과 seed 칸**을 더 붙인 것뿐이다.
+#       게이트 뒤쪽(2·3-1·propose·gate:weight·3-2·4)은 `hitl` 과 **같은 배열**이고
+#       같은 `_proc_of` 를 탄다. 다르게 짜면 "hitl 로는 되는데 full 은 다른 값"이 나온다.
+#       뒤로도 **두 칸**이 더 붙는다 — `load-audit`(reviewed → audit_rules)와
+#       `load`(Top-N → booth_candidates). 화면5 는 두 테이블을 다 읽는다:
+#       앞이 토론의 근거, 뒤가 논의 대상 목록이다. 하나만 넣으면 목록은 뜨는데
+#       토론이 첫 줄에서 죽는다(2026-08-10 실측).
+#       근거를 먼저 넣는다 — 순서상 의존은 없지만, 목록이 먼저 보이면 사람이
+#       고를 수 있는데 눌러도 안 되는 구간이 생긴다.
 _PLAN: dict[str, tuple[str, ...]] = {
     MODE_FIXTURE: ("2", "3-1", "3-2", "4"),
     MODE_HITL: ("gate:audit", "2", "3-1", "propose", "gate:weight", "3-2", "4"),
+    MODE_FULL: ("0-1", "seed", "gate:audit", "2", "3-1", "propose",
+                "gate:weight", "3-2", "4", "load-audit", "load"),
 }
 
 GATE_IDS = ("audit", "weight")
@@ -543,15 +762,66 @@ def _resume_index(mode: str, gate_id: str) -> int:
     return plan.index(f"gate:{gate_id}") + 1
 
 
-def start_run(domain: str, mode: str) -> str:
+def _validate_full_params(domain: str, user_input: str | None,
+                          topn: int | None) -> dict:
+    """full 모드 요청 파라미터 검증. 값이 이상하면 **실행 전에** 400 을 낸다."""
+    if not isinstance(user_input, str) or not user_input.strip():
+        raise RunRequestError(
+            "full 모드는 사용자 의도(user_input)가 필수입니다. "
+            '예: "용산구 흡연부스 부지 선정" — 시설·지역을 여기서 확정합니다.')
+    ui = user_input.strip()
+    if ui.startswith("--"):
+        # gam2_run_pipeline 의 CLI 는 `--` 로 시작하는 토큰을 전부 플래그로 본다.
+        # 그대로 넘기면 위치인자가 하나 모자라 usage 만 찍고 죽는다(조용하진 않지만
+        # 사유가 엉뚱하게 보인다).
+        raise RunRequestError("user_input 은 '--' 로 시작할 수 없습니다.")
+    if len(ui) > 200:
+        raise RunRequestError(f"user_input 이 너무 깁니다({len(ui)}자, 상한 200).")
+
+    n = TOPN_DEFAULT if topn is None else topn
+    if isinstance(n, bool) or not isinstance(n, int):
+        raise RunRequestError(f"topn 은 정수여야 합니다: {topn!r}")
+    if not (1 <= n <= TOPN_MAX):
+        raise RunRequestError(f"topn 범위는 1~{TOPN_MAX} 입니다: {n}")
+
+    # 프로파일링 대상이 없으면 STEP0 이 빈 fixture 로 진행한다 — 여기서 멈춘다(원칙 1).
+    data_dir = Path(str(DOMAIN_ROOT)) / domain / "data"
+    if not data_dir.is_dir() or not any(p.is_file() for p in data_dir.iterdir()):
+        raise RunRequestError(
+            f"원본 데이터가 없습니다: {data_dir} — 화면1(업로드)로 먼저 올리세요.")
+    return {"user_input": ui, "topn": n}
+
+
+def start_run(domain: str, mode: str, user_input: str | None = None,
+              topn: int | None = None) -> str:
     """검증 → run 폴더 준비 → 백그라운드 실행. run_id 를 돌려준다."""
     if mode not in MODES:
         raise RunRequestError(
             f"지원하지 않는 mode 입니다: {mode!r} (가능: {', '.join(MODES)})")
     _validate_domain(domain)
-    _load_fixture(domain)          # 픽스처가 없으면 여기서 400
-    build_commands(domain)         # 커맨드 조립도 미리 해본다(실패를 실행 전에 낸다)
-    _reap_orphans()
+
+    if mode == MODE_FULL:
+        params = _validate_full_params(domain, user_input, topn)
+        # 조립을 미리 해본다(실패를 실행 전에 낸다). full 은 3-2 의 반경이 게이트B 에서
+        # 오므로 그 단계만 빼고 확인한다 — 지금 조립하면 `_radius_arg` 가 정상적으로 막는다.
+        base = _full_conditions(domain, params["topn"])
+        _proc_runpipe(domain, params["user_input"])
+        for s in ("2", "3-1", "4"):
+            _proc_of(s, domain, base)
+    else:
+        # 🔴 fixture·hitl 은 실행 조건이 픽스처에서 온다. 이 두 값을 받으면
+        #    "받아놓고 안 쓰는 인자"가 되고, 호출자는 반영됐다고 읽는다(원칙 4).
+        for k, v in (("user_input", user_input), ("topn", topn)):
+            if v is not None:
+                raise RunRequestError(
+                    f"{k} 는 mode=full 에서만 씁니다 "
+                    f"(fixture·hitl 의 실행 조건은 <도메인>_FIX/기준값.json 에서 온다).")
+        params = {}
+        _load_fixture(domain)      # 픽스처가 없으면 여기서 400
+        build_commands(domain)     # 커맨드 조립도 미리 해본다(실패를 실행 전에 낸다)
+    # 여기서 `reap_orphans()` 를 부르지 않는다(2026-08-09). 부팅 때 이미 돌았고,
+    # 그 뒤 생긴 run 은 전부 `started_at >= _SERVER_BOOT` 라 **판정 대상이 아니다** —
+    # 무조건 no-op 인 전수 스캔을 요청 경로에 두면 os.replace 경합만 늘린다.
 
     with _LOCK:
         if domain in _ACTIVE:
@@ -560,11 +830,15 @@ def start_run(domain: str, mode: str) -> str:
         _ACTIVE[domain] = run_id
 
     try:
-        _prepare_dirs(run_id, domain)
+        _prepare_dirs(run_id, domain, mode)
+        if params:
+            # status 보다 **먼저** 쓴다. 실행 스레드가 곧바로 읽는다.
+            _write_params(run_id, params)
         doc = _new_status(run_id, domain, mode)
-        # `reviewed` 는 방금 _prepare_dirs 가 넣어서 **이미 있다.** 여기서 안 갱신하면
-        # 첫 단계 전이까지 status 는 null 인데 엔드포인트는 200 을 준다 — status 가
-        # 거짓말을 한다(원칙 4). 나머지 6개는 아직 없으므로 그대로 null 이다.
+        # fixture·hitl 은 `reviewed` 를 방금 _prepare_dirs 가 넣어서 **이미 있다.**
+        # 여기서 안 갱신하면 첫 단계 전이까지 status 는 null 인데 엔드포인트는 200 을
+        # 준다 — status 가 거짓말을 한다(원칙 4). 나머지 6개는 아직 없으므로 null 이다.
+        # full 은 8개 전부 null 로 시작한다(감리를 이 run 이 지금부터 돈다) — 맞는 값이다.
         _refresh_artifacts(doc)
         _write_status(run_id, doc)
     except Exception:
@@ -588,7 +862,8 @@ def _execute(run_id: str, domain: str, mode: str, start: int = 0) -> None:
     doc.pop("gate", None)          # 계약 7-3 — running 에는 gate 키가 없다
     _write_status(run_id, doc)
 
-    base, _ = _load_fixture(domain)
+    base = _load_conditions(domain, mode, run_id)
+    params = _read_params(run_id)
     plan = _PLAN[mode]
     log_path = run_dir(run_id) / "run.log"
     paused = False
@@ -608,7 +883,19 @@ def _execute(run_id: str, domain: str, mode: str, start: int = 0) -> None:
                     _write_status(run_id, doc)
                     paused = True
                     break
-                proc = (_proc_propose(domain, base, run_id) if stage == "propose"
+                if stage == "seed":
+                    # 프로세스가 아니라 파일 하나를 정하는 일이다. 자식을 띄우지 않는다.
+                    src = _seed_reviewed(run_id, domain)
+                    log.write(f"\n[감리 입력 확정] reviewed ← {src}\n")
+                    log.flush()
+                    _refresh_artifacts(doc)
+                    _write_status(run_id, doc)
+                    continue
+                proc = (_proc_runpipe(domain, params["user_input"])
+                        if stage == "0-1"
+                        else _proc_load_audit(domain, run_id) if stage == "load-audit"
+                        else _proc_load_topn(domain, run_id) if stage == "load"
+                        else _proc_propose(domain, base, run_id) if stage == "propose"
                         else _proc_of(stage, domain, base,
                                       *_stage_args(run_id, mode, stage)))
                 _run_one(run_id, doc, proc, log)
@@ -800,6 +1087,32 @@ def _reviewed_path(run_id: str, domain: str) -> Path:
     return run_dir(run_id) / "step1" / f"{domain_prefix(domain)}_audit_result_reviewed.json"
 
 
+def _seed_reviewed(run_id: str, domain: str) -> str:
+    """full 모드에서 게이트A 가 읽을 `reviewed.json` 을 만든다. 반환: 출처 파일명.
+
+    STEP1 은 `audit_result.json`(감리 판정)과 — 미확정 배제반경이 있으면 —
+    `audit_result_enriched.json`(상위법 검색 제안값 포함)까지 쓴다. `reviewed` 는
+    **사람이 확정한 판**이라 STEP1 이 만들지 않는다. CLI 에서는 `review_hitl` 이
+    대화형으로 만들지만, API 는 그 자리를 게이트A 가 대신한다.
+
+    🔴 폴백 순서(enriched > audit_result)는 `review_hitl`(:1619 주석)과 **같다.**
+       여기서 다른 순서를 쓰면 CLI 로 돌린 결과와 API 로 돌린 결과가 갈린다.
+    🔴 게이트A 답변은 이 파일을 **제자리에서 고친다**(`_apply_audit`). 즉 이 시드는
+       "빈 껍데기"가 아니라 **LLM 제안값 그대로**이고, 사람이 손대지 않은 항목은
+       제안값이 그대로 남는다 — `confirmed` 플래그가 그 사실을 구분해 준다.
+    """
+    d = run_dir(run_id) / "step1"
+    pre = domain_prefix(domain)
+    for name in (f"{pre}_audit_result_enriched.json", f"{pre}_audit_result.json"):
+        src = d / name
+        if src.is_file():
+            shutil.copyfile(src, _reviewed_path(run_id, domain))
+            return name
+    raise _StepFailed(
+        f"STEP1 감리 산출물이 없습니다: {d}/{pre}_audit_result[_enriched].json — "
+        "STEP0·1 이 파일을 남기지 않고 끝났습니다.")
+
+
 def _proposal_path(run_id: str, domain: str) -> Path:
     """`save_weight_proposal` 이 쓴 곳. 자식은 STEP3_OUTPUT_DIR 이 run 폴더로 잡혀 있다."""
     return run_dir(run_id) / "step3" / f"{domain}_weight_proposal_{run_id}.json"
@@ -967,7 +1280,7 @@ def submit_gate(run_id: str, gate_id: str, payload: dict) -> dict:
         _validate_weight(questions, payload)
 
     # 🔴 서버가 재시작되면 `_ACTIVE` 는 비지만 `awaiting_hitl` 인 run 은 디스크에 남는다
-    #    (`_reap_orphans` 는 queued/running 만 닫는다 — 게이트 대기는 중단이 아니다).
+    #    (`reap_orphans` 는 queued/running 만 닫는다 — 게이트 대기는 중단이 아니다).
     #    그 상태에서 답이 오면 여기서 다시 점유한다. 안 하면 같은 도메인에 새 run 이
     #    동시에 돌아 정본 캐시·데이터를 함께 건드린다.
     with _LOCK:
@@ -1140,7 +1453,7 @@ def _stage_args(run_id: str, mode: str, stage: str) -> tuple[str | None, str | N
     🔴 사람 답을 코드로 다시 해석하지 않는다. 받은 값을 그대로 문자열로 옮긴다.
        (`slider` 는 `-1~+1` 그대로 — 분해는 `apply_weight_hitl` 이 경계에서 한다)
     """
-    if mode != MODE_HITL or stage != "3-2":
+    if mode not in (MODE_HITL, MODE_FULL) or stage != "3-2":
         return (None, None)
     ans = _read_answer(run_id, "weight")
     if ans is None:                       # 게이트를 안 거치고 3-2 에 온 것 = 러너 버그
