@@ -5,6 +5,25 @@ from datetime import datetime
 from typing import Dict, Any
 from xml.sax.saxutils import escape as xml_escape
 
+import re
+
+def strip_emojis(text: str) -> str:
+    """
+    행정 공문서 표준 규격 준수를 위해 텍스트 내 모든 유니코드 이모지/이모티콘을 제거합니다.
+    """
+    if not isinstance(text, str):
+        return text
+    emoji_pattern = re.compile(
+        r"[\U00010000-\U0010FFFF"
+        r"\u2600-\u27BF"
+        r"\u2300-\u23FF"
+        r"\u2B50\u2B55\u2934\u2935"
+        r"\u2190-\u21FF"
+        r"]+",
+        flags=re.UNICODE
+    )
+    return emoji_pattern.sub("", text).strip()
+
 def format_official_date(ts_str: str) -> str:
     """
     공문서 날짜 표기 표준 (2025/2026 행정업무운영 편람)
@@ -58,12 +77,12 @@ def build_hwpx_report(data: Dict[str, Any]) -> bytes:
     raw_facility = data.get("facility_type", "공공시설")
     raw_intensity = data.get("intensity_level", "보통")
 
-    candidate_jibun = xml_escape(str(raw_jibun))
-    candidate_address = xml_escape(str(raw_addr))
-    facility_type = xml_escape(str(raw_facility))
+    candidate_jibun = xml_escape(strip_emojis(str(raw_jibun)))
+    candidate_address = xml_escape(strip_emojis(str(raw_addr)))
+    facility_type = xml_escape(strip_emojis(str(raw_facility)))
     lat = data.get("candidate_lat", 0.0)
     lng = data.get("candidate_lng", 0.0)
-    intensity_level = xml_escape(str(raw_intensity))
+    intensity_level = xml_escape(strip_emojis(str(raw_intensity)))
     timestamp_raw = data.get("timestamp", "")
     ahp_weights = data.get("ahp_weights", {})
     scenarios = data.get("scenarios", [])
@@ -122,7 +141,7 @@ def build_hwpx_report(data: Dict[str, Any]) -> bytes:
     ahp_rows_xml = ""
     for idx, (k, v) in enumerate(ahp_weights.items()):
         percentage = f"{v * 100:.1f}%({v:.2f})"
-        escaped_k = xml_escape(str(k))
+        escaped_k = xml_escape(strip_emojis(str(k)))
         ahp_rows_xml += f"""
         <hp:p id="{idx + 300}">
             <hp:run>
@@ -133,13 +152,13 @@ def build_hwpx_report(data: Dict[str, Any]) -> bytes:
     # 시나리오 심의 평가 항목
     scenario_xml = ""
     for idx, sc in enumerate(scenarios):
-        sc_num = xml_escape(str(sc.get('scenario', '')))
-        sc_desc = xml_escape(str(sc.get('scenario_description', '')))
-        score = xml_escape(str(sc.get('final_acceptance_score', '')))
+        sc_num = xml_escape(strip_emojis(str(sc.get('scenario', ''))))
+        sc_desc = xml_escape(strip_emojis(str(sc.get('scenario_description', ''))))
+        score = xml_escape(strip_emojis(str(sc.get('final_acceptance_score', ''))))
         risk_idx = sc.get('conflict_risk_index', 0)
-        summary = xml_escape(str(sc.get('summary', '')))
-        reason = xml_escape(str(sc.get('reason', '')))
-        risk_reason = xml_escape(str(sc.get('risk_reason', '')))
+        summary = xml_escape(strip_emojis(str(sc.get('summary', ''))))
+        reason = xml_escape(strip_emojis(str(sc.get('reason', ''))))
+        risk_reason = xml_escape(strip_emojis(str(sc.get('risk_reason', ''))))
 
         scenario_xml += f"""
         <hp:p id="{idx + 100}">
