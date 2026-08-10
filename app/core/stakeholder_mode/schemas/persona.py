@@ -1,6 +1,11 @@
 # [이해관계자 페르소나 모드] Phase 2 확장 PersonaConfig 설정 데이터 모델
-from typing import List
+from typing import List, Dict, Any
 from pydantic import BaseModel, Field
+
+
+class Priority(BaseModel):
+    criterion: str = Field(..., description="평가 기준명")
+    weight: float = Field(default=1.0, description="가중치")
 
 
 class PersonaConfig(BaseModel):
@@ -12,8 +17,17 @@ class PersonaConfig(BaseModel):
     stakeholder_id: str = Field(default="UNKNOWN", description="이해관계자 고유 식별자")
 
     display_name: str = Field(..., description="화면 표시용 페르소나 명칭")
+    stakeholder_type: str = Field(default="일반", description="이해관계자 분류 유형")
+    importance_grade: str = Field(default="C", description="중요도 등급 (A, B, C)")
+    participation_type: str = Field(default="주요 이해관계자", description="참여 유형")
     constituency: str = Field(default="일반", description="대표 집단")
     relationship_to_topic: str = Field(default="이해관계 있음", description="주제와의 관계")
+
+    priorities: List[Priority] = Field(default_factory=list, description="우선순위 가중치 목록")
+    interests: List[str] = Field(default_factory=list, description="주요 관심사")
+    concerns: List[str] = Field(default_factory=list, description="주요 우려")
+    acceptable_conditions: List[str] = Field(default_factory=list, description="수용 가능한 조건")
+    non_negotiable_conditions: List[str] = Field(default_factory=list, description="절대 수용 불가능한 조건")
 
     primary_goal: str = Field(default="최선의 결과 도출", description="가장 중요한 목표")
     success_definition: List[str] = Field(default_factory=list, description="성공의 구체적 상태")

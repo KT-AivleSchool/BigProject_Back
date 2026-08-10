@@ -58,7 +58,7 @@ async def recommend_stakeholders_node(state: StakeholderGraphState) -> Dict[str,
 async def generate_interest_profiles_node(state: StakeholderGraphState) -> Dict[str, Any]:
     """2-1. 이해관계자별 프로필 생성 노드"""
     from app.core.stakeholder_mode.services.interest_profile_generator import InterestProfileGenerator
-    from app.core.config.llm_config import get_llm_fast
+    from app.core.stakeholder_mode.graph.dynamic_nodes import get_llm_fast
 
     topic = state["topic"]
     candidates = [StakeholderCandidate(**c) for c in state.get("recommended_stakeholders", [])]

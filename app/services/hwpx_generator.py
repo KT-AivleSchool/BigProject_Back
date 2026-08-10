@@ -3,6 +3,7 @@ import zipfile
 import urllib.parse
 from datetime import datetime
 from typing import Dict, Any
+from xml.sax.saxutils import escape as xml_escape
 
 def format_official_date(ts_str: str) -> str:
     """
@@ -11,9 +12,9 @@ def format_official_date(ts_str: str) -> str:
     """
     try:
         dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-        return f"{dt.year}. {dt.month}. {dt.day}."
     except Exception:
-        return "2026. 8. 6."
+        dt = datetime.now()
+    return f"{dt.year}. {dt.month}. {dt.day}."
 
 def format_official_time(ts_str: str) -> str:
     """
@@ -21,31 +22,36 @@ def format_official_time(ts_str: str) -> str:
     """
     try:
         dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-        return f"{dt.hour:02d}:{dt.minute:02d}"
     except Exception:
-        return "17:21"
+        dt = datetime.now()
+    return f"{dt.hour:02d}:{dt.minute:02d}"
 
 def build_hwpx_report(data: Dict[str, Any]) -> bytes:
     """
     이모지, 색상, 과도한 디자인 요소를 모두 배제하고
     행정업무운영 편람 표준 규격에 따라 작성된 HWPX 한글 바이너리를 생성합니다.
     """
-    candidate_jibun = data.get("candidate_jibun", "후보지 미지정")
-    candidate_address = data.get("candidate_address") or candidate_jibun
-    facility_type = data.get("facility_type", "공공시설")
+    raw_jibun = data.get("candidate_jibun", "후보지 미지정")
+    raw_addr = data.get("candidate_address") or raw_jibun
+    raw_facility = data.get("facility_type", "공공시설")
+    raw_intensity = data.get("intensity_level", "보통")
+
+    candidate_jibun = xml_escape(str(raw_jibun))
+    candidate_address = xml_escape(str(raw_addr))
+    facility_type = xml_escape(str(raw_facility))
     lat = data.get("candidate_lat", 0.0)
     lng = data.get("candidate_lng", 0.0)
-    intensity_level = data.get("intensity_level", "보통")
+    intensity_level = xml_escape(str(raw_intensity))
     timestamp_raw = data.get("timestamp", "")
     ahp_weights = data.get("ahp_weights", {})
     scenarios = data.get("scenarios", [])
 
-    encoded_addr = urllib.parse.quote(candidate_address)
-    kakao_map_url = f"https://map.kakao.com/link/map/{encoded_addr},{lat},{lng}"
-    naver_map_url = f"https://map.naver.com/v5/search/{encoded_addr}"
+    encoded_addr = urllib.parse.quote(raw_addr)
+    kakao_map_url = xml_escape(f"https://map.kakao.com/link/map/{encoded_addr},{lat},{lng}")
+    naver_map_url = xml_escape(f"https://map.naver.com/v5/search/{encoded_addr}")
 
-    official_date = format_official_date(timestamp_raw)
-    official_time = format_official_time(timestamp_raw)
+    official_date = xml_escape(format_official_date(timestamp_raw))
+    official_time = xml_escape(format_official_time(timestamp_raw))
 
     mimetype_content = b"application/hwp+zip"
 
@@ -84,23 +90,24 @@ def build_hwpx_report(data: Dict[str, Any]) -> bytes:
     ahp_rows_xml = ""
     for idx, (k, v) in enumerate(ahp_weights.items()):
         percentage = f"{v * 100:.1f}%({v:.2f})"
+        escaped_k = xml_escape(str(k))
         ahp_rows_xml += f"""
         <hp:p id="{idx + 300}">
             <hp:run>
-                <hp:t>      {idx + 1}) {k}: {percentage}</hp:t>
+                <hp:t>      {idx + 1}) {escaped_k}: {percentage}</hp:t>
             </hp:run>
         </hp:p>"""
 
     # 시나리오 심의 평가 항목
     scenario_xml = ""
     for idx, sc in enumerate(scenarios):
-        sc_num = sc.get('scenario', '')
-        sc_desc = sc.get('scenario_description', '')
-        score = sc.get('final_acceptance_score', '')
+        sc_num = xml_escape(str(sc.get('scenario', '')))
+        sc_desc = xml_escape(str(sc.get('scenario_description', '')))
+        score = xml_escape(str(sc.get('final_acceptance_score', '')))
         risk_idx = sc.get('conflict_risk_index', 0)
-        summary = sc.get('summary', '')
-        reason = sc.get('reason', '')
-        risk_reason = sc.get('risk_reason', '')
+        summary = xml_escape(str(sc.get('summary', '')))
+        reason = xml_escape(str(sc.get('reason', '')))
+        risk_reason = xml_escape(str(sc.get('risk_reason', '')))
 
         scenario_xml += f"""
         <hp:p id="{idx + 100}">

@@ -47,8 +47,11 @@ def extract_spatial_context(top_n_path: str, clean_gpkg_dir: str, radius_m: floa
     for gpkg_path in gpkg_files:
         filename = os.path.basename(gpkg_path)
         base_name = filename.split('.')[0]
-        # 미리 정의된 매핑이 있으면 한글 이름 사용, 없으면 원본 이름 사용
-        facility_type = FACILITY_MAP.get(base_name, base_name)
+        facility_type = base_name
+        for k, v in FACILITY_MAP.items():
+            if k in base_name:
+                facility_type = v
+                break
         
         try:
             facility_df = gpd.read_file(gpkg_path)

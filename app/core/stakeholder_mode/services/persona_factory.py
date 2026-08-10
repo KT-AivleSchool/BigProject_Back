@@ -32,7 +32,7 @@ async def create_persona_configs(
     )
     
     # 2. PersonaConfig Pydantic 모델에 맞춘 구조화 출력 바인딩
-    structured_llm = llm.with_structured_output(PersonaConfig)
+    structured_llm = llm.with_structured_output(PersonaConfig, method="function_calling")
     
     # 3. 근거 ID 및 조례 ID 목록 생성
     evidence_ids = [site.candidate_id for site in candidate_sites]

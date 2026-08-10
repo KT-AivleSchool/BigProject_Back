@@ -44,6 +44,10 @@ class StakeholderCandidate(BaseModel):
     importance_score: float = Field(default=0.0, ge=0.0, le=1.0, description="안건과의 연관성/영향도 점수 (0.0 ~ 1.0)")
     evidence_confidence: float = Field(default=0.0, ge=0.0, le=1.0, description="근거 신뢰도 (0.0 ~ 1.0)")
 
+    @property
+    def name(self) -> str:
+        return self.display_name
+
 
 class StakeholderModeInput(BaseModel):
     """

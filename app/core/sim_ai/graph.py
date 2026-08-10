@@ -4,238 +4,397 @@ from langgraph.graph import StateGraph, END
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 import json
+import re
 
 from app.core.sim_ai.prompts import (
     build_prompt,
-    RESIDENT_ROLE_PROMPT,
-    MERCHANT_ROLE_PROMPT,
-    OFFICER_ROLE_PROMPT,
+    PRO_ROLE_PROMPT,
+    CON_ROLE_PROMPT,
+    GOV_ROLE_PROMPT,
     EVALUATOR_PROMPT,
-    REPORTER_PROMPT
+    REPORTER_PROMPT,
 )
-from app.core.sim_ai.vector_db import RagVectorStorage
-from app.config import settings
+from app.config import settings, PERSONA_SETTINGS
+from app.db.session import AsyncSessionLocal
+from app.db.models.rag_feedback import RagFeedbackLog
+
 
 # [동현님 담당] LangGraph에서 노드 간에 전송될 대화 상태 객체 정의
 class AgentState(TypedDict):
     # operator.add를 사용하여 배열에 자동으로 추가되도록 설정 (LangGraph 표준)
     messages: Annotated[Sequence[str], operator.add]
-    site_information: str      # 시설 입지 정보 (GIS 정량적 결과)
-    css_resident: str          # 주민 갈등 민감도 (HIGH / MEDIUM / LOW)
-    css_merchant: str          # 상인 갈등 민감도
-    css_officer: str           # 공무원 갈등 민감도
-    round_count: int           # 토론 반복 횟수 (최대 3라운드)
-    evaluations: dict          # 내부 평가 결과 (수용도)
-    final_scenarios: dict      # 도출된 최종 시나리오 결과 객체
-    is_finished: bool          # 토론 종결 여부
-    next_speaker: str          # 라우터가 결정한 다음 발화자
+    # site_information 필드는 개별 메타데이터로 대체됨
+    css_pro: str
+    css_con: str
+    round_count: int  # 토론 반복 횟수 (최대 3라운드)
+    current_phase: str  # "토론", "중재"
+    eval_score: float
+    spoken_this_round: list[str]  # 이번 라운드에 발언한 페르소나 추적
 
-# LLM 및 Vector DB 전역 인스턴스 (온도는 창의적 역할극을 위해 0.7 유지)
-llm = ChatOpenAI(api_key=settings.OPENAI_API_KEY, model="gpt-4o-mini", temperature=0.7)
-vector_db = RagVectorStorage()
+    # JSON 결과값 도출용 GIS 메타데이터
+    candidate_jibun: str
+    candidate_lat: float
+    candidate_lng: float
+    facility_type: str
+    intensity_level: str
+    ahp_weights: dict
+    timestamp: str
+
+    common_rag: str  # 공통으로 공유되는 RAG 컨텍스트
+    rag_docs: list  # [추가] 피드백 저장을 위해 유지되는 메타데이터
+    audit_context: str  # 프론트엔드에서 전달받은 감리 결과 정제 텍스트
+    evaluations: dict  # 내부 평가 결과 (수용도)
+    final_scenarios: dict  # 도출된 최종 시나리오 결과 객체
+    is_finished: bool  # 토론 종결 여부
+    next_speaker: str  # 라우터가 결정한 다음 발화자
+
+
+# [수정] 글로벌 llm 인스턴스 대신 Config 기반 동적 생성 함수 도입
+def get_persona_llm(role: str) -> ChatOpenAI:
+    """Config에서 해당 역할(role)의 LLM 설정을 불러와 인스턴스 반환"""
+    persona_config = PERSONA_SETTINGS.get(role, {})
+    return ChatOpenAI(
+        api_key=settings.OPENAI_API_KEY,
+        model=persona_config.get("model_name", "gpt-4o-mini"),
+        temperature=persona_config.get("temperature", 0.7),
+        streaming=persona_config.get("streaming", True),
+    )
+
 
 def _format_chat_history(messages: Sequence[str]) -> str:
+    """메시지 리스트를 하나의 텍스트로 포맷팅"""
     return "\n".join(messages)
 
-# 1. 라우터 (사회자) 노드
-async def router_node(state: AgentState) -> dict:
-    """대화 문맥을 보고 다음에 발언할 페르소나를 결정합니다."""
-    history_text = _format_chat_history(state.get("messages", []))
-    
-    if not history_text:
-        return {"next_speaker": "resident"}
-        
-    system_msg = """당신은 토론의 사회자(Supervisor)입니다. 
-지금까지의 대화 내역을 보고 다음에 가장 발언이 필요한 페르소나를 결정하세요.
-선택 가능 항목 (반드시 아래 영문 키워드 중 하나만 출력): 
-- resident
-- merchant
-- officer
-- evaluator
 
-[라우팅 규칙]
-주민대표, 상인대표, 조정공무원이 이번 라운드에 최소 1번씩 발언을 마쳤다면 반드시 'evaluator'를 선택하여 평가를 진행하세요.
-절대 다른 설명 없이 오직 선택 항목 중 하나의 단어(resident, merchant, officer, evaluator)만 출력하세요."""
-    
-    response = await llm.ainvoke([
-        SystemMessage(content=system_msg),
-        HumanMessage(content=f"이전 대화:\n{history_text}\n\n다음 발언자를 선택하세요:")
-    ])
-    
-    next_node = response.content.strip().lower()
-    if next_node not in ["resident", "merchant", "officer", "evaluator"]:
-        next_node = "evaluator"
-        
-    return {"next_speaker": next_node}
+def _extract_json(text: str) -> dict:
+    """LLM의 응답에서 마크다운 태그를 제거하고 안전하게 JSON 파싱"""
+    text = text.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+        text = re.sub(r"```$", "", text).strip()
+    return json.loads(text)
+
+
+# 1. 라우터 (사회자) 노드
+async def supervisor_node(state: AgentState) -> dict:
+    """다음 발화자를 결정하는 결정적(deterministic) 라우터"""
+    phase = state.get("current_phase", "debate")
+    spoken = state.get("spoken_this_round", [])
+
+    if phase == "debate":
+        if not spoken:
+            return {"next_speaker": "pro"}
+        elif spoken == ["pro"]:
+            return {"next_speaker": "con"}
+        else:
+            return {"next_speaker": "evaluator"}
+    elif phase == "intervention":
+        if not spoken:
+            return {"next_speaker": "gov"}
+        elif spoken == ["gov"]:
+            return {"next_speaker": "pro"}
+        elif spoken == ["gov", "pro"]:
+            return {"next_speaker": "con"}
+        elif spoken == ["gov", "pro", "con"]:
+            return {"next_speaker": "gov_wrapup"}
+        else:
+            return {"next_speaker": "reporter"}
+
+    return {"next_speaker": "pro"}
+
 
 # 2. 페르소나 노드들
-async def resident_node(state: AgentState) -> dict:
-    """주민대표 (반대 페르소나) 노드"""
-    css_level = state.get("css_resident", "HIGH").upper()
-    site_info = state.get("site_information", "입지 정보 없음")
+async def pro_node(state: AgentState) -> dict:
+    """찬성 페르소나 노드"""
+    css_level = state.get("css_pro", "HIGH").upper()
+    facility_type = state.get("facility_type", "알 수 없음")
     history_text = _format_chat_history(state.get("messages", []))
-    
-    query = f"{site_info} 반대" if not history_text else history_text[-200:]
-    retrieved_docs = await vector_db.retrieve_similar_statutes(query)
-    
-    prompt = build_prompt(
-        role_prompt=RESIDENT_ROLE_PROMPT,
-        site_information=site_info,
-        rag_context="\n".join(retrieved_docs),
-        discussion_history=history_text,
-        css_level=css_level
-    )
-    
-    response = await llm.ainvoke([SystemMessage(content=prompt)])
-    return {"messages": [f"주민대표: {response.content}"]}
 
-async def merchant_node(state: AgentState) -> dict:
-    """상인대표 (찬성 페르소나) 노드"""
-    css_level = state.get("css_merchant", "HIGH").upper()
-    site_info = state.get("site_information", "입지 정보 없음")
-    history_text = _format_chat_history(state.get("messages", []))
-    
-    query = f"{site_info} 상권 활성화" if not history_text else history_text[-200:]
-    retrieved_docs = await vector_db.retrieve_similar_statutes(query)
-    
-    prompt = build_prompt(
-        role_prompt=MERCHANT_ROLE_PROMPT,
-        site_information=site_info,
-        rag_context="\n".join(retrieved_docs),
-        discussion_history=history_text,
-        css_level=css_level
-    )
-    
-    response = await llm.ainvoke([SystemMessage(content=prompt)])
-    return {"messages": [f"상인대표: {response.content}"]}
+    rag_context = state.get("common_rag", "조례 정보 없음")
 
-async def officer_node(state: AgentState) -> dict:
-    """조정공무원 (중재 페르소나) 노드"""
-    css_level = state.get("css_officer", "HIGH").upper()
-    site_info = state.get("site_information", "입지 정보 없음")
-    history_text = _format_chat_history(state.get("messages", []))
-    
-    query = f"{site_info} 중재안 조례" if not history_text else history_text[-200:]
-    retrieved_docs = await vector_db.retrieve_similar_statutes(query)
-    
     prompt = build_prompt(
-        role_prompt=OFFICER_ROLE_PROMPT,
-        site_information=site_info,
-        rag_context="\n".join(retrieved_docs),
-        discussion_history=history_text,
-        css_level=css_level
+        role_prompt=PRO_ROLE_PROMPT,
+        candidate_jibun=state.get("candidate_jibun", "지번 정보 없음"),
+        candidate_lat=state.get("candidate_lat", 0.0),
+        candidate_lng=state.get("candidate_lng", 0.0),
+        facility_type=facility_type,
+        intensity_level=state.get("intensity_level", "normal"),
+        ahp_weights=state.get("ahp_weights", {}),
+        rag_context=rag_context,
+        audit_context=state.get("audit_context", "감리 데이터 없음"),
+        discussion_history="",  # 히스토리는 별도 메시지로 주입
+        css_level=css_level,
     )
-    
-    response = await llm.ainvoke([SystemMessage(content=prompt)])
-    return {"messages": [f"조정공무원: {response.content}"]}
+
+    messages = [SystemMessage(content=prompt)]
+    for msg in state.get("messages", []):
+        messages.append(HumanMessage(content=msg))
+    messages.append(
+        HumanMessage(
+            content="[당신의 차례입니다. 대본을 작성하지 말고, 찬성측 페르소나로서 이번 턴의 짧고 핵심적인 단일 발언만(화자 태그 없이) 출력하세요. 발언 중 POI, 조례(RAG), 감리 데이터 등에서 인용한 중요한 사실이나 근거는 반드시 **굵게(마크다운)** 표시하세요.]"
+        )
+    )
+
+    llm = get_persona_llm("pro")
+    response = await llm.ainvoke(messages)
+    spoken = state.get("spoken_this_round", [])
+    return {
+        "messages": [f"찬성: {response.content}"],
+        "spoken_this_round": spoken + ["pro"],
+    }
+
+
+async def con_node(state: AgentState) -> dict:
+    """반대 페르소나 노드"""
+    css_level = state.get("css_con", "HIGH").upper()
+    facility_type = state.get("facility_type", "알 수 없음")
+    history_text = _format_chat_history(state.get("messages", []))
+
+    rag_context = state.get("common_rag", "조례 정보 없음")
+
+    prompt = build_prompt(
+        role_prompt=CON_ROLE_PROMPT,
+        candidate_jibun=state.get("candidate_jibun", "지번 정보 없음"),
+        candidate_lat=state.get("candidate_lat", 0.0),
+        candidate_lng=state.get("candidate_lng", 0.0),
+        facility_type=facility_type,
+        intensity_level=state.get("intensity_level", "normal"),
+        ahp_weights=state.get("ahp_weights", {}),
+        rag_context=rag_context,
+        audit_context=state.get("audit_context", "감리 데이터 없음"),
+        discussion_history="",  # 히스토리는 별도 메시지로 주입
+        css_level=css_level,
+    )
+
+    messages = [SystemMessage(content=prompt)]
+    for msg in state.get("messages", []):
+        messages.append(HumanMessage(content=msg))
+    messages.append(
+        HumanMessage(
+            content="[당신의 차례입니다. 대본을 작성하지 말고, 반대측 페르소나로서 이번 턴의 짧고 핵심적인 단일 발언만(화자 태그 없이) 출력하세요. 발언 중 POI, 조례(RAG), 감리 데이터 등에서 인용한 중요한 사실이나 근거는 반드시 **굵게(마크다운)** 표시하세요.]"
+        )
+    )
+
+    llm = get_persona_llm("con")
+    response = await llm.ainvoke(messages)
+    spoken = state.get("spoken_this_round", [])
+    return {
+        "messages": [f"반대: {response.content}"],
+        "spoken_this_round": spoken + ["con"],
+    }
+
+
+async def gov_node(state: AgentState) -> dict:
+    """정부 페르소나 노드 (중재안 제시 및 마무리)"""
+    facility_type = state.get("facility_type", "알 수 없음")
+    history_text = _format_chat_history(state.get("messages", []))
+    spoken = state.get("spoken_this_round", [])
+
+    rag_context = state.get("common_rag", "조례 정보 없음")
+
+    prompt = build_prompt(
+        role_prompt=GOV_ROLE_PROMPT,
+        candidate_jibun=state.get("candidate_jibun", "지번 정보 없음"),
+        candidate_lat=state.get("candidate_lat", 0.0),
+        candidate_lng=state.get("candidate_lng", 0.0),
+        facility_type=facility_type,
+        intensity_level=state.get("intensity_level", "normal"),
+        ahp_weights=state.get("ahp_weights", {}),
+        rag_context=rag_context,
+        audit_context=state.get("audit_context", "감리 데이터 없음"),
+        discussion_history="",  # 히스토리는 별도 메시지로 주입
+        css_level="LOW",  # 정부는 객관적 중재를 위해 LOW 유지
+    )
+
+    messages = [SystemMessage(content=prompt)]
+    for msg in state.get("messages", []):
+        messages.append(HumanMessage(content=msg))
+
+    if spoken == ["gov", "pro", "con"]:
+        messages.append(
+            HumanMessage(
+                content="[현재 상황: 정부의 중재안에 대한 양측의 입장을 들었습니다. 대본을 작성하지 말고, 토론을 최종 마무리하는 단일 발언을 짧게 출력하세요. 발언 중 POI, 조례(RAG), 감리 데이터 등에서 인용한 중요한 사실이나 근거는 반드시 **굵게(마크다운)** 표시하세요.]"
+            )
+        )
+    else:
+        messages.append(
+            HumanMessage(
+                content="[당신의 차례입니다. 대본을 작성하지 말고, 정부 페르소나로서 양측의 입장을 조율하는 단일 발언만(화자 태그 없이) 출력하세요. 발언 중 POI, 조례(RAG), 감리 데이터 등에서 인용한 중요한 사실이나 근거는 반드시 **굵게(마크다운)** 표시하세요.]"
+            )
+        )
+
+    llm = get_persona_llm("gov")
+    response = await llm.ainvoke(messages)
+    return {
+        "messages": [f"정부: {response.content}"],
+        "spoken_this_round": spoken + ["gov"],
+    }
+
 
 # 3. 평가 및 최종 노드
 async def evaluator_node(state: AgentState) -> dict:
-    """내부 평가 노드 (1라운드 종료 시점)"""
+    """내부 평가 노드"""
     history_text = _format_chat_history(state.get("messages", []))
     round_count = state.get("round_count", 0) + 1
-    
-    # JSON 모드로 강제하여 평가 점수 도출
+
+    prev_evals = state.get("evaluations", {})
+    prev_pro_acc = prev_evals.get("pro_acceptance", 0.0)
+    prev_con_acc = prev_evals.get("con_acceptance", 0.0)
+
+    llm = get_persona_llm("evaluator")
     llm_json = llm.bind(response_format={"type": "json_object"})
-    response = await llm_json.ainvoke([
-        SystemMessage(content=EVALUATOR_PROMPT),
-        HumanMessage(content=f"이전 대화:\n{history_text}\n\n위 대화 내용을 바탕으로 평가 JSON을 반환하세요.")
-    ])
-    
+    response = await llm_json.ainvoke(
+        [
+            SystemMessage(content=EVALUATOR_PROMPT),
+            HumanMessage(
+                content=f"[이전 라운드 수용도 점수]\n- 찬성측: {prev_pro_acc}\n- 반대측: {prev_con_acc}\n\n이전 대화:\n{history_text}\n\n위 대화 내용 중 '가장 최근 발언'을 바탕으로 평가 JSON을 반환하세요. 타협의 여지가 조금이라도 생겼다면 반드시 이전 점수보다 상향시켜야 합니다."
+            ),
+        ]
+    )
+
     try:
-        evals = json.loads(response.content)
-    except:
-        evals = {"resident_acceptance": 0.0, "merchant_acceptance": 0.0, "officer_acceptance": 0.0}
-        
-    # CSS 유동적 변경 로직: 각 페르소나의 개별 수용도를 기준으로 민감도 개별 조정
-    def get_css(acc: float) -> str:
-        if acc < 0.3: return "HIGH"
-        elif acc < 0.7: return "MEDIUM"
-        else: return "LOW"
-        
+        evals = _extract_json(response.content)
+    except Exception as e:
+        print(f"JSON Parsing Error: {e}")
+        evals = {}
+
+    pro_acc = evals.get("pro_acceptance", 0.0)
+    con_acc = evals.get("con_acceptance", 0.0)
+    avg_acc = (pro_acc + con_acc) / 2.0
+
+    # 프롬프트 의존성을 제거하고, 파이썬 코드 레벨에서 수용도 점수를 기반으로 CSS를 강제 매핑
+    def _map_css_by_score(acc_score: float) -> str:
+        if acc_score < 0.35:
+            return "HIGH"
+        elif acc_score < 0.65:
+            return "MEDIUM"
+        else:
+            return "LOW"
+
+    new_css_pro = _map_css_by_score(pro_acc)
+    new_css_con = _map_css_by_score(con_acc)
+
+    next_phase = "debate"
+    if round_count >= 3 or avg_acc >= 0.8:
+        next_phase = "intervention"
+
+    reason = evals.get("reason", "평가 사유 없음")
+    msg_text = f"💡 [라운드 {round_count} 분석] 찬성측 수용도: {pro_acc * 100}%, 반대측 수용도: {con_acc * 100}%\n👉 (현재 CSS) 찬성: {new_css_pro} / 반대: {new_css_con}\n📝 사유: {reason}"
+
     return {
-        "evaluations": evals, 
-        "round_count": round_count, 
-        "css_resident": get_css(evals.get("resident_acceptance", 0.0)),
-        "css_merchant": get_css(evals.get("merchant_acceptance", 0.0)),
-        "css_officer": get_css(evals.get("officer_acceptance", 0.0))
+        "evaluations": evals,
+        "eval_score": avg_acc,
+        "round_count": round_count,
+        "css_pro": new_css_pro,
+        "css_con": new_css_con,
+        "messages": [f"시스템: {msg_text}"],
+        "spoken_this_round": [],  # 다음 라운드/페이즈를 위해 초기화
+        "current_phase": next_phase,
     }
+
 
 async def reporter_node(state: AgentState) -> dict:
     """토론 종료 후 최종 시나리오 도출 노드"""
     history_text = _format_chat_history(state.get("messages", []))
-    
+    eval_score = state.get("eval_score", 0.0)
+    common_rag = state.get("common_rag", "조례 데이터 없음")
+
+    llm = get_persona_llm("reporter")
     llm_json = llm.bind(response_format={"type": "json_object"})
-    response = await llm_json.ainvoke([
-        SystemMessage(content=REPORTER_PROMPT),
-        HumanMessage(content=f"전체 토론 내용:\n{history_text}\n\n위 대화 내용을 바탕으로 최종 시나리오 JSON을 도출하세요.")
-    ])
-    
+    response = await llm_json.ainvoke(
+        [
+            SystemMessage(content=REPORTER_PROMPT),
+            HumanMessage(
+                content=f"[참고 조례 데이터 (DOC_ID 확인용)]\n{common_rag}\n\n전체 토론 내용:\n{history_text}\n\n[최종 수용도 점수(0.0~1.0)]: {eval_score}\n\n위 참고 조례 데이터와 대화 내용, 수용도 점수를 바탕으로 1개의 최종 시나리오 JSON을 도출하세요."
+            ),
+        ]
+    )
+
     try:
-        final_scenarios = json.loads(response.content)
-    except:
+        final_scenarios = _extract_json(response.content)
+
+        # --- [신규 기능] LLM 암묵적 피드백(Implicit Feedback) 로깅 ---
+        raw_used = final_scenarios.get("used_doc_ids", [])
+        # 문자열로 들어올 경우를 대비해 정수형으로 변환 가능한 것만 추출
+        if isinstance(raw_used, list):
+            used_doc_ids = [int(x) for x in raw_used if str(x).strip().isdigit()]
+        else:
+            used_doc_ids = []
+
+        print(f"[디버그] AI가 반환한 used_doc_ids: {used_doc_ids}")
+
+        rag_docs = state.get("rag_docs", [])
+
+        if rag_docs:
+            async with AsyncSessionLocal() as session:
+                for doc in rag_docs:
+                    doc_id = doc.get("doc_id")
+                    label = 1 if doc_id in used_doc_ids else 0
+
+                    feedback = RagFeedbackLog(
+                        query_text=doc.get("query", "알 수 없음"),
+                        chunk_text=doc.get("text", ""),
+                        vector_score=doc.get("vector_score", 0.0),
+                        label=label,
+                    )
+                    session.add(feedback)
+                await session.commit()
+                print(
+                    f"✅ RAG Implicit Feedback DB 저장 완료 (사용된 문서 ID: {used_doc_ids})"
+                )
+
+    except Exception as e:
+        print(f"JSON Parsing or DB Logging Error: {e}")
         final_scenarios = {}
-        
+
     return {"final_scenarios": final_scenarios, "is_finished": True}
 
-# 4. 조건부 분기 (Edge Routing) 함수
+
 def route_next(state: AgentState) -> str:
     """라우터 노드가 결정한 다음 발화자로 이동"""
-    return state.get("next_speaker", "resident")
+    return state.get("next_speaker", "pro")
+
 
 def check_evaluation(state: AgentState) -> str:
-    """평가 점수에 따라 토론 종료 여부 결정"""
-    evals = state.get("evaluations", {})
-    officer_acceptance = evals.get("officer_acceptance", 0.0)
-    round_count = state.get("round_count", 0)
-    
-    # 0.8 이상이거나 3라운드 이상이면 토론 종료
-    if officer_acceptance >= 0.8 or round_count >= 3:
-        return "reporter"
-    # 0.8 미만이면 다음 라운드를 위해 라우터로 복귀
+    """평가 점수에 따라 토론 종료 여부 결정 (현재 사용 안함. supervisor가 처리)"""
     return "supervisor"
+
 
 # 5. 그래프 빌드 함수
 def build_discussion_graph():
     workflow = StateGraph(AgentState)
-    
-    workflow.add_node("supervisor", router_node)
-    workflow.add_node("resident", resident_node)
-    workflow.add_node("merchant", merchant_node)
-    workflow.add_node("officer", officer_node)
+
+    workflow.add_node("supervisor", supervisor_node)
+    workflow.add_node("pro", pro_node)
+    workflow.add_node("con", con_node)
+    workflow.add_node("gov", gov_node)
+    workflow.add_node("gov_wrapup", gov_node)
     workflow.add_node("evaluator", evaluator_node)
     workflow.add_node("reporter", reporter_node)
-    
+
     # 시작점은 무조건 라우터(사회자)
     workflow.set_entry_point("supervisor")
-    
-    # 라우터 -> 페르소나 또는 평가 노드
+
     workflow.add_conditional_edges(
         "supervisor",
         route_next,
         {
-            "resident": "resident",
-            "merchant": "merchant",
-            "officer": "officer",
-            "evaluator": "evaluator"
-        }
-    )
-    
-    # 각 페르소나 발언 후 라우터로 복귀
-    workflow.add_edge("resident", "supervisor")
-    workflow.add_edge("merchant", "supervisor")
-    workflow.add_edge("officer", "supervisor")
-    
-    # 평가 노드 실행 후 조건부 분기 (토론 종료 or 새 라운드)
-    workflow.add_conditional_edges(
-        "evaluator",
-        check_evaluation,
-        {
+            "pro": "pro",
+            "con": "con",
+            "gov": "gov",
+            "gov_wrapup": "gov_wrapup",
+            "evaluator": "evaluator",
             "reporter": "reporter",
-            "supervisor": "supervisor"
-        }
+        },
     )
-    
+
+    # 각 페르소나 및 평가 후 라우터로 복귀
+    workflow.add_edge("pro", "supervisor")
+    workflow.add_edge("con", "supervisor")
+    workflow.add_edge("gov", "supervisor")
+    workflow.add_edge("gov_wrapup", "supervisor")
+    workflow.add_edge("evaluator", "supervisor")
+
     workflow.add_edge("reporter", END)
-    
+
     return workflow.compile()

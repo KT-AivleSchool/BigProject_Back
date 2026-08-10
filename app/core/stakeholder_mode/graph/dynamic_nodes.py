@@ -8,12 +8,13 @@ from app.core.stakeholder_mode.graph.dynamic_state import DynamicDiscussionState
 from app.core.stakeholder_mode.schemas.persona import PersonaConfig
 from app.core.stakeholder_mode.prompts.renderer import render_persona_system_prompt
 from app.core.sim_ai.multi_party_discussion_prompts import build_multi_party_prompt, REPORTER_PROMPT
-from app.core.sim_ai.multi_party_discussion_prompts import build_multi_party_prompt, REPORTER_PROMPT
 from app.config import settings
 
-# 전역 LLM 인스턴스 (노드 및 페르소나 특성에 따라 분기)
-llm_smart = ChatOpenAI(api_key=settings.OPENAI_API_KEY, model="gpt-4o", temperature=0.7)
-llm_fast = ChatOpenAI(api_key=settings.OPENAI_API_KEY, model="gpt-4o-mini", temperature=0.7)
+def get_llm_smart(temperature: float = 0.7) -> ChatOpenAI:
+    return ChatOpenAI(api_key=settings.OPENAI_API_KEY, model="gpt-4o", temperature=temperature)
+
+def get_llm_fast(temperature: float = 0.7) -> ChatOpenAI:
+    return ChatOpenAI(api_key=settings.OPENAI_API_KEY, model="gpt-4o-mini", temperature=temperature)
 
 def _format_history(messages: List[str]) -> str:
     return "\n".join(messages)
@@ -96,7 +97,7 @@ async def dynamic_supervisor_node(state: DynamicDiscussionState) -> dict:
 2. evaluator를 선택했다면 "이번 라운드 토론이 충분히 진행되었으므로 수용도 평가 단계로 넘어가겠습니다." 와 같이 라운드 평가 이동을 알릴 것.
 """
 
-    structured_llm = llm_smart.with_structured_output(SupervisorDecision)
+    structured_llm = get_llm_smart().with_structured_output(SupervisorDecision)
     
     try:
         response = await structured_llm.ainvoke([
@@ -160,10 +161,17 @@ async def dynamic_persona_speaker_node(state: DynamicDiscussionState) -> dict:
     if ordinance_contexts:
         retrieved_docs = []
         for ord_ctx in ordinance_contexts:
-            # Pydantic dict 형태일 경우 처리
-            title = ord_ctx.get("ordinance_name", "")
-            content = ord_ctx.get("content", "")
-            retrieved_docs.append(f"[{title}] {content}")
+            if isinstance(ord_ctx, str):
+                retrieved_docs.append(ord_ctx)
+            elif isinstance(ord_ctx, dict):
+                title = ord_ctx.get("ordinance_name") or ord_ctx.get("title") or ""
+                content = ord_ctx.get("content") or ""
+                if title:
+                    retrieved_docs.append(f"[{title}] {content}")
+                else:
+                    retrieved_docs.append(content)
+            else:
+                retrieved_docs.append(str(ord_ctx))
     else:
         retrieved_docs = []
         
@@ -192,7 +200,7 @@ async def dynamic_persona_speaker_node(state: DynamicDiscussionState) -> dict:
     
     # 지정된 LLM 모델 가져오기
     model_name = getattr(persona_config, "preferred_model", "gpt-4o-mini")
-    active_llm = llm_smart if model_name.startswith("gpt-4o") and "mini" not in model_name else llm_fast
+    active_llm = get_llm_smart() if model_name.startswith("gpt-4o") and "mini" not in model_name else get_llm_fast()
 
     response = await active_llm.ainvoke([SystemMessage(content=prompt)])
     content = response.content.strip()
@@ -236,7 +244,7 @@ async def dynamic_evaluator_node(state: DynamicDiscussionState) -> dict:
 }}
 """
     
-    llm_json = llm_smart.bind(response_format={"type": "json_object"})
+    llm_json = get_llm_smart().bind(response_format={"type": "json_object"})
     response = await llm_json.ainvoke([
         SystemMessage(content=eval_prompt),
         HumanMessage(content=f"이전 대화:\n{history_text}\n\n평가 JSON 작성:")
@@ -269,7 +277,7 @@ async def dynamic_reporter_node(state: DynamicDiscussionState) -> dict:
     """토론 결과를 최종 리포팅하는 노드"""
     history_text = _format_history(state.get("messages", []))
     
-    llm_json = llm_smart.bind(response_format={"type": "json_object"})
+    llm_json = get_llm_smart().bind(response_format={"type": "json_object"})
     response = await llm_json.ainvoke([
         SystemMessage(content=REPORTER_PROMPT),
         HumanMessage(content=f"전체 토론 내역:\n{history_text}\n\n최종 시나리오 보고서 JSON 작성:")
@@ -284,10 +292,6 @@ async def dynamic_reporter_node(state: DynamicDiscussionState) -> dict:
 
 async def dynamic_factchecker_node(state: DynamicDiscussionState) -> dict:
     """방금 발언한 페르소나의 메시지에서 데이터 조작(할루시네이션)이 있는지 검증하는 노드"""
-    
-    # [사용자 요청] 임시 주석 처리 (팩트체커 비활성화)
-    # 팩트체커가 개입하면 토론 흐름이 끊기거나 의도치 않은 방향으로 흘러갈 수 있어 일단 비활성화합니다.
-    return {}
     
     from app.core.stakeholder_mode.schemas.factcheck import FactCheckStatus
     from pydantic import BaseModel, Field
@@ -309,9 +313,17 @@ async def dynamic_factchecker_node(state: DynamicDiscussionState) -> dict:
     if ordinance_contexts:
         ord_lines = []
         for ord_ctx in ordinance_contexts:
-            title = ord_ctx.get("ordinance_name", "")
-            content = ord_ctx.get("content", "")
-            ord_lines.append(f"[{title}] {content}")
+            if isinstance(ord_ctx, str):
+                ord_lines.append(ord_ctx)
+            elif isinstance(ord_ctx, dict):
+                title = ord_ctx.get("ordinance_name") or ord_ctx.get("title") or ""
+                content = ord_ctx.get("content") or ""
+                if title:
+                    ord_lines.append(f"[{title}] {content}")
+                else:
+                    ord_lines.append(content)
+            else:
+                ord_lines.append(str(ord_ctx))
         ord_text = "\n".join(ord_lines)
     
     factcheck_prompt = f"""당신은 다자간 토론방의 데이터 팩트체커(Fact Checker)입니다.
@@ -346,8 +358,8 @@ async def dynamic_factchecker_node(state: DynamicDiscussionState) -> dict:
         reason: str = Field(..., description="판정 이유")
         correction_message: str = Field(..., description="CONTRADICTED, DISTORTED, UNSUPPORTED일 경우 사용자에게 보여줄 정정 메시지. (예: '제공된 데이터에는 해당 내용이 명시되어 있지 않습니다.'). 아닐 경우 빈 문자열.")
 
-    # 판단력이 중요하므로 llm_smart(gpt-4o) 사용
-    llm_structured = llm_smart.with_structured_output(FactCheckResult)
+    # 판단력이 중요하므로 get_llm_smart()(gpt-4o) 사용
+    llm_structured = get_llm_smart().with_structured_output(FactCheckResult)
     result = await llm_structured.ainvoke([SystemMessage(content=factcheck_prompt)])
     
     if result.status in [FactCheckStatus.CONTRADICTED, FactCheckStatus.DISTORTED, FactCheckStatus.UNSUPPORTED] and result.correction_message:

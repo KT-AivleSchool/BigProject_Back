@@ -14,22 +14,22 @@
 {% endfor %}
 
 [주요 관심사]
-{% for interest in persona.interests %}
+{% for interest in (persona.interests if persona.interests else persona.protected_interests) %}
 - {{ interest }}
 {% endfor %}
 
 [주요 우려]
-{% for concern in persona.concerns %}
+{% for concern in (persona.concerns if persona.concerns else persona.expected_costs) %}
 - {{ concern }}
 {% endfor %}
 
 [수용 가능한 조건]
-{% for condition in persona.acceptable_conditions %}
+{% for condition in (persona.acceptable_conditions if persona.acceptable_conditions else persona.negotiable_conditions) %}
 - {{ condition }}
 {% endfor %}
 
 [절대 수용 불가능한 조건 (Non-negotiable)]
-{% for non_neg in persona.non_negotiable_conditions %}
+{% for non_neg in (persona.non_negotiable_conditions if persona.non_negotiable_conditions else persona.red_lines) %}
 - {{ non_neg }}
 {% endfor %}
 
