@@ -81,6 +81,8 @@ runs/
 # 서버 실행 로그. 추적하면 커밋마다 수백 줄 diff 가 끼어 진짜 변경을 가린다
 # (2026-08-08: 273줄 변경으로 코드 diff 를 덮고 있었다).
 uvicorn.out
+uvicorn.out.log
+uvicorn.err.log
 *.out
 
 # 백업 사본. 기준선을 되돌릴 일이 생기면 git 이력에서 꺼낸다 —

@@ -45,17 +45,32 @@ MVP: 용산구 흡연부스 / 2차: 성동구 재활용정거장.
 | **커밋했는데 절반만 돈다** | `3cc73ff` 후에도 서버가 **기동 14:16 / 커밋 18:03** 인 옛 프로세스였다(`--reload` 없음). 그런데 `run_weight_model.py` 는 **자식 프로세스라 즉시 새 코드**, `pipeline_runner.py` 는 **import 라 옛 코드** → 새 인자를 안 넘겨 `argparse` 기본값이 들어갔다. 안 터지고 값만 틀린다 | "고쳤다"고 말하기 전에 **프로세스 기동 시각 ↔ 커밋 시각**을 비교한다. 자식 CLI 와 임포트 모듈은 **반영 시점이 다르다** |
 | **시각 정밀도 불일치** | `_SERVER_BOOT` 는 마이크로초인데 `started_at` 은 `timespec="seconds"` → 부팅과 **같은 초**에 시작된 run 을 `_reap_orphans` 가 "이전 서버의 고아"로 보고 실행 중에 `failed` 로 닫았다. uvicorn 으로는 부팅·요청 간격 때문에 **한 번도 안 나타난다** | 비교하는 두 값의 **절삭 단위를 맞춘다**. "실서버에서 안 나오니 없는 버그"가 아니다 — in-process 로도 돌려본다 |
 | **같은 이름의 다른 스키마** | `schema.sql` 과 ORM 이 테이블명은 같은데 컬럼이 다르다. 공통 14개 중 11개는 완전 일치이고 `conflict_simulations`·`verified_precedents` 만 갈리는데 **하필 `/audit/*` 이 쓰는 둘.** 이름이 같아 **`SELECT` 를 짤 때까지 안 보인다** | 이름이 아니라 **컬럼 집합**을 대조한다(`Base.metadata` ↔ `schema.sql` 파싱). 스크립트는 `01_설계결정\백엔드팀_API현황_및_Redis_Postgres_전환.md` §10-1 |
-| 🔴 **대조 대상이 둘인 줄 알았는데 셋** | 위 항목의 확장(2026-08-08 실측, 정정). `conflict_simulations` 는 **ORM·`schema.sql`·실제 DB 가 전부 다르다.** 필지 참조 컬럼이 `parcel_id`(FK `booth_candidates.id`) / `cadastral_land_id` / `candidate_land_id` 로 셋 다 이름도 대상도 다르고, **공통 컬럼은 `id`·`created_at` 둘뿐**이다. 위 항목이 적어둔 `ForeignKey("parcels.id")` 도 `merge_Back` 에선 틀렸다 → `booth_candidates.id`. `/simulation(s)/results/{id}` 가 **500**(`UndefinedColumnError`)이고, 쓰기(`simulations.py:492`)는 예외를 `print` 로 삼켜 **조용히 실패**한다(원칙 1·4) | `schema.sql` 이 현행이라고 가정하지 않는다 — **실제 DB 를 `\d` 로 직접 본다.** 시드를 뜬 기준이 저장소 SQL 과 다를 수 있다. 상세: `배포후_작업일지\20260808_파이프라인_실행중단_WinError5.md` §B |
-| 🔴 **실패를 기록하는 코드가 같은 함수로 실패한다** | `r_20260808_001` 이 시작 **같은 초**에 죽었는데 `status.json` 엔 25분 뒤 `_reap_orphans` 의 일반 메시지만 남았다. 진짜 사인은 `status.json.7652.tmp` 에만 있었다 — `PermissionError [WinError 5]` on `os.replace`. `_write_status`(`:161`)는 **쓰기만** `_IO_LOCK` 인데 `read_status`→`_reap_orphans`(`:209`)가 `runs/*/status.json` 39개를 **락 밖에서** 연다(프런트 폴러 2개 × 초당 ~1.2회). 더 나쁜 건 `finally`(`:611`)가 **같은 `_write_status`** 를 써서 실패 기록도 못 하고 `_ACTIVE.pop`(`:613`)까지 못 간다 → 그 도메인은 **재시작 전까지 409**. `_ACTIVE` 판정이라 **파일을 손으로 고쳐도 안 풀린다** | 정리 코드는 **터질 수 있는 호출 뒤에 두지 않는다** — 자원 반납을 기록보다 먼저 한다. Windows `open()` 은 `FILE_SHARE_DELETE` 를 안 줘서 **읽는 중에도** `os.replace` 가 터진다(예상했던 `WinError 32` 가 아니라 **5**). 쓰기끼리만 직렬화하는 건 방어가 아니다. `runs/` 가 쌓일수록 확률이 오른다(사고 당시 39개·1.3GB). **✅ 2026-08-08 수정됨** — `os.replace` 재시도(8×25ms, 끝내 안 되면 `raise`) + `_ACTIVE.pop`(`:642`)을 `_write_status`(`:643`) **앞으로**. 폴러 2개·69회 폴링으로 사고 조건 재현하며 완주, 픽스처 57/57. 🔴 단 `_reap_orphans` 의 **전수 스캔은 그대로**다 — 증상만 막았다 |
+| 🔴 **대조 대상이 둘인 줄 알았는데 셋** | 위 항목의 확장(2026-08-08 실측, 정정). `conflict_simulations` 는 **ORM·`schema.sql`·실제 DB 가 전부 다르다.** 필지 참조 컬럼이 `parcel_id`(FK `booth_candidates.id`) / `cadastral_land_id` / `candidate_land_id` 로 셋 다 이름도 대상도 다르고, **공통 컬럼은 `id`·`created_at` 둘뿐**이다. 위 항목이 적어둔 `ForeignKey("parcels.id")` 도 `merge_Back` 에선 틀렸다 → `booth_candidates.id`. `/simulation(s)/results/{id}` 가 **500**(`UndefinedColumnError`)이고, 쓰기(`simulations.py:492`)는 예외를 `print` 로 삼켜 **조용히 실패**한다(원칙 1·4) → 그래서 `conflict_simulations`·`verified_precedents` 둘 다 **0행**이다. 🔴 2026-08-09 추가 실측 — **컬럼 이름만 맞춰선 안 끝난다**: ① 엔진은 시나리오를 **1개만** 내는데 컬럼은 3개(A/B/C) ② `result_json` 이 갈 컬럼이 없고 그 안의 **`debate_logs` 는 재구성 불가**(Redis TTL 600초뿐) ③ 런타임 `parcel_id` 는 `booth_candidates.id` 인데 FK 는 `candidate_lands` — **id 공간이 다르다**(1행 ↔ 6,524행). 그냥 넣으면 FK 는 통과하고 **다른 필지**를 가리킨다 | `schema.sql` 이 현행이라고 가정하지 않는다 — **실제 DB 를 `\d` 로 직접 본다.** 시드를 뜬 기준이 저장소 SQL 과 다를 수 있다. **✅ 2026-08-09 해소(B안, 사람 승인)** — `schema_step5.sql` 로 `conflict_simulations` 에 `parcel_id`(FK→`booth_candidates.id`)·`facility_type`·`result_json` 가산, 기존 `css_score`·`css_vector`·`candidate_land_id`·시나리오 1칸은 **채운다**(NOT NULL 완화 안 함). `debate_logs` 테이블 신설(발화 1건=1행). `verified_precedents` 는 **반대로 DB 이름이 맞아서** ORM 을 고쳤다(`parcel_id=simulation_id` 는 오기였다). 쓰기는 `_persist_simulation()` 으로 분해했고 **읽기 경로는 한 줄도 안 고쳤다.** 실측: 토론 299.9s → `conflict_simulations` 1행 · `debate_logs` 14행 · `/results/1` 정상 · `/report/1` 86,260 bytes PDF. 상세: `배포후_작업일지\20260809_DB_현재구조_정리.md` · `20260808_…_WinError5.md` §B |
+| 🔴 **실패를 기록하는 코드가 같은 함수로 실패한다** | `r_20260808_001` 이 시작 **같은 초**에 죽었는데 `status.json` 엔 25분 뒤 `_reap_orphans` 의 일반 메시지만 남았다. 진짜 사인은 `status.json.7652.tmp` 에만 있었다 — `PermissionError [WinError 5]` on `os.replace`. `_write_status`(`:161`)는 **쓰기만** `_IO_LOCK` 인데 `read_status`→`_reap_orphans`(`:209`)가 `runs/*/status.json` 39개를 **락 밖에서** 연다(프런트 폴러 2개 × 초당 ~1.2회). 더 나쁜 건 `finally`(`:611`)가 **같은 `_write_status`** 를 써서 실패 기록도 못 하고 `_ACTIVE.pop`(`:613`)까지 못 간다 → 그 도메인은 **재시작 전까지 409**. `_ACTIVE` 판정이라 **파일을 손으로 고쳐도 안 풀린다** | 정리 코드는 **터질 수 있는 호출 뒤에 두지 않는다** — 자원 반납을 기록보다 먼저 한다. Windows `open()` 은 `FILE_SHARE_DELETE` 를 안 줘서 **읽는 중에도** `os.replace` 가 터진다(예상했던 `WinError 32` 가 아니라 **5**). 쓰기끼리만 직렬화하는 건 방어가 아니다. `runs/` 가 쌓일수록 확률이 오른다(사고 당시 39개·1.3GB). **✅ 2026-08-08 수정됨** — `os.replace` 재시도(8×25ms, 끝내 안 되면 `raise`) + `_ACTIVE.pop`(`:642`)을 `_write_status`(`:643`) **앞으로**. 폴러 2개·69회 폴링으로 사고 조건 재현하며 완주, 픽스처 57/57. **✅ 2026-08-09 원인 제거** — 전수 스캔을 `read_status` 에서 떼어내 **부팅 1회**로 옮겼다(`app/main.py` lifespan → `reap_orphans()`). 판정식이 `started_at < _SERVER_BOOT` 라 **답은 부팅 시점에 이미 고정**이다 — 폴링마다 부를 이유가 애초에 없었다. `start_run` 쪽 호출도 뺐다(그 시점엔 무조건 no-op) |
 | **선언만 있는 ORM** | 모델 17개 중 **13개가 `app/db/models/` 밖에서 참조 0회**. 공간 13종은 테이블이 비어 있고 파이프라인은 파일로 읽는다. "모델이 있으니 적재돼 있겠지" 로 읽힌다 | 참조 횟수를 센다. **있는 것과 쓰이는 것은 다르다** |
-| **읽기인 줄 알았는데 쓰기** | 검증하려고 별도 프로세스에서 `pipeline_runner.read_status()` 를 부르면 그 안의 **`_reap_orphans()`** 가 돈다. 새 프로세스는 `_SERVER_BOOT` 가 now 라 **남이 실행 중인 run 을 `failed` 로 닫는다.** 2026-08-05 23:16, 프런트가 돌리던 `r_20260805_022` 를 밟기 직전에 멈췄다 | 재시작만 위험한 게 아니다. **out-of-process 로 러너 함수를 부르기 전에 `runs/*/status.json` 을 직접 읽어 활성 run 을 센다.** 함수명이 `read_` 여도 부작용이 있을 수 있다 |
+| **읽기인 줄 알았는데 쓰기** | 검증하려고 별도 프로세스에서 `pipeline_runner.read_status()` 를 부르면 그 안의 **`_reap_orphans()`** 가 돈다. 새 프로세스는 `_SERVER_BOOT` 가 now 라 **남이 실행 중인 run 을 `failed` 로 닫는다.** 2026-08-05 23:16, 프런트가 돌리던 `r_20260805_022` 를 밟기 직전에 멈췄다 | 재시작만 위험한 게 아니다. **out-of-process 로 러너 함수를 부르기 전에 `runs/*/status.json` 을 직접 읽어 활성 run 을 센다.** 함수명이 `read_` 여도 부작용이 있을 수 있다. **✅ 2026-08-09 해소** — `read_status` 는 이제 순수 읽기다. 다만 **`reap_orphans()`·`start_run` 은 여전히 쓴다** — 습관은 유지할 것 |
+| 🔴 **안 고친 주석이 남의 요구사항이 된다** | 2026-08-04 에 `pdf_service.py`·`report_template.html` 이 잠깐 지워졌던 시점을 보고 `main.py:38`·`simulations.py:806` 에 "화면6 은 두 파일 복구 + **weasyprint(GTK3)** 필요"라고 적었다. 파일이 복구된 뒤에도 **주석만 남았다.** 실측하니 **셋 다 거짓** — 두 파일 다 있고, `pdf_service.py` 는 weasyprint 가 아니라 **playwright(chromium)** 를 쓰며(weasyprint 코드 참조 **0회**), 실제로 **33,335 bytes `%PDF-`** 가 나온다. 그 사이 프런트 작업목록에 **"weasyprint GTK 미설치로 화면6 막힘"** 이 요구사항으로 올라와 있었다 | 주석에 **상태**를 적는 순간 상하기 시작한다 — 상태 대신 **이유**를 적고, 상태를 적었으면 되돌리는 커밋에서 **같이 지운다.** 남이 내 주석을 근거로 계획을 짠다(원칙 4·5). 「없다/안 된다」를 적을 땐 **되돌아왔을 때 누가 지울지**까지 생각한다 |
+| 🔴 **주석이 기능을 껐다** | 위 항목의 두 번째 사례(2026-08-09). `vector_db.retrieve_similar_statutes` 가 `facility_type` 을 **인자로 받아만 놓고 안 썼다.** 그 자리 주석은 "시설 종류별 조례가 metadata 로 분류되어 있지 않으므로 강제 필터링 제거" 였는데 **실측하면 거짓**이다 — 222청크 전부 태그가 있고 값도 갈려 있다(흡연부스 178 · 전기차충전소 44). `simulations.py:439` 는 그 값을 정확히 넘기고 있었고, 데이터팀 `ingest_statutes.py` 는 "서비스가 항상 필터를 건다"를 전제로 문서별 태깅까지 해뒀다 — **한쪽만 빠져 있었다.** 결과: 흡연부스 토론 상위 15건 중 **4건이 전기차충전소 조례**. 안 터지고 근거만 틀린다 | 주석이 "없어서 껐다"고 말하면 **그 없음을 실측한다**(원칙 5). 인자를 받고 안 쓰는 함수는 **호출자가 이미 그 기능을 기대하고 있다**는 뜻이다 — 시그니처와 본문이 어긋나면 본문이 아니라 **왜 어긋났는지**를 본다. **✅ 2026-08-09 복구** — 필터 복구 + 필터로 0건일 때 무필터 재조회로 「태깅 어긋남 ↔ 조례 없음」을 로그에서 구분 + `delete_statute_chunks()` 신설(재업로드 시 옛 청크가 남아 같은 조문이 두 번 인용된다). ⚠ `cmetadata` 는 `jsonb` 가 아니라 **`json`** 이다(직접 SQL 은 `->>`). PGVector `filter=` 는 정상 동작 |
 | **대조기가 없는 키를 읽음** | `report.json` 실제 키는 `counts`·`data_gap`·`topn` 인데 `후보수`·`gap`·`topN` 으로 읽어 `None == None`·`[] == []` 로 **전 항목 통과**. 아무것도 안 본 채 초록불이 떴다 | 비교 항목이 **비면 멈춘다**(`SystemExit`). 가짜 초록불은 회귀보다 나쁘다 — 그 뒤 모든 판단의 근거가 된다 |
 | **브랜치마다 따로 돌린 ruff** | 2026-08-06 통합에서 충돌 8건 중 **7건이 로직이 아니라 포맷**이었다. 브랜치 둘이 각자 `ruff format` 을 돌려(455b1f6 / 6d40676·dd058ae) 같은 코드가 서로 다른 모양이 됐다. 정본 `gam2_weight_model.py` 는 1714줄 ↔ 1439줄로 갈렸는데 **의미 차이는 0**이다. 줄 수만 보면 대형 개편으로 읽힌다 | 충돌 파일은 줄 수가 아니라 **AST 로 대조**한다. 자리표시자 없는 `f""` → `""`, `import a, b` 분해, 미사용 import 제거까지 정규화하면 남는 게 진짜 차이다. 이번엔 그러고 나니 **본문이 전부 동일**했고 진짜 충돌은 `test_api_client.py` 1건뿐이었다 |
 | 🔴 **인증 실패를 「크래시 탓」으로 오진** | 2026-08-07 로더가 `password authentication failed for user "postgres"` 로 죽었다. 로그에 `not properly shut down` + `invalid record length` 가 같이 있어 **WAL 손상으로 SCRAM 검증자가 깨졌다**고 결론짓고 `ALTER USER ... PASSWORD 'postgres'` 로 되돌렸다. **틀렸다.** 실제로는 그 전에 **외부 침입**이 있었다(08-07 11:39 무차별 대입 20회 → 14:12 `DROP DATABASE omnisite` → 랜섬 노트). 되돌린 비번이 다시 `postgres` 라 **문을 다시 열어준 셈**이다. 그때도 `docker logs` 를 읽었지만 `FATAL` 만 grep 해서 `sh: 1: wget: not found` 줄을 못 봤다 — **찾는 패턴 밖의 증거는 보고도 못 본다** | 인증 실패가 **연속으로** 뜨면 먼저 **누가 시도했는지**를 본다: `docker logs <c> \| grep -E "authentication failed\|sh:\|DROP DATABASE"`. 서버 내부(WAL·SCRAM)만 후보에 올리면 **바깥에서 들어온 가능성**이 아예 안 보인다. 상세: `04_이슈\2026-08-08_로컬DB_랜섬웨어_침해사고.md` |
-| 🔴 **컨테이너 포트 기본 노출** | 위 침입의 **진짜 원인.** `ports: "5432:5432"` 는 앞에 IP 가 없으면 **`0.0.0.0` = 전 인터넷 공개**다. 비번은 `postgres`, Redis 는 인증 자체가 없었다. 두 조건이 겹치면 뚫리는 데 필요한 건 **시간뿐**이다. `.env.example` 에도 `postgres:postgres` 가 예시로 박혀 있어 **예시값이 곧 실사용값**이 됐다 | `ports` 는 항상 **`127.0.0.1:` 을 붙인다.** 비밀번호는 compose 에 기본값을 두지 않고 `${VAR:?메시지}` 로 **없으면 기동을 실패시킨다** — 기본값이 있으면 빠뜨렸을 때 조용히 약한 암호로 뜬다(원칙 1). 점검: `netstat -ano \| grep LISTENING \| grep -E ":5432\|:6379"` 에 `0.0.0.0` 이 보이면 열린 것 |
+| 🔴 **컨테이너 포트 기본 노출** | 위 침입의 **진짜 원인.** `ports: "5432:5432"` 는 앞에 IP 가 없으면 **`0.0.0.0` = 전 인터넷 공개**다. 비번은 `postgres`, Redis 는 인증 자체가 없었다. 두 조건이 겹치면 뚫리는 데 필요한 건 **시간뿐**이다. `.env.example` 에도 `postgres:postgres` 가 예시로 박혀 있어 **예시값이 곧 실사용값**이 됐다 | `ports` 는 항상 **`127.0.0.1:` 을 붙인다.** 비밀번호는 compose 에 기본값을 두지 않고 `${VAR:?메시지}` 로 **없으면 기동을 실패시킨다** — 기본값이 있으면 빠뜨렸을 때 조용히 약한 암호로 뜬다(원칙 1). 점검: `netstat -ano \| grep LISTENING \| grep -E ":5432\|:6379"` 에 `0.0.0.0` 이 보이면 열린 것. **✅ 2026-08-09 — 앱 쪽 기본값도 제거**했다. compose 만 막고 앱에 `postgresql://postgres:postgres@…` 가 남아 있으면 막은 게 아니다: `app/config.py`(`_require_env`) + `scripts/load_{region_boundaries,cadastral,domain_from_gpkg}.py` 4곳 전부 **없으면 기동 실패**다 |
 | **libpq 무타임아웃** | 위 건에서 도커가 아예 죽었을 땐 `psycopg.connect(DSN)` 이 **260초**를 기다렸다(실측). 원시 TCP 는 2초에 `ConnectionRefused` 인데 libpq 만 안 끝난다 → 사용자에겐 "느린 스크립트"로 보인다. 60초 타임아웃으로 재고 "무한 대기"라 단정한 것도 틀렸다(원칙 5) | `connect_timeout` 을 **명시**한다(`scripts/load_region_boundaries.py` 는 10초, 실측 12초에 종료). 기다림은 실패로 드러나야 한다 |
 | **요약표 한 칸만 읽음** | 2026-08-08. 데이터팀 스키마(#205)를 보고 "크로스워크 코드 3체계를 `region_code` 하나로 접었다"고 되묻기를 적었다. **틀렸다** — `schema_region_boundaries.sql:72-84` 에 세 컬럼이 다 있고 인덱스도 2개다. 이슈 요약표의 `PK/키` 칸만 읽고 **같은 표의 `주요 컬럼` 칸도, 우리 저장소 루트에 있는 DDL 도 안 열었다.** 같은 건에서 "3,559−3,555=4건이 조용히 사라진다"도 틀렸다: 미매칭은 **6건**(뺄셈≠미매칭, 부분집합이 아니다)이고 전부 서울 밖이며 **#205 본문이 이미 답해놨다** | 남의 요약을 근거로 삼지 않는다. **원본(DDL·코드)이 우리 저장소에 있으면 그걸 연다.** 집합 차이는 뺄셈이 아니라 **교집합·차집합을 실제로 센다.** 되묻기를 적기 전에 **상대 본문을 끝까지 읽는다** — 이미 답한 걸 물으면 문서 전체를 안 믿게 된다 |
 | **stdout 재래핑이 `-u` 를 무력화** | 같은 스크립트가 `sys.stdout = io.TextIOWrapper(...)` 로 다시 감싸 **`python -u` 가 안 먹었다.** 백그라운드로 돌리니 출력 파일이 끝까지 비어 진행 상황을 알 수 없었다 | 재래핑할 땐 `line_buffering=True` 를 같이 준다. 진행이 안 보이면 멈춘 건지 도는 건지 구분할 수 없다 |
+| 🔴 **MOCK 모드가 DB 실패를 가린다** | 동현님이 프런트에서 화면5 를 **성공적으로 시연**했는데 `conflict_simulations` 는 **0행**이었다. 모순이 아니다 — 시연 시점(`100c8a3`)은 `USE_MOCK_DB = True` 였고 그 분기의 본문은 `print("[MOCK 모드] DB 저장 우회 완료")` **한 줄이 전부**다. DB 를 아예 안 건드렸다. `ff1f873`(08-06)에서 `False` 로 바뀌며 드러났다. "원래 되던 게 지금 DB 작업 때문에 깨졌나?" 로 읽힌다 | **"돌아가는 걸 봤다"는 어느 코드가 돌았는지까지 확인해야 근거가 된다.** 시연 시점의 커밋·플래그를 먼저 본다. 모의 분기는 "우회했다"를 **산출물에도** 남겨야 한다 — 콘솔 print 는 사라진다(원칙 4) |
+| 🔴 **감리 결과 테이블이 통째로 없었다** | 화면5 토론이 **첫 줄에서** `UndefinedTableError`. `schema_cleaned_data.sql` 의 **뒤쪽 §17~19**(`national_owned_properties`·`rag_feedback_log`·`audit_rules`)가 실 DB 에 없었다 — 08-07 `DROP DATABASE` 후 재생성이 중간에 끊긴 흔적이다. **앞쪽은 다 있어서** 테이블 목록을 훑으면 정상으로 보인다 | DB 재생성 뒤엔 개수가 아니라 **DDL 의 테이블명 집합 ↔ `get_table_names()` 를 차집합으로 대조**한다. `scripts/create_missing_tables.py`(dry-run 기본, `--yes` 로 적용) |
+| 🔴 **FK 는 DB 가 아니라 metadata 에서 풀린다** | `create_all` 이 `NoReferencedTableError: transit_passengers.station_id could not find table 'transit_stations'`. 그런데 그 테이블이 DB 에 **있든 없든 똑같이 죽는다** — SQLAlchemy 는 `Base.metadata` 안에서 FK 대상 `Table` 객체를 찾는다. ORM 에 선언만 없으면 나는 에러다. 🔴 **같은 날 두 번 밟았다** — `ConflictSimulation.candidate_land_id` 에 `ForeignKey("candidate_lands.id")` 를 붙였는데 그 테이블은 ORM 선언이 없다. 이번엔 `create_all` 이 아니라 **flush 시점**에 터졌고, 하필 **5분짜리 토론을 다 돌린 뒤**였다 | 두 갈래다. **만들어야 하면** `metadata.reflect(only=[...])`(생성 아님). **읽고 쓰기만 하면** ORM 에서 `ForeignKey` 를 아예 빼고 평범한 `Integer` 로 둔다 — 제약은 실 DB 에 걸려 있으므로 무결성은 그대로다. **ORM 이 FK 를 아는 것과 DB 가 FK 를 거는 것은 별개다.** 에러 문구가 "테이블이 없다"여도 **DB 를 보라는 뜻이 아니다** |
+| 🔴 **필드 하나로 두 의미를 쓰면 소비 코드가 조용히 틀린다** | `audit_rules.facility_type` 이 「배제 대상 시설(금연구역)」과 「입지를 정하려는 대상 시설(흡연부스)」을 겸했다. 그래서 `facility = facility_types[0]` 은 **대상 시설을 "금연구역"** 으로 만들고, `factor_name = r.facility_type or "요인"` 은 positive_factor **8개를 dict 키 하나로 뭉갠다**. 둘 다 예외 없이 값만 틀린다 | 의미가 둘이면 **컬럼도 둘**이다(`target_facility` / `facility_type` / `factor_name`). 산출물이 한 자리에 두 의미를 섞어 쓰면(`source` = 조항 문자열 or 리터럴 `human_confirmed`) **원문을 유지하고 임의로 쪼개지 않는다** — 쪼개면 없는 정보를 지어낸다(원칙 5) |
+| 🔴 **「테스트용 폴백」이 본선에서 돌고 있었다** | `gam2_audit_judgment_test.py:2023` 의 `DOMAIN = {"facility":"흡연부스","region":"용산구"}` 는 주석에 **"테스트용 폴백 기본값"** 이라 적혀 있었지만 실제로는 `fac.get("region") or DOMAIN["region"]` 형태로 **실행 경로 3곳**(`gam2_run_pipeline.py:191` 본선 · real · mock)에서 쓰였다. 성동구 입력에서 지역이 안 잡히면 조용히 **용산구** 조례·상위법을 검색한다. `enrich_with_search(region="용산구")` 도 같은 함수가 **`facility` 는 파일에서 읽으면서 `region` 만** 기본값을 썼다. 더 나쁜 건 `simulations.py` 의 좌표 폴백 — 후보점 조회가 실패하면 (37.534, 126.994) "이태원동 123-45 (테스트용)" 으로 갈아끼우고 **5분짜리 LLM 토론을 그대로 완주**해 DB 에 저장했다. 프런트엔 정상 결과로 보인다 | `or <기본값>` 은 **폴백이 아니라 분기**다 — 주석이 "테스트용"이라고 말해도 호출자를 세어 본다. 한 함수 안에서 값 A 는 파일에서 읽고 값 B 는 기본값을 쓰면 **B 가 A 와 다른 도메인**을 가리킬 수 있다: 출처를 같은 곳으로 맞춘다. **✅ 2026-08-10 제거**(사람 승인) — `require_region()` 신설(비면 `SystemExit`) · `enrich_with_search(region=None)` → `facility_inference.region` · 좌표 폴백은 `CandidateNotFound` → SSE `error_code: CANDIDATE_NOT_FOUND`. 픽스처 57/57 유지 |
+| **`docker exec` 에 `-i` 가 없으면 stdin 이 무시된다** | `docker exec <c> psql … <<'SQL'` 이 **출력도 없고 exit 0** 인데 테이블이 안 생겼다. 성공으로 보인다 | heredoc·파이프로 SQL 을 넘길 땐 **`docker exec -i`**. 그리고 실행 후 `\d` 로 **결과를 확인**한다 — rc=0 은 "명령이 돌았다"만 뜻한다 |
+| 🔴 **`localhost` 가 IPv6 로 먼저 풀린다** | `GET /upload/regulations` 가 **130초**. 어제 일지엔 "PGVector 초기화 비용"이라 적었는데 **틀렸다** — `getaddrinfo("localhost")` 가 `::1` 을 먼저 주는데 2026-08-09 보안 조치로 docker 가 **`127.0.0.1:5432`(IPv4 전용)** 에만 바인딩돼 아무도 안 듣는다. OS TCP 재시도를 다 쓰고 IPv4 로 폴백하는 데 130초. **동기 `psycopg.connect` 만** 걸리고 asyncpg 는 멀쩡해서 `/candidates`·`/stream` 은 빠르다 → "그 엔드포인트만 느리다"로 읽힌다 | DSN 에 **`127.0.0.1` 을 쓴다**(호스트명이 아니라 주소). 느린 엔드포인트를 만나면 "무거운 초기화"로 단정하기 전에 **어느 드라이버가 쓰이는지**부터 본다 — 같은 DB 인데 한쪽만 느리면 이름 해석이나 소켓 문제다. **✅ 2026-08-10 적용** — `.env` 만 고치면 다음 사람이 다시 `localhost` 를 쓴다. `app/config.py:_normalize_dsn()` 이 DSN 의 `localhost` 를 `127.0.0.1` 로 **고쳐 쓰고 경고 로그를 남긴다**(조용히 안 바꾼다). 컨테이너 서비스명(`postgres`)·이미 IP 인 것·`localhost.example.com` 은 안 건드린다. 같이 넣은 `DB_CONNECT_TIMEOUT`(기본 10초)은 **드라이버마다 인자 이름이 다르다**: asyncpg `timeout` / libpq·psycopg `connect_timeout` / PGVector 는 `engine_args={"connect_args": …}`. 복붙하면 조용히 무시된다. 실측 130초 → **0.151초** |
+| 🔴 **읽는 쪽에 도메인 필터가 없다** | `_select_audit_rules`(`simulations.py:141`)가 `WHERE target_facility = :f` **만** 본다. `audit_rules` 에 `domain` 컬럼이 있고 적재기는 `(domain, run_id)` 단위로 교체하는데 읽기가 안 거른다 → 같은 시설을 쓰는 도메인이 둘이면 **26행**(실측: 흡연 13 + 흡연_E2E 13)이 되어 감리 근거가 두 배, AHP 가중치가 갈라진다. 안 터지고 값만 틀린다 | 적재 단위와 조회 단위를 **같게** 맞춘다. `domain` 은 `/stream` 요청이 아니라 **`booth_candidates.domain`**(이미 `parcel_id` 로 조회하는 행)에서 가져오면 프런트 계약을 안 바꾼다. **✅ 2026-08-10 적용** — `_select_audit_rules(db, facility_type, domain, run_id)`(같은 날 `run_id` 까지 추가, 아래 항목). 요청 본문으로 안 받은 이유가 하나 더 있다: 파라미터로 받으면 흡연 후보점에 재활용 도메인을 넘길 수 있다. **같은 행에서 뽑으면 둘이 어긋날 수가 없다.** 그래서 후보점 조회를 감리 조회 **앞으로** 옮겼고, `domain`·`run_id` 가 NULL 이면(손입력 1행) `CandidateNotFound` 로 멈춘다 |
+| 🔴 **400 인데 절반은 이미 적용됐다** | 다중 파일 업로드에서 `<원본>.txt`(추출 캐시)를 올려 400 이 났는데, 그 전에 앞 파일은 **저장되고 벡터 청크 18개까지 적재**돼 있었다. 호출자는 400 만 보고 "아무 일도 없었다"로 읽는다(원칙 4) | 여러 건을 받는 엔드포인트는 **전건 검증 후 저장**(2-pass)이거나, 아니면 응답에 **어디까지 됐는지**를 적는다. 실패 응답을 받으면 목록을 **다시 조회**해서 확인한다 |
+| **`--auto-*` 기본값이 픽스처 조건과 다르다** | 업로드 경로로 STEP3 를 `--auto-radius --auto-weight` 만 주고 돌렸더니 `scale=minmax`·`decay=null` 이 됐다(픽스처는 `log`·`gaussian`). 집계반경도 llm 제안값(150→200 등). 그 결과 **Top-N 이 통째로 다른 필지**가 됐다 — LLM 이 변덕부린 것처럼 보인다 | 회귀 대조를 할 땐 `--decay gaussian --scale log --radius …` 를 **명시**한다. 값이 갈리면 LLM 을 의심하기 전에 **`weight_set.json` 의 `scale`·`decay`·`radius_source` 를 대조**한다. 실측하니 `w_human` 6개는 소수 4자리까지 같았다 — 갈린 건 실행 옵션 하나였다 |
+| 🔴 **다리를 하나만 놓았다** | full 모드 1회차(`r_20260810_001`)가 `succeeded` 인데 화면5 가 0.4초에 죽었다. 적재 칸이 `booth_candidates` 만 넣고 `audit_rules` 를 안 넣었다 — 화면5 는 **어디를**(후보점)과 **무엇을 근거로**(감리 규칙) **둘 다** 읽는다. 목록은 20행이 정상으로 뜨니 "후보는 있는데 토론이 안 된다" 로 보인다. 파이프라인 산출물을 DB 로 옮기는 지점을 셀 때 **STEP4 만 세고 STEP1 을 안 셌다** | 화면 하나가 읽는 테이블을 **전부** 센다. 산출물→DB 다리는 STEP 개수만큼 있을 수 있다. 적재를 **한 칸에 몰지 않는다** — 두 프로세스를 한 칸에 넣으면 어느 쪽이 실패했는지 진행 표시에서 사라진다. ✅ 2026-08-10 `적재-감리`·`적재-후보` 두 칸으로 분리 |
+| 🔴 **적재 키와 조회 키가 다르다** | 위 건을 고친 뒤 같은 도메인을 두 번 돌리니 `audit_rules` 가 **26행**(hard 10 · positive 16, 고유 요인명은 14). 적재기는 `(domain, run_id)` 를 교체하는데 `_select_audit_rules` 는 `(domain, target_facility)` 만 본다 → 근거가 두 배, AHP 가중치가 묽어진다. **예외가 안 난다.** `booth_candidates` 는 같은 사고가 안 나는데, 조회(`/candidates`)가 최신 run 하나만 돌려주기 때문이다 — **짝이 한쪽만 맞춰져 있었다** | 테이블마다 **적재 단위 ↔ 조회 단위**를 짝지어 적어둔다. 한쪽을 고치면 다른 쪽을 같이 본다. 🔴 **어긋났을 때 어느 쪽을 고칠지가 진짜 갈림길이다.** 나는 처음에 "적재기를 domain 단위 전량 교체로" (A안) 권고했다 — **맞는 쪽(저장)을 틀린 쪽(조회)에 맞추는** 안이었다. `audit_rules` 는 STEP1 **산출물**이고 두 적재기는 이미 `(domain, run_id)` 로 옳게 교체하고 있었다. 실측 없이 "고치기 쉬운 쪽"을 고르면 방향이 뒤집힌다. **✅ 2026-08-10 해소**(B안, 사람 승인) — 조회에 `run_id` 추가(값은 `booth_candidates` 행에서, 요청으로 안 받는다) + 정본 run_id 어휘 통일: 예전엔 STEP 폴더 이름을 넣어 `audit_rules='step1_output'` ↔ `booth_candidates='step4_output'` 로 갈렸는데, run_id 는 "어느 STEP 폴더에서 왔나"가 아니라 **"어느 실행에서 나왔나"** 다 → 양쪽 다 **`'정본'`**(기존 33행 마이그레이션). 실측: 26행 저장 ↔ **13행 조회**, 규칙 없는 run 은 **0.56초**에 정지(고치기 전엔 남의 run 근거로 39.5초 완주). 계약 §6·§8-9 |
+| **입력 파일 이름만 바꿔도 모드 하나가 죽는다** | `fixture` 모드가 STEP2 에서 10.6초 만에 `FileNotFoundError: …\흡연\fixture\profiles.json`. 누군가 그 파일을 `fix_profiles.json` 으로 바꿔놓았다(sha256 은 동일). `gam2_audit_judgment_test.build_fixtures()` 는 없으면 만들어 주지만 `gam2_clean_data.py` 는 안 만든다 → **STEP1 을 안 도는 fixture 모드에서만** 드러난다. `.gitignore` 대상이라 clone 에도 없다 | 모드마다 **첫 칸이 다르면 선행 파일도 다르다.** 한 모드가 돈다고 다른 모드가 도는 게 아니다. 재생성: `python app\services\gam2_profile.py data_임시\<도메인>` |
 
 ---
 
@@ -129,6 +144,8 @@ python app\tools\check_exclusion_state.py <도메인>   :: 배제 레이어 면�
 python app\tools\check_fixture.py <도메인>           :: 회귀 픽스처 대조 (S12) [--restore]
 python app\tools\check_hitl_gate.py <도메인>         :: A2 — HITL 게이트 단위 37항목 (runs/ 불필요)
 python app\tools\check_hitl_e2e.py <도메인>          :: A2 — fixture ↔ hitl 완주 대조 (🔴 LLM 1회)
+python app\tools\check_upload_api.py                 :: 업로드 API 25항목 (in-process TestClient)
+                                                     :: [--no-ingest] 벡터 적재·검색 제외 → 16항목·LLM 0회
 python app\tools\check_postgis_parity.py <도메인>    :: S5 — geopandas ↔ PostGIS 술어 **값** 대조
 python app\tools\bench_postgis.py <도메인>           :: S5 — 같은 술어 **속도** 대조
                                                      :: (둘 다 도커 필요. PGIS_DSN 으로 접속지 지정)
@@ -141,7 +158,41 @@ python app\services\make_parcel_candidates.py <도메인>
 python app\services\run_weight_model.py <도메인> --candidates 후보_지적도필지.gpkg ^
        --auto-radius --auto-weight --no-diag --bootstrap 0
 python app\services\gam4_site_select.py <도메인>
+
+:: DB 적재 (scripts\ — 파이프라인 산출물을 실 DB 로)
+python scripts\create_missing_tables.py            :: 계획만 출력. --yes 로 실제 생성
+python scripts\load_audit_data.py <도메인>          :: STEP1 reviewed.json → audit_rules
+                                                   :: [--run <run_id>] [--dry-run]
+python scripts\load_topn_candidates.py <도메인>     :: STEP4 topN.geojson → booth_candidates
+                                                   :: 계획만 출력. --yes 로 적재 [--run <run_id>]
+                                                   :: 선행: schema_step4_topn.sql (가산·멱등)
 ```
+
+🔴 **화면5 공청회 토론은 `audit_rules` 가 비어 있으면 못 돈다.** 감리 근거·AHP 가중치를
+거기서 읽는다. 실측: 흡연 → results 11건 → **13행**(hard_exclusion 5 · positive_factor 8).
+`reviewed` 를 쓴다 — `audit_result.json` 은 LLM 제안값이고 `reviewed` 가 HITL 확정분이다.
+
+🔴 **STEP4 결과를 화면5 로 넘기는 건 `load_topn_candidates.py` 다**(2026-08-10 신설).
+`gam4_export.export_topn()` 은 **파일만** 쓰고 DB 배선이 없었다 — 그래서 `booth_candidates`
+엔 손으로 넣은 1행뿐이었고 화면5는 STEP4 와 무관한 **항상 같은 점**으로 토론했다.
+적재 개수는 **STEP4 의 `--topn`(기본 20)** 이 정한다. 적재기는 파일에 있는 만큼 전부 넣고
+N 을 따로 들고 있지 않다. **`--spacing` 은 개수가 아니라 후보점 간격**이다(다른 인자).
+🔴 **`mode: "full"` 은 이 적재를 러너가 마지막 두 칸(`적재-감리`·`적재-후보`)에서 자동으로
+돌린다**(2026-08-10). 화면5 는 `audit_rules`(근거)와 `booth_candidates`(대상)를 **둘 다** 읽는다.
+손으로 돌릴 일은 정본 산출물(`data_임시/stepN_output/`)을 넣을 때뿐이다 — 그때만 `--run` 없이 쓴다.
+🔴 **`run_id` 는 두 테이블의 조인 키다**(2026-08-10 통일). 격리 run 은 `r_YYYYMMDD_NNN`,
+정본은 두 적재기 모두 **`'정본'`**. 예전엔 각자 STEP 폴더 이름(`step1_output` ↔
+`step4_output`)을 넣어 갈려 있었다 — run_id 는 "어느 STEP 폴더"가 아니라 **"어느 실행"** 이다.
+프런트는 `GET /api/v1/simulations/candidates?domain=<도메인>` 으로 목록을 받아
+**사람이 고른** 후보의 `parcel_id` 를 `/stream` 에 넘긴다.
+🔴 **`rank == 1` 은 추천이지 강제가 아니다**(2026-08-10, 사람 결정). "첫 원소를 넘긴다"고
+적어뒀던 건 폐기한다 — 화면4 에서 위치를 선택하고 그 위치로 토론한다.
+`/stream` 은 예나 지금이나 **임의의 `parcel_id`** 를 받는다(바뀐 건 계약이지 구현이 아니다).
+`run_id` 를 안 주면 **가장 최근 적재분**만 나온다(안 거르면 실행 두 번이 섞여 rank 가 중복).
+`limit` 은 **기본이 없다(전량)** — 옛 기본값 20 은 `--topn` 기본값과 우연히 같았을 뿐이라
+`--topn 30` 이면 10개가 말없이 잘렸다.
+🔴 `순위` 는 **점수 내림차순이 아니다**(MCLP 커버 기여 그리디). 흡연 실측에서 4위 0.7793 >
+1위 0.7703 이다 — `ORDER BY score DESC` 로 뽑으면 **다른 점**이 나온다.
 
 🔴 `run_weight_model.py` 에 `--radius`·`--weight` 로 값을 고정할 때는
 **`--value-source cli` 를 같이 준다.** 없으면 `SystemExit` 이다(2026-08-05 `d2b780b`).
@@ -268,13 +319,32 @@ S9 증가분의 출처: `01 금연구역` 0.0245→0.6325(학·공 55점이 면 
 ```
 D:\obsidian_claude\10_OmniSite\
   남은 작업들\00_남은작업.md          ← S1~S12 전체. 여기부터
+  배포후_작업일지\20260809_DB_현재구조_정리.md
+                                     ← 🔴 **DB 를 볼 일이 있으면 여기부터.** 실 DB 39테이블
+                                       707MB 를 `\d` 로 전수 정리. 필수 17 / 비어있음 4 /
+                                       줄일 수 있음 3 / **제거 가능 14**(0행+참조0회).
+                                       §6 에 STEP5 저장 구조 B안 적용 내역과 검증 8항목
+  배포후_작업일지\20260809_동현님구간_conflict_simulations_정합.md
+                                     ← 동현님 설명용 단독 문서. 3중 불일치의 **경위와 근거**.
+                                       처치는 위 문서 §6 (B안, 2026-08-09 적용·검증 완료)
   배포후_작업일지\20260808_파이프라인_실행중단_WinError5.md
                                      ← **최근.** ⓐ run 이 조용히 죽고 도메인이 409 로
                                        잠기던 건(os.replace WinError 5) — **수정·검증 완료**
-                                       🔴 ⓑ 화면5·6 엔드포인트 **6개 전부 500** — 결함이
-                                       **3개** 겹쳤다: conflict_simulations 3중 불일치 ·
-                                       `scalar_first` 없는 메서드 · weasyprint GTK 미설치.
-                                       하나만 고치면 다시 500 이다. **미수정(화면5 담당 몫)**
+                                       ⓑ 화면5·6 엔드포인트 6개 500 — **✅ 2026-08-09 해소.**
+                                       3개가 겹쳐 있었고 셋 다 처리됐다: 3중 불일치(B안) ·
+                                       `scalar_first`(→`scalars().first()`) ·
+                                       weasyprint 는 **애초에 거짓**이었다(playwright 를 쓴다).
+                                       실측 `/results/1` 200 · `/report/1` 86,260 bytes PDF
+  02_작업일지\2026-08-10.md           ← 🔴 **최신.** §8 관통 테스트 2경로(경로A 기존DB ·
+                                       경로B 업로드→STEP0~4→적재→토론→PDF) ·
+                                       §9 DSN 127.0.0.1 고정 + connect_timeout ·
+                                       `_select_audit_rules` 도메인 조건 · 테스트 산출물 제거 ·
+                                       §9-5 화면1→3 배선 결함 → **§10 `mode:"full"` 로 해소** ·
+                                       §11 업로드→화면6 **완주 실측** ·
+                                       **§12 `audit_rules` run_id 정렬**(정본 어휘 통일 · A안 철회 경위)
+  02_작업일지\2026-08-09.md           ← DSN 기본값 제거 4곳 · _reap_orphans 부팅1회 ·
+                                       scalar_first · 낡은 주석 정정 · 누락 테이블 생성 ·
+                                       감리 로더 재작성 · **§7 STEP5 저장 B안 적용**
   02_작업일지\2026-08-07.md           ← DB 스택 이관 · 경계 3종 적재 · PR #217 분석
   배포후_작업일지\20260807_PR217_sim_ai_충돌_동현_민영.md
                                      ← sim_ai 충돌 = 동현님↔민영님 작업물 충돌. 두 분께 전달
@@ -322,12 +392,21 @@ D:\obsidian_claude\10_OmniSite\
 먼저 손대지 않는다. 아래 🔴 는 그 인계 사실을 반영한 잔여분이다.
 
 ```
-🟡 화면1 (/upload)       **구조 선행조건은 해소됐다**(2026-08-06 `merge_Back`, PR #211).
-                        RagVectorStorage() 가 요청 시점 생성으로 바뀌어
-                        `import app.main` 이 525.7초 → **4.2초**다(실측).
-                        라우터도 붙었다 — `/upload/regulation` 외 2개.
-                        남은 것은 gam2_doc_extract.py + gam2_ordinance_select.py
-                        배선(#203)이다
+✅ 화면1 (/upload)       **2026-08-09 재작성 완료** (`check_upload_api.py` 25/25).
+                        옛 구현은 `uploads/regulations/` 에 저장했다 — **파이프라인이
+                        읽지 않는 곳**이라 올려도 아무 영향이 없었다(200 이라 안 걸린다).
+                        지금은 조례 → `data_임시/<도메인>/law/`(= `load_ordinance()` 가
+                        읽는 곳) · 데이터 → `.../data/`(= `profile_folder()`).
+                        **도메인은 필수 인자**다(기본값을 두면 성동구 파일이 흡연
+                        폴더로 조용히 들어간다). 조례·데이터 **둘 다 다중 파일**이고
+                        조례는 폴더 안 txt·md 를 전부 합쳐 쓴다(EV 5·흡연 3·재활용 2).
+                        파서는 데이터팀 `statute_parser` 로 통일, Redis 에는
+                        **메타데이터만**(흡연 data/ 만 537MB · 단일 최대 279MB).
+                        `facility_type` 은 요청값 → `audit_result_reviewed.json` →
+                        **400**(추측 안 함)이고 출처를 응답에 남긴다.
+                        `dataset_id` 는 파일명 가나다순이라 앞 번호로 끼어들면 뒤가
+                        전부 밀린다 → 응답 `renumbered` 로 알린다.
+                        상세: `02_작업일지\2026-08-09.md` §8-2·8-3
 ⬜ 이슈 #205 되묻기      **3건 → 1건.** 2026-08-08 실측으로 3건 다 철회했다
                         (근거: `02_작업일지\2026-08-04b.md` §7-2). DDL 은 세 코드를
                         다 들고 있었고, 미매칭은 4가 아니라 6이며 전부 서울 밖이고
@@ -350,6 +429,41 @@ D:\obsidian_claude\10_OmniSite\
        check_fixture.py 46 → **57항목**(2026-08-04). 남은 것: `--fixture` 경로 주입
 ✅ A1  파이프라인 실행 API  app/api/v1/pipeline.py    2026-08-04 완료
        픽스처 재실행(STEP2~4)만. 계약은 `pipeline_run_contract.md` 단독 기준
+       ✅ **`mode: "full"` 신설로 해소**(2026-08-10, 사람 결정 · 계약 8절).
+          예전엔 `fixture`·`hitl` 둘 다 `<도메인>_FIX/` 를 요구해 업로드 도메인이
+          **한 단계도 못 돌았다**(`_PLAN` 에 STEP0·1 이 없었다). 막힌 건 코드가 아니라
+          **값의 출처**였다 — 이제 `full` 이 조건을 **명시 선언**한다:
+          `alpha 0.3 · decay gaussian · scale log · spacing 20`(출처 `흡연_FIX/기준값.json`).
+          🔴 CLI 기본값은 `scale=minmax`·`decay=null` 이라 **이 넷을 안 넘기면 Top-N 이
+          통째로 갈린다**(아래 `--auto-*` 함정). 도메인 값이 아니라 **계산 방식**이라
+          원칙 2 에 안 걸린다 — 대신 `runs/<id>/params.json` 에 요청값을 남긴다.
+          사람이 정하는 건 **`user_input`(필수) · `topn`(기본 20) 둘뿐**이다.
+          계획 11칸 — `0-1 → seed → 게이트A → 2 → 3-1 → propose → 게이트B → 3-2 → 4
+          → load-audit → load`
+          (게이트 뒤쪽은 `hitl` 과 **같은 배열·같은 `_proc_of`**. 다르게 짜면 갈린다)
+          단계 표시는 **모드가 정한다**(fixture 6 · full 10). 상수로 갖지 말 것.
+          `seed` = STEP1 의 `enriched`(없으면 `audit_result`) → `reviewed` 로 앉히는 칸.
+          폴백 순서는 정본 `review_hitl()` 과 같다. `full` 은 `_prepare_dirs` 가
+          **아무것도 복사하지 않는다** — 정본을 깔아두면 감리 실패 시 남의 결과로 진행한다.
+          🔴 **화면4 와 화면5 사이의 다리는 둘이다**(2026-08-10 실측으로 정정).
+          `load-audit` = reviewed → `audit_rules`(**무엇을 근거로**) ·
+          `load` = topN.geojson → `booth_candidates`(**어디를**). 화면5 는 둘 다 읽는다 —
+          뒤만 넣으면 `/candidates` 는 20행인데 `/stream` 이 0.4초에 죽는다(`r_20260810_001`).
+          "유일한 다리"라고 적었던 건 틀렸다. 둘 다 `full` 에만 있다
+          (fixture·hitl 은 정본이 이미 DB 에 `run_id='정본'` 으로 있다 — 2026-08-10
+          어휘 통일 전에는 `step1_output` ↔ `step4_output` 로 갈려 조인이 0건이었다).
+          ✅ **완주 실측 (2026-08-10)** — 흡연 `data/`·`law/` 를 **화면1 업로드 API 로**
+          새 도메인에 넣고 STEP0→화면6 까지: `r_20260810_002` **9분 11초 · 10칸 succeeded**,
+          손으로 거든 단계 0. 값은 픽스처 기준선과 **전부 일치**(후보 42,216 / 후보점 66,915 /
+          union 1.1107 / w_final 6개 / gap 6건). 화면5 1,564 events 39.6s · 화면6 PDF 82,551 B.
+          `fixture` 도 같은 날 재확인 — `r_20260810_004` **71초 · 6칸 succeeded**.
+          상세는 `pipeline_run_contract.md` §8-8.
+          ✅ **같은 도메인 2회차 누적 해소**(2026-08-10, 사람 승인 · 계약 6절 B안).
+          적재는 예전부터 `(domain, run_id)` 교체였고 **조회만** `(domain, facility)` 를
+          봤다 → 26행. 조회에 `run_id` 를 넣고(값은 `booth_candidates` 행에서) 정본
+          어휘를 `"정본"` 으로 통일했다. 26행 저장 ↔ **13행 조회** 실측. 계약 §8-9.
+          🔴 **화면 번호와 STEP 번호를 섞어 쓰지 말 것**(프런트 설계 §3). "화면1→3"
+          은 화면 번호이고 **화면2 를 건너뛴다는 뜻이 아니다** — 1·2·3 을 잇는다는 뜻이다.
        산출물 화이트리스트 8키(reviewed·exclusion 포함) · 응답 media_type 명시
        화이트리스트에 키를 추가하면 **옛 run 의 status.json 에는 그 키가 없다**
        (생성 시점 ARTIFACTS 로 굳는다) → `read_status` 가 빠진 키만 디스크 보고
@@ -378,8 +492,12 @@ D:\obsidian_claude\10_OmniSite\
        검증 — `check_hitl_gate.py` 37/37 · `check_hitl_e2e.py` 로
        fixture ↔ hitl **10항목 전부 일치**(같은 답을 넣으면 같은 값이 나온다)
 ✅ 라우터 표면 확정  /api 경로 **9개**(auth 2·audit 2·pipeline 5)  2026-08-05 갱신
-       🔴 `merge_Back`(2026-08-06 통합)에서는 **20개**다 — simulation 4 ×
-          두 prefix(`/simulation`·`/simulations`) + upload 3 이 붙었다.
+       🔴 `merge_Back` 은 **26개**다(2026-08-10 실측 — `app.routes` 에서 직접 셈).
+          auth 2 · audit 2 · pipeline 5 · simulation **5 × 두 prefix**
+          (`/simulation`·`/simulations`) · upload **7**.
+          "20개" 로 적어뒀던 건 틀렸다 — upload 를 3개로 알고 있었는데 화면1 재작성
+          (2026-08-09)에서 7개가 됐고, 여기 숫자만 안 고쳤다. 두 prefix 라
+          simulation 은 **하나 늘면 둘 는다**(2026-08-10 `GET /candidates` 추가).
           `develop2` 는 아직 9개다. **어느 브랜치를 보고 있는지부터 확인할 것.**
        services/dummy(4248ff3) · api/v1/{ahp,lands}.py(7f66fd9) 삭제.
        ahp_service 는 **미구현이 아니라 폐기** — 만들면 안 된다.
