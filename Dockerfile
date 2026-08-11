@@ -1,5 +1,5 @@
 # 1. Builder Stage
-FROM python:3.10-slim AS builder
+FROM python:3.11-slim AS builder
 
 WORKDIR /code
 
@@ -12,7 +12,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --user -r requirements.txt
 
 # 2. Runner Stage
-FROM python:3.10-slim AS runner
+FROM python:3.11-slim AS runner
 
 WORKDIR /code
 
@@ -24,6 +24,7 @@ COPY --from=builder /root/.local /root/.local
 COPY . .
 
 ENV PATH=/root/.local/bin:$PATH
+RUN pip install playwright && playwright install --with-deps chromium
 ENV PYTHONPATH=/code
 
 EXPOSE 8000
