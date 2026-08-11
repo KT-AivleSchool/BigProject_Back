@@ -15,9 +15,9 @@
 -- ① **흡연 도메인 데이터셋 16종** — 프리셋 원본은 이제 DB 가 아니라 **디스크**에 둔다
 --    (이슈 #215 계층 구분: 1계층 전국 경계·크로스워크 / 2계층 지역단위 지적·공유지 /
 --    산출물). 파이프라인은 이 테이블들을 **한 번도 읽은 적이 없다** — STEP2 정제본
---    파일(`data_임시/step2_output/`, `runs/<id>/step2/`)을 직접 읽고, 화면5 주변
+--    파일(`datasets/step2_output/`, `runs/<id>/step2/`)을 직접 읽고, 화면5 주변
 --    POI 문맥도 `app/services/poi_context.py` 가 같은 파일을 읽는다.
---    실 DB 에서도 같은 날 지웠고 삭제 직전 덤프는 `data_임시/_db_dump_20260811/*.csv`.
+--    실 DB 에서도 같은 날 지웠고 삭제 직전 덤프는 `datasets/_db_dump_20260811/*.csv`.
 --
 --    들어낸 이름: bus_stop_passenger_stats · street_trash_bins ·
 --    subway_station_passenger_stats · living_population_stats · parks ·

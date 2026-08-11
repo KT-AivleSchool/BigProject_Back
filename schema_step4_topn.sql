@@ -38,7 +38,7 @@ ALTER TABLE booth_candidates
 COMMENT ON COLUMN booth_candidates.domain IS
     'STEP4 를 돌린 도메인 폴더명(예: 흡연). 재적재는 (domain, run_id) 단위로만 지운다';
 COMMENT ON COLUMN booth_candidates.run_id IS
-    '산출물 출처. runs/<id> 면 그 id, 정본(data_임시/step4_output)이면 step4_output';
+    '산출물 출처. runs/<id> 면 그 id, 정본(datasets/step4_output)이면 ''정본'' — 어느 STEP 폴더에서 왔나가 아니라 어느 실행에서 나왔나다. load_audit_data 와 같은 값이어야 조인된다';
 COMMENT ON COLUMN booth_candidates.facility_type IS
     '대상 시설. audit_rules.target_facility 와 같은 어휘를 쓴다(화면5 조회 키)';
 COMMENT ON COLUMN booth_candidates.pnu IS
@@ -46,11 +46,12 @@ COMMENT ON COLUMN booth_candidates.pnu IS
 COMMENT ON COLUMN booth_candidates.props_json IS
     'topN.geojson 속성 원본 전체. 고정 컬럼에 자리가 없는 도메인별 지표를 잃지 않기 위함';
 COMMENT ON COLUMN booth_candidates.rank IS
-    'topN.geojson 의 `순위`. **1 이 최상위**다. 화면5 는 rank=1 을 쓴다';
+    'topN.geojson 의 `순위`. **1 이 최상위**다. 다만 점수 내림차순이 아니라 MCLP 커버 기여 그리디 순이다(흡연 실측 4위 0.7793 > 1위 0.7703) — ORDER BY score DESC 로 뽑으면 다른 점이 나온다. rank=1 은 추천이지 강제가 아니다(2026-08-10): 화면4 에서 사람이 고른 후보를 화면5 가 쓴다';
 COMMENT ON COLUMN booth_candidates.land_id IS
     '후보점이 놓인 필지(candidate_lands.id). 공간조인으로 유도한다 — PNU 로는 조인이 안 된다. 매칭 실패 시 NULL';
 
--- 화면5 가 "이 도메인의 1순위" 를 뽑는 경로. rank 는 NULL 이 뒤로 가야 한다.
+-- `/simulations/candidates` 가 이 도메인의 후보를 **순위대로 나열**하는 경로
+-- (1순위 하나를 뽑는 게 아니다 — 고르는 건 사람이다). rank 는 NULL 이 뒤로 가야 한다.
 CREATE INDEX IF NOT EXISTS idx_booth_candidates_domain_rank
     ON booth_candidates (domain, rank NULLS LAST);
 
