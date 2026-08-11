@@ -15,17 +15,35 @@
 즉 96.8% 를 회수하면서 「그 run 이 무슨 값을 냈나」는 그대로 읽힌다. 폴더째 지우면
 `status.json` 이 사라져 프런트 폴링이 404 가 되고, 계약 3절이 옛 run 에 대해 거짓이 된다.
 
-무엇을 안 지우나 — **셋 다 만족해야 지운다.**
-  ① 최근 N개(기본 5)에 안 든다
+무엇을 안 지우나 — **둘 다 만족해야 지운다.**
+  ① 최근 N개(기본 100)에 안 든다
   ② 상태가 `queued`·`running`·`awaiting_hitl` 이 아니다 — 돌고 있거나 사람을 기다리는
      run 을 건드리면 그 run 이 죽는다
-  ③ `booth_candidates.run_id` 가 참조하지 않는다 — DB 에 살아 있는 후보점의 **출처**다.
-     지금은 토론이 DB 만 읽지만, POI 라벨을 `runs/<id>/step2/clean_report.json` 에서
-     읽게 되면(계획된 (나)안) 이 폴더가 곧 토론의 근거가 된다. 그때 이 조건이 없으면
-     **이미 한 토론의 근거가 조용히 사라진다.**
 
-🔴 ③ 을 못 확인하면(DB 접속 실패 등) **아무것도 안 지운다.** 보호 목록 없이 지우는 건
-   보호가 없는 것과 같다. 안 지우는 쪽은 디스크만 쓰지만, 잘못 지우는 쪽은 되돌릴 수 없다.
+🔴 **조건 ③ 을 없앴다 (2026-08-11, 사람 결정). 왜 없앴는지를 적어둔다 — 안 적으면
+   다음 사람이 「빠진 보호」로 읽고 되살린다.**
+
+   있던 조건은 「`booth_candidates.run_id` 가 참조하면 안 지운다」였고, 근거는
+   "DB 에 살아 있는 후보점의 출처이므로 그 폴더가 곧 토론의 근거다" 였다.
+   근거 자체는 지금도 참이다 — `poi_context` 는 `runs/<id>/step2/*.gpkg` 를 읽는다.
+   틀린 건 **이 조건이 상한을 안 갖는다**는 점이다:
+
+     · 같은 날 fixture 도 적재하게 됐다(`_proc_load_topn` 주석). 적재한 run 은 전부
+       참조되므로 ③ 이 살아 있으면 **적재한 run 은 하나도 안 지워진다** — 정리기가
+       사실상 꺼진다.
+     · 반대로 **적재도 토론도 안 한 버려진 run**(가치가 가장 낮다)은 ③ 에 안 걸려
+       먼저 지워진다. 실패 방향이 뒤집혀 있다.
+     · 「토론을 한 번 했으니 이 폴더는 계속 필요하다」도 성립하지 않는다. 실측하면
+       `run_id='정본'` 의 후보점 20개 중 실제로 토론된 건 3개(rank 6·2·1)이고,
+       그 셋은 **하루 넘게 벌어진 다른 시점**에 각각 골라졌다(08-10 05:56 · 07:17 ·
+       08-11 02:41). 「토론했다」와 「더 안 쓴다」는 서로 다른 문장이다.
+
+   그래서 상한이 있는 조건 하나(`keep`)만 남긴다. 디스크는 `run 1개 39MB × keep`
+   으로 묶이고, 값이 필요하면 `keep` 을 올린다 — 조절 지점이 하나다.
+   토론이 이미 쓴 근거는 폴더가 아니라 `result_json.basis` 에 **본문으로** 박혀 있다
+   (`candidate_context.basis_snapshot`). 참조는 대상이 사라지면 같이 죽지만 본문은 남는다.
+   ⚠ 아직 안 한 토론의 POI 는 gpkg 가 지워지면 빈다 — `poi_context` 가 그 자리에
+   「정리(prune)됐거나 만들어지지 않았다」를 `skipped` 로 남긴다. 조용히 빠지지 않는다.
 
 지운 사실은 `status.json` 의 `pruned` 에 남긴다 — 산출물이 없어졌는데 왜 없어졌는지가
 어디에도 없으면 「파이프라인이 안 만들었다」로 읽힌다(원칙 4).
@@ -64,7 +82,10 @@ def _env_int(name: str, default: int) -> int:
 
 
 def keep_count() -> int:
-    return _env_int("OMNISITE_RUNS_KEEP", 5)
+    # 🔴 5 → 100 (2026-08-11, 사람 결정). 조건 ③ 을 뺀 대신 여기 하나로 받는다.
+    #    상한은 `run 1개 39MB × 100 ≒ 3.9GB` 다 — 작지 않다. 줄이려면 이 값을
+    #    내리는 게 유일한 손잡이다(`OMNISITE_RUNS_KEEP`).
+    return _env_int("OMNISITE_RUNS_KEEP", 100)
 
 
 def prune_on_boot() -> bool:
@@ -81,23 +102,7 @@ def _all_runs() -> list[str]:
     return sorted(p.name for p in R.RUNS_ROOT.glob("r_*") if p.is_dir())
 
 
-async def referenced_run_ids() -> set[str]:
-    """DB 에 살아 있는 후보점이 출처로 가리키는 run_id.
-
-    🔴 실패하면 `raise` 한다. 호출자가 「빈 집합 = 보호할 게 없다」로 읽으면
-       DB 가 잠깐 안 뜬 순간에 전부 지워진다.
-    """
-    from sqlalchemy import select
-
-    from app.db.models.simulation import Parcel
-    from app.db.session import AsyncSessionLocal
-
-    async with AsyncSessionLocal() as db:
-        rows = await db.execute(select(Parcel.run_id).distinct())
-        return {r for (r,) in rows if r}
-
-
-def plan(keep: int, protected: set[str]) -> list[dict]:
+def plan(keep: int) -> list[dict]:
     """지울 계획. **아무것도 안 지운다.**
 
     돌려주는 항목: `{run_id, action, reason, files, bytes}`.
@@ -116,8 +121,6 @@ def plan(keep: int, protected: set[str]) -> list[dict]:
 
         if run_id in recent:
             reason = f"최근 {keep}개"
-        elif run_id in protected:
-            reason = "booth_candidates 가 출처로 참조 중"
         else:
             doc = R.read_status(run_id) or {}
             st = doc.get("status")
@@ -134,8 +137,13 @@ def plan(keep: int, protected: set[str]) -> list[dict]:
     return out
 
 
-def apply(items: list[dict]) -> dict:
-    """계획 중 `prune` 항목을 실제로 지우고 `status.json` 에 남긴다."""
+def apply(items: list[dict], *, keep: int) -> dict:
+    """계획 중 `prune` 항목을 실제로 지우고 `status.json` 에 남긴다.
+
+    🔴 `keep` 은 **계획을 만든 그 값**을 받는다. 예전엔 여기서 `keep_count()` 를 다시
+       읽었는데, `--keep 5` 로 계획을 세워도 기록엔 환경 기본값(100)이 적혔다 —
+       무엇을 기준으로 지웠는지가 산출물에서 거짓이 된다(원칙 4).
+    """
     removed_files = removed_bytes = 0
     for it in (i for i in items if i["action"] == "prune"):
         run_id = it["run_id"]
@@ -158,7 +166,7 @@ def apply(items: list[dict]) -> dict:
         prev = doc.get("pruned") or {}
         doc["pruned"] = {
             "at": datetime.now().isoformat(timespec="seconds"),
-            "policy": f"keep_recent:{keep_count()}",
+            "policy": f"keep_recent:{keep}",
             "removed": (prev.get("removed") or []) + gone,
         }
         # 지운 파일을 가리키던 산출물 URL 을 null 로 되돌린다. 안 하면 status 는
@@ -171,14 +179,18 @@ def apply(items: list[dict]) -> dict:
 
 
 async def prune_now(*, keep: int | None = None, dry_run: bool = True) -> dict:
-    """계획 + (선택) 실행. 부팅 훅과 CLI 가 **같은 함수**를 쓴다."""
+    """계획 + (선택) 실행. 부팅 훅과 CLI 가 **같은 함수**를 쓴다.
+
+    🔴 DB 를 안 본다 (2026-08-11). 예전엔 `booth_candidates.run_id` 를 조회해
+       보호 목록을 만들었다 — 그 조건을 없앤 경위는 모듈 첫머리에 있다.
+       부작용으로 **DB 가 안 떠 있어도 정리가 돈다.** async 는 호출부(lifespan)와
+       모양을 맞추려 남긴다.
+    """
     keep = keep_count() if keep is None else keep
-    protected = await referenced_run_ids()
-    items = plan(keep, protected)
-    result = {"keep": keep, "protected": sorted(protected), "items": items,
-              "applied": None}
+    items = plan(keep)
+    result = {"keep": keep, "items": items, "applied": None}
     if not dry_run:
-        result["applied"] = apply(items)
+        result["applied"] = apply(items, keep=keep)
     return result
 
 
@@ -198,6 +210,6 @@ async def prune_on_boot_hook() -> None:
         return
     a = res["applied"] or {}
     logger.info("[prune] runs 정리: %d개 run · 파일 %d개 · %.1f MB 회수 "
-                "(보관 최근 %d개 · 참조 보호 %d개)",
+                "(보관 최근 %d개)",
                 a.get("runs", 0), a.get("files", 0), a.get("bytes", 0) / 2**20,
-                res["keep"], len(res["protected"]))
+                res["keep"])

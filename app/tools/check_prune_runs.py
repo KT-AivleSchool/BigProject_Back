@@ -3,9 +3,15 @@
 
     python app\\tools\\check_prune_runs.py
 
-🔴 DB 도 uvicorn 도, **진짜 `runs/` 도 안 쓴다.** 임시 폴더를 `RUNS_ROOT` 로 갈아끼우고
-   보호 목록(`referenced_run_ids`)은 가짜로 넣는다 — 확인하려는 건 「어떤 조건에서
-   지우고 어떤 조건에서 안 지우는가」이지 이 컴퓨터에 뭐가 쌓여 있는지가 아니다.
+🔴 DB 도 uvicorn 도, **진짜 `runs/` 도 안 쓴다.** 임시 폴더를 `RUNS_ROOT` 로 갈아끼운다 —
+   확인하려는 건 「어떤 조건에서 지우고 어떤 조건에서 안 지우는가」이지 이 컴퓨터에
+   뭐가 쌓여 있는지가 아니다.
+
+🔴 2026-08-11 — 조건 ③(`booth_candidates` 참조 보호)이 **없어졌다.** 그래서 여기서
+   「참조 중이면 남긴다」를 확인하던 항목을 지우는 대신 **뒤집어서** 확인한다:
+   `referenced_run_ids` 가 사라졌는가 · `prune_now` 가 DB 를 안 보는가.
+   없어진 동작을 대조기가 계속 요구하면 대조기가 영원히 빨간불이고, 조용히 지우면
+   「원래 그런 조건은 없었다」가 된다 — 없앤 사실이 어딘가엔 남아야 한다.
 
 여기서 확인하는 것 중 **제일 중요한 건 삭제가 아니라 비삭제**다. 잘못 지운 건
 되돌릴 수 없고, 안 지운 건 디스크만 쓴다.
@@ -87,18 +93,16 @@ R.RUNS_ROOT = TMP
 try:
     # ══════════════════════════════════════════════════════════
     print("--- 1) 계획 — 왜 남기는지까지 말하는가")
-    # 003 은 사람을 기다리는 중 · 002 는 DB 후보점이 출처로 참조 중.
+    # 003 은 사람을 기다리는 중. 002 는 예전 조건 ③ 이면 보호됐을 자리다.
     build(live={"r_20260101_003": "awaiting_hitl"})
-    protected = {"r_20260101_002"}
-    items = P.plan(5, protected)
+    items = P.plan(5)
     by = {i["run_id"]: i for i in items}
 
     chk("run 8개 전부 계획에 나온다", len(items) == 8, f"({len(items)})")
     chk("001 은 지운다", by["r_20260101_001"]["action"] == "prune")
-    chk("002 는 참조 중이라 남긴다",
-        by["r_20260101_002"]["action"] == "keep"
-        and "booth_candidates" in by["r_20260101_002"]["reason"],
-        f"({by['r_20260101_002']['reason']})")
+    chk("002 도 지운다 — DB 참조는 더 이상 보호가 아니다",
+        by["r_20260101_002"]["action"] == "prune",
+        f"({by['r_20260101_002']['action']}/{by['r_20260101_002']['reason']})")
     chk("003 은 사람을 기다리는 중이라 남긴다",
         by["r_20260101_003"]["action"] == "keep"
         and "awaiting_hitl" in by["r_20260101_003"]["reason"],
@@ -114,28 +118,31 @@ try:
 
     # ══════════════════════════════════════════════════════════
     print("--- 2) 실행 — 폴더째 지우지 않는다")
-    res = P.apply(items)
+    res = P.apply(items, keep=5)
     left = files_of("r_20260101_001")
-    chk("지운 run 1개", res["runs"] == 1, f"({res['runs']})")
-    chk("지운 파일 2개", res["files"] == 2, f"({res['files']})")
-    chk("회수 바이트가 실제 크기와 같다", res["bytes"] == 1500, f"({res['bytes']})")
+    chk("지운 run 2개", res["runs"] == 2, f"({res['runs']})")
+    chk("지운 파일 4개", res["files"] == 4, f"({res['files']})")
+    chk("회수 바이트가 실제 크기와 같다", res["bytes"] == 3000, f"({res['bytes']})")
     chk("gpkg·parquet 는 사라졌다",
         not any(f.endswith(KILL) for f in left))
     chk("json·geojson·csv·log 는 남았다",
         {"status.json", "run.log", f"step2/{PRE}_clean_report.json",
          f"step4/{PRE}_exclusion.geojson",
          f"step4/{PRE}_topN_min.csv"} <= left, f"({sorted(left)})")
-    chk("보호된 run 은 손대지 않았다",
-        all(any(f.endswith(KILL) for f in files_of(r)) for r in RUNS[1:]))
+    chk("남긴 run 은 손대지 않았다",
+        all(any(f.endswith(KILL) for f in files_of(r)) for r in RUNS[2:]))
 
     # ══════════════════════════════════════════════════════════
     print("--- 3) 기록 — 없어진 이유가 산출물에 남는가")
     doc = json.loads((R.run_dir("r_20260101_001") / "status.json").read_text("utf-8"))
     pr = doc.get("pruned") or {}
     chk("status.json 에 pruned 가 있다", bool(pr))
-    chk("언제·어떤 정책으로 지웠는지 있다",
+    # 🔴 여기서 5 를 요구하는 건 우연이 아니다. 환경 기본값은 100 이고 계획은 5 로
+    #    세웠다 — 기록이 `keep_recent:100` 이면 apply() 가 실제 쓴 값이 아니라
+    #    keep_count() 를 다시 읽고 있다는 뜻이다(무엇을 기준으로 지웠는지가 거짓).
+    chk("언제·어떤 정책으로 지웠는지 있다 (계획에 쓴 keep 그대로)",
         bool(pr.get("at")) and pr.get("policy") == "keep_recent:5",
-        f"({pr.get('policy')})")
+        f"({pr.get('policy')} · 환경 기본값 {P.keep_count()})")
     chk("지운 파일 목록이 상대경로+크기로 남는다",
         len(pr.get("removed") or []) == 2
         and all(set(x) == {"path", "bytes"} for x in pr["removed"]),
@@ -147,43 +154,40 @@ try:
         isinstance(doc["artifacts"]["clean_report"], str))
 
     # ══════════════════════════════════════════════════════════
-    print("--- 4) 안 지키면 멈춘다")
-    # ⓐ 보호 목록을 못 얻으면 **아무것도** 안 지운다. 빈 집합으로 넘어가면
-    #    DB 가 잠깐 안 뜬 순간에 전부 지워진다.
-    build()
-    orig_ref = P.referenced_run_ids
-
-    async def _boom():
-        raise RuntimeError("DB 접속 실패(가짜)")
-
-    P.referenced_run_ids = _boom
-    raised = False
-    try:
-        run(P.prune_now(dry_run=False))
-    except RuntimeError:
-        raised = True
-    chk("DB 를 못 읽으면 raise 한다", raised)
-    chk("그때 아무 파일도 안 지워졌다",
-        all(any(f.endswith(KILL) for f in files_of(r)) for r in RUNS))
+    print("--- 4) 없어진 조건 ③ · 부팅 훅")
+    # ⓐ 조건 ③ 이 정말 없어졌는가. 함수가 남아 있으면 누군가 다시 배선한다.
+    chk("referenced_run_ids 가 없다", not hasattr(P, "referenced_run_ids"))
+    chk("prune_now 결과에 protected 키가 없다",
+        "protected" not in run(P.prune_now(dry_run=True)))
+    chk("run_pruner 소스에 booth_candidates 조회가 없다",
+        "select(Parcel.run_id)" not in Path(P.__file__).read_text("utf-8"))
 
     # ⓑ 부팅 훅은 **어떤 실패도 기동을 막지 않는다.** 안 지우면 디스크만 쓰지만
     #    기동이 막히면 프런트가 통째로 멈춘다.
+    build()
+    orig_plan = P.plan
+
+    def _boom(keep):
+        raise RuntimeError("계획 실패(가짜)")
+
+    P.plan = _boom
     hook_raised = False
     try:
         run(P.prune_on_boot_hook())
     except Exception:
         hook_raised = True
     chk("부팅 훅은 실패해도 기동을 안 막는다", not hook_raised)
-    chk("그때도 아무 파일도 안 지워졌다",
+    chk("그때 아무 파일도 안 지워졌다",
         all(any(f.endswith(KILL) for f in files_of(r)) for r in RUNS))
-    P.referenced_run_ids = orig_ref
+    P.plan = orig_plan
 
     # ══════════════════════════════════════════════════════════
     print("--- 5) 설정값 — 조용히 기본값으로 넘어가지 않는가")
     old = dict(os.environ)
     try:
         os.environ.pop("OMNISITE_RUNS_KEEP", None)
-        chk("기본 보관 개수는 5", P.keep_count() == 5)
+        # 🔴 5 → 100 (2026-08-11). 조건 ③ 을 뺀 대신 상한을 여기 하나로 받는다.
+        chk("기본 보관 개수는 100", P.keep_count() == 100, f"({P.keep_count()})")
         os.environ["OMNISITE_RUNS_KEEP"] = "10"
         chk("env 로 바꿀 수 있다", P.keep_count() == 10)
         for bad, why in (("다섯", "정수가 아니면"), ("0", "0 이면"), ("-1", "음수면")):
@@ -210,14 +214,14 @@ try:
     # status.json 이 없어도 파일은 지운다. 기록할 데가 없다고 안 지우면
     # 그 run 은 영원히 안 줄어든다 — 대신 로그로 남긴다(모듈 apply() 참조).
     build(no_status=("r_20260101_001",))
-    P.apply(P.plan(5, set()))
+    P.apply(P.plan(5), keep=5)
     chk("status 없는 run 도 파일은 지운다",
         not any(f.endswith(KILL) for f in files_of("r_20260101_001")))
     chk("status.json 을 새로 만들지는 않는다",
         "status.json" not in files_of("r_20260101_001"))
 
     # 두 번째 정리는 지울 게 없다. 「지울 파일 없음」으로 남아야 한다.
-    items2 = P.plan(5, set())
+    items2 = P.plan(5)
     it1 = next(i for i in items2 if i["run_id"] == "r_20260101_002")
     chk("이미 정리된 run 은 지울 파일 없음으로 남긴다",
         it1["action"] == "keep" and it1["reason"] == "지울 파일 없음",
@@ -226,9 +230,9 @@ try:
     # 기록은 덮어쓰지 않고 쌓인다 — 2차 정리에서 1차 기록이 사라지면
     # 「왜 없어졌나」의 절반이 없어진다.
     build()
-    P.apply(P.plan(5, set()))
+    P.apply(P.plan(5), keep=5)
     (R.run_dir("r_20260101_001") / "step3" / f"{PRE}_후보_지적도필지.gpkg").write_bytes(b"y" * 7)
-    P.apply(P.plan(5, set()))
+    P.apply(P.plan(5), keep=5)
     doc = json.loads((R.run_dir("r_20260101_001") / "status.json").read_text("utf-8"))
     chk("2차 정리 기록은 1차에 덧붙는다",
         len(doc["pruned"]["removed"]) == 3, f"({len(doc['pruned']['removed'])})")
@@ -236,9 +240,9 @@ try:
     # 빈 runs/ 에서도 안 터진다.
     shutil.rmtree(TMP, ignore_errors=True)
     TMP.mkdir(parents=True)
-    chk("빈 runs/ 에서 계획은 빈 목록", P.plan(5, set()) == [])
+    chk("빈 runs/ 에서 계획은 빈 목록", P.plan(5) == [])
     shutil.rmtree(TMP, ignore_errors=True)
-    chk("runs/ 자체가 없어도 안 터진다", P.plan(5, set()) == [])
+    chk("runs/ 자체가 없어도 안 터진다", P.plan(5) == [])
 
 finally:
     R.RUNS_ROOT = _REAL_ROOT
