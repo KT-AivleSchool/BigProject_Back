@@ -23,32 +23,32 @@ BigProject_Planning/
 # 폴더는 유지, 내부 파일은 제외
 
 # 데이터들
-data_임시/*/data/*
-!data_임시/*/data/.gitkeep
-data_임시/*/fixture/*
-!data_임시/*/fixture/.gitkeep
-data_임시/*/law/*
-!data_임시/*/law/.gitkeep
+datasets/*/data/*
+!datasets/*/data/.gitkeep
+datasets/*/fixture/*
+!datasets/*/fixture/.gitkeep
+datasets/*/law/*
+!datasets/*/law/.gitkeep
 *.zip
 
 # V4 대조 데이터 (데이터팀 전달본 · issue #198). 원본 60MB+ 라 저장소에 올리지 않는다.
-data_임시/_v4/
+datasets/_v4/
 
 # 공공 데이터, 캐시
-data_임시/region_data/*
-!data_임시/region_data/.gitkeep
-data_임시/search_cache/*
-!data_임시/search_cache/.gitkeep
+datasets/region_data/*
+!datasets/region_data/.gitkeep
+datasets/search_cache/*
+!datasets/search_cache/.gitkeep
 
 # 산출물
-data_임시/step1_output/*
-!data_임시/step1_output/.gitkeep
-data_임시/step2_output/*
-!data_임시/step2_output/.gitkeep
-data_임시/step3_output/*
-!data_임시/step3_output/.gitkeep
-data_임시/step4_output/*
-!data_임시/step4_output/.gitkeep
+datasets/step1_output/*
+!datasets/step1_output/.gitkeep
+datasets/step2_output/*
+!datasets/step2_output/.gitkeep
+datasets/step3_output/*
+!datasets/step3_output/.gitkeep
+datasets/step4_output/*
+!datasets/step4_output/.gitkeep
 
 # Local Dev Tests
 tests/test_geocoder.py
@@ -97,4 +97,4 @@ uvicorn_*.log
 #    이 CSV 가 유일한 사본이다. 추적하지 않는 이유는 「없어도 되니까」가 아니라
 #    **파이프라인이 안 읽는 자료라 리포에 둘 것이 아니기 때문**이다 —
 #    지우기 전에 Teams/감리팀 공유로 옮길 것.
-data_임시/_db_dump_*/
+datasets/_db_dump_*/

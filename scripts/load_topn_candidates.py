@@ -12,7 +12,7 @@
 
 입력 우선순위(먼저 찾는 것을 쓴다):
   1) `--run <run_id>` → runs/<run_id>/step4/<도메인>_topN.geojson
-  2) 정본            → data_임시/step4_output/<도메인>_topN.geojson
+  2) 정본            → datasets/step4_output/<도메인>_topN.geojson
 
 `land_id`(후보점이 놓인 필지)는 **공간조인으로 유도**한다. `candidate_lands` 에는
 PNU 컬럼이 없어 코드 조인이 불가능하다. 매칭이 안 되면 NULL 로 두고 **몇 건이
@@ -101,7 +101,7 @@ def resolve_source(domain: str, run_id: str | None) -> tuple[Path, str]:
             raise SystemExit(f"🔴 {p} 가 없다. run_id 를 확인할 것.")
         return p, run_id
 
-    p = ROOT / "data_임시" / "step4_output" / name
+    p = ROOT / "datasets" / "step4_output" / name
     if not p.exists():
         raise SystemExit(
             f"🔴 {p} 가 없다. STEP4 를 먼저 돌리거나 --run <run_id> 로 지정할 것."
@@ -120,7 +120,7 @@ def resolve_facility(domain: str, run_id: str | None) -> str:
     """
     name = f"{domain_prefix(domain)}_audit_result_reviewed.json"
     p = (ROOT / "runs" / run_id / "step1" / name if run_id
-         else ROOT / "data_임시" / "step1_output" / name)
+         else ROOT / "datasets" / "step1_output" / name)
     if not p.exists():
         raise SystemExit(
             f"🔴 {p} 가 없다. 시설명을 추측하지 않는다 — STEP1 확정본이 필요하다."

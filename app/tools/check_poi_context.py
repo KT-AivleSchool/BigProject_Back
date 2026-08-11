@@ -3,7 +3,7 @@
 
     python app\\tools\\check_poi_context.py
 
-🔴 DB 도 uvicorn 도, 진짜 `data_임시/`·`runs/` 도 안 쓴다. 임시 폴더에 `clean_report.json`
+🔴 DB 도 uvicorn 도, 진짜 `datasets/`·`runs/` 도 안 쓴다. 임시 폴더에 `clean_report.json`
    과 `.gpkg` 를 손으로 깔고 `STEP2_OUTPUT_DIR`·`RUNS_ROOT` 를 갈아끼운다 — 확인하려는 건
    「이 컴퓨터에 무엇이 있나」가 아니라 「어떤 입력에 어떤 말을 하는가」다.
 

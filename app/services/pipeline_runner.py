@@ -440,7 +440,7 @@ def _load_fixture(domain: str) -> tuple[dict, Path]:
 #    (2026-08-10 실측). 즉 "안 주면 알아서 되겠지" 가 성립하지 않는 자리다.
 #    그래서 러너가 **명시적으로 선언하고**, 그 선언을 `runs/<id>/params.json` 에
 #    적어 산출물에서 되짚을 수 있게 한다(원칙 4).
-#    출처: `data_임시/흡연_FIX/기준값.json` 의 `조건` (2026-08-03 고정 기준선).
+#    출처: `datasets/흡연_FIX/기준값.json` 의 `조건` (2026-08-03 고정 기준선).
 _FULL_COND: dict = {
     "alpha": 0.3,
     "decay": {"func": "gaussian", "sigma_ratio": 1 / 3},

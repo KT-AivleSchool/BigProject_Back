@@ -7,8 +7,8 @@
 경로 조작도 열려 있었다(`os.path.join(UPLOAD_DIR, file.filename)`).
 
 지금 규약
-  조례   → `data_임시/<도메인>/law/`   ... `load_ordinance()` 가 읽는 바로 그 폴더
-  데이터 → `data_임시/<도메인>/data/`  ... `profile_folder()` 가 읽는 바로 그 폴더
+  조례   → `datasets/<도메인>/law/`   ... `load_ordinance()` 가 읽는 바로 그 폴더
+  데이터 → `datasets/<도메인>/data/`  ... `profile_folder()` 가 읽는 바로 그 폴더
   **도메인은 필수 인자다.** 도메인이 없으면 어느 파이프라인의 입력인지 정할 수 없다.
   "엔진은 그대로, 데이터만 바꾼다" 는 데이터가 도메인별로 갈려 있어야 성립한다.
 
@@ -155,7 +155,7 @@ def _dirs(domain: str, create: bool = False) -> dict:
 
 
 def _known_domains() -> List[str]:
-    """`data_임시/` 아래 실제 도메인 폴더(= data/ 또는 law/ 를 가진 것)."""
+    """`datasets/` 아래 실제 도메인 폴더(= data/ 또는 law/ 를 가진 것)."""
     root = Path(str(DOMAIN_ROOT))
     if not root.is_dir():
         return []
@@ -385,7 +385,7 @@ async def upload_regulation(
     create_domain: bool = Form(False, description="도메인 폴더가 없으면 만든다"),
     ingest: bool = Form(True, description="벡터 DB(statutes_collection) 적재 여부"),
 ):
-    """조례 문서 다중 업로드 → `data_임시/<도메인>/law/` 저장 + 벡터 DB 적재.
+    """조례 문서 다중 업로드 → `datasets/<도메인>/law/` 저장 + 벡터 DB 적재.
 
     한 번에 여러 개를 올릴 수 있고 기존 파일도 지워지지 않는다.
     STEP1 감리는 이 폴더의 텍스트를 **전부 합쳐서** 조례 근거로 쓴다.
@@ -626,7 +626,7 @@ async def upload_data(
     create_domain: bool = Form(False),
     redis: aioredis.Redis = Depends(get_redis),
 ):
-    """감리(STEP1)에 쓸 데이터 파일 다중 업로드 → `data_임시/<도메인>/data/`.
+    """감리(STEP1)에 쓸 데이터 파일 다중 업로드 → `datasets/<도메인>/data/`.
 
     🔴 **dataset_id 는 파일명 가나다순으로 다시 매겨진다.** 파일을 하나 끼워 넣으면
        뒤 번호가 전부 밀리고, 이미 돌린 `<도메인>_audit_result_reviewed.json` ·

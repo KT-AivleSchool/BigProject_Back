@@ -6,7 +6,7 @@
 
 입력 우선순위(먼저 찾는 것을 쓴다):
   1) `--run <run_id>` 를 주면  runs/<run_id>/step1/<도메인>_audit_result_reviewed.json
-  2) 정본                       data_임시/step1_output/<도메인>_audit_result_reviewed.json
+  2) 정본                       datasets/step1_output/<도메인>_audit_result_reviewed.json
 
 `reviewed` 를 쓰는 이유: `audit_result.json` 은 LLM 제안값이고 `reviewed` 는
 HITL 확정분이 반영된 것이다. 확정 전 값을 DB 에 넣으면 화면5가
@@ -42,7 +42,7 @@ from app.db.models.audit import AuditRule  # noqa: E402
 from app.db.session import AsyncSessionLocal  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-# 정본(`runs/` 밖 `data_임시/stepN_output/`) 산출물을 가리키는 run_id.
+# 정본(`runs/` 밖 `datasets/stepN_output/`) 산출물을 가리키는 run_id.
 #
 # 🔴 예전엔 `"step1_output"` 이었다 — **STEP 폴더 이름**을 run_id 에 넣은 것이다.
 #    `load_topn_candidates.py` 는 같은 자리에 `"step4_output"` 을 넣었고, 그래서
@@ -63,7 +63,7 @@ def resolve_source(domain: str, run_id: str | None) -> tuple[Path, str]:
             raise SystemExit(f"🔴 {p} 가 없다. run_id 를 확인할 것.")
         return p, run_id
 
-    p = ROOT / "data_임시" / "step1_output" / name
+    p = ROOT / "datasets" / "step1_output" / name
     if not p.exists():
         raise SystemExit(
             f"🔴 {p} 가 없다. STEP1 을 먼저 돌리거나 --run <run_id> 로 지정할 것."

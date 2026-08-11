@@ -23,7 +23,7 @@
      **영원히 안 나오는데 매 토론마다 조회한다.**
 
 여기서는 **그 후보점의 run 이 낸 STEP2 산출물**을 센다. 경로는 후보점 행에서 온다 —
-`booth_candidates.run_id` 가 `'정본'` 이면 `data_임시/step2_output/`, `r_…` 이면
+`booth_candidates.run_id` 가 `'정본'` 이면 `datasets/step2_output/`, `r_…` 이면
 `runs/<run_id>/step2/` 다. 프리픽스는 `booth_candidates.domain`.
 요청으로 안 받는다: 파라미터로 받으면 흡연 후보점에 재활용 run 의 주변 문맥을 넘길 수 있다.
 

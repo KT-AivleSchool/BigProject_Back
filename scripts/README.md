@@ -8,7 +8,7 @@ STEP2 정제 산출물·경계 원본을 PostGIS(`omnisite`)에 적재하는 멱
   예전 기본값이 `postgres:postgres` 였고 2026-08-07 로컬 DB 침해가 정확히 그 조합이었다.
 - 가상환경에 `geopandas`, `pyogrio`, `psycopg`, `pandas`, `python-dotenv` 설치
 - **원본 데이터 배치** (아래 경로는 `.gitignore` 대상 → 각자 Teams/감리팀에서 받아 배치):
-  - `data_임시/region_data/` — `BND_{SIDO,SIGUNGU,ADM_DONG}_PG.shp`, `행정동_크로스워크.csv`
+  - `datasets/region_data/` — `BND_{SIDO,SIGUNGU,ADM_DONG}_PG.shp`, `행정동_크로스워크.csv`
 
 ## 실행 순서
 ```bash
@@ -27,7 +27,7 @@ python scripts/load_region_boundaries.py --commit    # DDL(schema_region_boundar
 8개를 DB 에서 제거했기 때문이다 — 프리셋 원본은 이제 DB 가 아니라 **디스크**에 둔다
 (이슈 #215 계층 구분: 1계층 전국 경계·크로스워크 / 2계층 지역단위 지적·공유지 / 산출물).
 파이프라인은 그 테이블들을 읽은 적이 없다(`app/services/poi_context.py` 가 STEP2 산출물
-파일을 읽는다). 삭제 직전 덤프는 `data_임시/_db_dump_20260811/*.csv` 에 있다.
+파일을 읽는다). 삭제 직전 덤프는 `datasets/_db_dump_20260811/*.csv` 에 있다.
 
 ## 좌표계 규약
 - 저장: `geom` = EPSG:4326(표출) / `geom_5186` = `GENERATED ALWAYS AS ST_Transform(geom,5186) STORED`(연산)

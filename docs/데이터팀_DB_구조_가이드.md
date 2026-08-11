@@ -57,12 +57,12 @@ omnisite-redis-cache (Redis, AOF 영속화)
 
 ### 2-4. 원본 데이터 (`.gitignore` — 로컬 전용, 각자 배치)
 ```
-data_임시/region_data/
+datasets/region_data/
   BND_{SIDO,SIGUNGU,ADM_DONG}_PG.shp   경계 3종 (EPSG:5186)
   행정동_크로스워크.csv                 코드 매핑 3,555행
   LSMD_CONT_LDREG_11170_202607.shp     연속지적도 44,459필지 (용산)
   국유부동산_위경도_v2.csv              공유지 2,486건 (좌표 포함)
-data_임시/step2_output/{흡연_1차,재활용_1차}/*.gpkg   STEP2 정제본 (EPSG:4326)
+datasets/step2_output/{흡연_1차,재활용_1차}/*.gpkg   STEP2 정제본 (EPSG:4326)
 {도메인}/law/*.pdf,*.txt                조례 원본 (RAG용)
 ```
 

@@ -603,14 +603,14 @@ Postgres **`run_records`** 에 **사본으로** 적는다(4계층 중 ③).
     한꺼번에** 도착한다 — 진행률이 거짓말을 한다(2026-08-04 실측).
 - 서버 파이썬과 파이프라인 파이썬이 다르면 `OMNISITE_PYTHON` 으로 후자를 지정한다.
   파이프라인은 geopandas·shapely·pyarrow 를 요구한다.
-- `data_임시/흡연/` 에 쓰지 않는다. 회귀 픽스처가 거기 걸려 있다.
-- 🔴 **`data_임시/<도메인>/fixture/profiles.json` 은 `fixture` 모드의 첫 칸(STEP2)이
+- `datasets/흡연/` 에 쓰지 않는다. 회귀 픽스처가 거기 걸려 있다.
+- 🔴 **`datasets/<도메인>/fixture/profiles.json` 은 `fixture` 모드의 첫 칸(STEP2)이
   요구하는 입력이다.** `.gitignore` 대상이라 clone 에 안 들어오고, 이름을 바꾸면
   `fixture` 모드가 **10초 만에 `FileNotFoundError`** 로 죽는다(2026-08-10 `r_20260810_003`
   실측 — 누군가 `fix_profiles.json` 으로 바꿔놓았다. 두 파일은 sha256 이 같았다).
   `gam2_audit_judgment_test.build_fixtures()` 는 없으면 만들어 주지만 `gam2_clean_data.py`
   는 안 만든다 — **STEP1 을 안 도는 fixture 모드에서만 드러난다.**
-  없으면 `python app\services\gam2_profile.py data_임시\<도메인>` 로 다시 만든다.
+  없으면 `python app\services\gam2_profile.py datasets\<도메인>` 로 다시 만든다.
 - 작업 후 `python app\tools\check_fixture.py 흡연` 이 **57/57** 이어야 한다.
   (스크립트는 저장소 루트가 아니라 `app/tools/` 에 있다. 2026-08-05 에 `검증용/` 에서
   옮겼다 — 그 폴더가 `.gitignore` 라 clone 에는 기준값만 있고 대조기가 없었다.)
@@ -982,7 +982,7 @@ API 프로세스가 할 일이 아니다. 못 한 건 못 했다고 내보낸다
 
 ### 7-7. ✅ 해소 — 배제반경 캐시 제거 · 배제는 전부 사람이 본다 (2026-08-10)
 
-**있던 문제.** `apply_radius_answer` 가 run 폴더 **밖**(`data_임시/search_cache/
+**있던 문제.** `apply_radius_answer` 가 run 폴더 **밖**(`datasets/search_cache/
 <prefix>_exclusion_radius_cache.json`, 키 = `facility_type`)에 확정값을 적었고,
 `enrich_hitl_flags` 가 다음 실행에서 그 값을 **묻지 않고 채웠다**(`from_cache`).
 같은 함수에 두 번째 자동 확정도 있었다 — 조례 텍스트에 시설유형과 반경 숫자가
@@ -1151,7 +1151,7 @@ STEP1 감리가 애초에 없었기 때문이다. 화면1 → 화면2(감리 확
 
 ```
 alpha 0.3 · decay gaussian(sigma_ratio 1/3) · scale log · spacing 20
-출처: data_임시/흡연_FIX/기준값.json 의 `조건` (2026-08-03 고정 기준선)
+출처: datasets/흡연_FIX/기준값.json 의 `조건` (2026-08-03 고정 기준선)
 ```
 
 🔴 **왜 이게 하드코딩 금지(원칙 2)에 안 걸리나** — 원칙 2 가 막는 것은 **도메인 값**
@@ -1166,7 +1166,7 @@ alpha 0.3 · decay gaussian(sigma_ratio 1/3) · scale log · spacing 20
 > 게이트에서 스레드가 끝나므로 이어받는 스레드가 `user_input`·`topn` 을 디스크에서
 > 다시 읽어야 한다 — 메모리에 들고 있으면 서버 재시작에서 사라진다.
 
-**선행 조건** — `data_임시/<도메인>/data/` 에 파일이 하나도 없으면 **400**이다.
+**선행 조건** — `datasets/<도메인>/data/` 에 파일이 하나도 없으면 **400**이다.
 빈 폴더로 STEP0 을 돌리면 빈 프로파일로 조용히 진행한다(원칙 1).
 
 ### 8-3. 단계 — **10개**다
@@ -1413,7 +1413,7 @@ GET /api/v1/simulations/candidates?domain=<도메인>[&run_id=][&limit=]
 
 앞 절까지는 *"각 칸이 따로 돈다"* 까지였다. 아래는 **끝까지 돌린 결과**다(원칙 5).
 
-입력 — `data_임시/흡연/` 의 `data/`(11개) · `law/`(3개)를 **화면1 업로드 API 로**
+입력 — `datasets/흡연/` 의 `data/`(11개) · `law/`(3개)를 **화면1 업로드 API 로**
 새 도메인 `흡연업로드` 에 넣었다. 파일을 제자리에서 쓰지 않았다.
 `user_input="용산구 흡연부스 부지 선정"` · `topn` 기본 20.
 
@@ -1471,7 +1471,7 @@ gap 6건(4/1/1) · `w_final 0.1858/0.1827/0.1975/0.0870/0.1683/0.1786` ·
 그게 바로 이 파일이 막으려는 재사용이다).
 
 `fixture` 모드도 같은 날 다시 완주시켰다 — `r_20260810_004` **71초 · 6칸 · succeeded**,
-값은 위와 동일. 단 그 전에 `data_임시/흡연/fixture/profiles.json` 이 **없어서 실패**했다
+값은 위와 동일. 단 그 전에 `datasets/흡연/fixture/profiles.json` 이 **없어서 실패**했다
 (`r_20260810_003`, STEP2 에서 10.6초 만에 `FileNotFoundError`). 5절도 함께 볼 것.
 
 ### 8-9. run_id 정렬 이후 재실측 (2026-08-10 · 6절 B안 적용 후)

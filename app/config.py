@@ -157,10 +157,10 @@ VWORLD_ENDPOINT = "https://api.vworld.kr/req/address"
 BASE_DIR = Path(__file__).resolve().parent.parent  # …/BigProject_Back
 
 # 감리(gam2) 데이터 루트 — 도메인 폴더·산출물·캐시가 모두 이 아래에 모인다.
-DATA_ROOT = Path(os.environ.get("OMNISITE_DATA_ROOT", str(BASE_DIR / "data_임시")))
+DATA_ROOT = Path(os.environ.get("OMNISITE_DATA_ROOT", str(BASE_DIR / "datasets")))
 
 # 도메인 폴더(흡연·EV·재활용)의 부모. domain_paths() 가 여기서 도메인을 찾는다.
-#   예: data_임시/흡연/{data,law,fixture}
+#   예: datasets/흡연/{data,law,fixture}
 DOMAIN_ROOT = DATA_ROOT
 
 # 공용 지역 데이터(경계 SHP 등) — 도메인 무관 공유
@@ -326,8 +326,8 @@ GEOCODE_MAX_WORKERS = int(os.environ.get("OMNISITE_GEOCODE_WORKERS", "6"))
 # ══════════════════════════════════════════════════════════════════
 # 7. 도메인 폴더 규약 (다중 도메인 — 폴더만 갈아끼우기)
 # ══════════════════════════════════════════════════════════════════
-# 각 도메인은 하나의 루트 폴더로 자기완결 (DOMAIN_ROOT = data_임시/ 아래):
-#   data_임시/<도메인>/            예: data_임시/흡연, data_임시/EV
+# 각 도메인은 하나의 루트 폴더로 자기완결 (DOMAIN_ROOT = datasets/ 아래):
+#   datasets/<도메인>/            예: datasets/흡연, datasets/EV
 #     ├── data/        원본 csv·xlsx·shp + _manifest.json (프로파일 대상)
 #     ├── law/         해당 도메인 조례 txt (real 에서 전 데이터셋 주입)
 #     └── fixture/     gam2_profile.py 산출 profiles.json (간소화 프로파일)
@@ -340,7 +340,7 @@ PROFILES_NAME = "profiles.json"
 
 # ⚠️ 행정동경계 SHP 는 도메인마다 같은 전국 경계라 '공용'으로 한 곳에만 둔다.
 #    각 도메인 data/ 에 넣지 말 것. spatial_join_admin 이 이 공용 경로를 참조.
-#    (위 3절의 ADM_DONG_SHP·SIGUNGU_SHP = data_임시/region_data/*.shp)
+#    (위 3절의 ADM_DONG_SHP·SIGUNGU_SHP = datasets/region_data/*.shp)
 COMMON_ADM_DONG_SHP = ADM_DONG_SHP
 
 
@@ -368,13 +368,13 @@ def candidate_gpkg_path(domain: str) -> str:
 
 def resolve_domain_dir(domain: str) -> str:
     """도메인 인자 → 실제 폴더 경로.
-    짧은 이름('흡연')이면 DOMAIN_ROOT(data_임시) 아래에서 찾는다.
+    짧은 이름('흡연')이면 DOMAIN_ROOT(datasets) 아래에서 찾는다.
     이미 존재하는 경로를 직접 주면 그대로 사용(하위호환·테스트).
     """
     p = Path(domain)
     if p.exists():  # 전체/상대 경로를 직접 준 경우
         return str(p)
-    return str(DOMAIN_ROOT / domain)  # data_임시/흡연
+    return str(DOMAIN_ROOT / domain)  # datasets/흡연
 
 
 def domain_paths(domain_dir: str) -> dict:

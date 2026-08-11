@@ -7,7 +7,7 @@
 - invalid 폴리곤은 ST_MakeValid + CollectionExtract(3) + ST_Multi 로 정리
 - 멱등 가드: 대상 테이블 0행일 때만 적재 (재실행 안전)
 
-원본 위치: data_임시/region_data/  (BND_*_PG.shp, 행정동_크로스워크.csv)
+원본 위치: datasets/region_data/  (BND_*_PG.shp, 행정동_크로스워크.csv)
   ※ region_data 는 .gitignore 대상 — 원본은 각자 Teams/감리팀에서 받아 배치할 것.
 
 사용:
@@ -46,7 +46,7 @@ from app.config import DB_CONNECT_TIMEOUT, settings  # noqa: E402
 
 DSN = settings.DATABASE_URL
 
-SRC = ROOT / "data_임시" / "region_data"
+SRC = ROOT / "datasets" / "region_data"
 DDL = ROOT / "schema_region_boundaries.sql"
 COMMIT = "--commit" in sys.argv
 

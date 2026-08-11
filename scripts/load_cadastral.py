@@ -8,7 +8,7 @@
 - geom(4326) + geom_5186(GENERATED), invalid 는 ST_MakeValid 처리
 - 멱등 가드: 해당 시군구코드가 이미 있으면 skip
 
-원본: data_임시/region_data/LSMD_CONT_LDREG_<시군구코드>_<YYYYMM>.shp
+원본: datasets/region_data/LSMD_CONT_LDREG_<시군구코드>_<YYYYMM>.shp
 사용:
   python scripts/load_cadastral.py            # DRY-RUN
   python scripts/load_cadastral.py --commit    # DDL + 적재
@@ -45,7 +45,7 @@ from app.config import DB_CONNECT_TIMEOUT, settings  # noqa: E402
 
 DSN = settings.DATABASE_URL
 SA_DSN = DSN.replace("postgresql://", "postgresql+psycopg://")
-SRC = ROOT / "data_임시" / "region_data"
+SRC = ROOT / "datasets" / "region_data"
 DDL = ROOT / "schema_cadastral.sql"
 COMMIT = "--commit" in sys.argv
 STAGE = "_cad_stage"
