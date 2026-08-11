@@ -6,7 +6,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.db
-    # EC2 내부(로컬 루프백) 또는 도커 네트워크 통신만 허용 (보안)
     # 🔴 2026-08-07 침해. "5432:5432" 는 0.0.0.0 바인딩이라 인터넷 전체에 열린다.
     #    비밀번호가 postgres 라 봇이 무차별 대입으로 뚫고 DB 를 DROP 했다.
     #    로컬 루프백에만 붙인다 — 앞의 127.0.0.1 을 지우지 말 것.
@@ -67,28 +66,6 @@ services:
       - 3600 1 300 100 60 10000
     volumes:
       - omnisite_redis_data:/data
-    restart: always
-
-  api:
-    container_name: omnisite-fastapi
-    build:
-      context: .
-      dockerfile: Dockerfile
-    ports:
-      # 외부에서 직접 8000에 접근해야 한다면 "0.0.0.0:8000:8000" 으로 변경해야 함 (기본 127.0.0.1 바인딩)
-      - "8000:8000"
-    environment:
-      # api 컨테이너는 도커 네트워크 내에서 'db'와 'redis' 호스트명으로 접근
-      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/omnisite
-      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
-    env_file:
-      - .env
-    volumes:
-      - ./data_임시:/code/data_임시
-      - ./runs:/code/runs
-    depends_on:
-      - db
-      - redis
     restart: always
 
 volumes:
