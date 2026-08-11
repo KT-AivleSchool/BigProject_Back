@@ -98,6 +98,26 @@ STREAM_CHUNK = 1024 * 1024  # 1MB. 279MB 짜리가 실재하므로 통째로 rea
 # Redis 키 — 도메인별 해시 1개. 필드 = 파일명, 값 = 메타 JSON.
 _REDIS_KEY = "omnisite:upload:{domain}:data"
 
+# 🔴 **TTL 을 반드시 준다**(2026-08-11). compose 가 `--maxmemory-policy volatile-lru` 라
+#    **TTL 있는 키만** evict 대상이다 — 무TTL 로 넣으면 한도에 닿는 순간 Redis 가
+#    evict 할 것을 못 찾아 **모든 쓰기를 OOM 으로 거절**한다. 그때 같이 죽는 건 이
+#    색인이 아니라 **로그인(refresh 토큰·블랙리스트·잠금 카운터)과 토론 SSE 중계**다.
+#    (CLAUDE.md 함정표 「무TTL 키가 캐시 정책을 죽인다」)
+#
+#    30일은 "이 색인이 30일치만 유효하다"는 뜻이 **아니다.** 쓸 때도 읽을 때도
+#    (`list_data` 가 항목마다 `_redis_put` 을 다시 부른다) 갱신되므로 쓰이는 동안은
+#    안 만료된다 — 길이보다 **evict 대상이 되는 것 자체**가 요점이다.
+#    잃어도 되는 값이라서 준다: **정본은 디스크**이고 `list_data` 가 매번 대조한다.
+#    다만 사라지면 `sha256`·`uploaded_at` 은 복원이 안 되므로 `None` 으로 나간다
+#    (지어내지 않는다 — 원칙 4).
+#
+#    🔴 TTL 이 없으면 **아무도 못 닿는 키가 영구히 남는다.** 도메인 폴더를 API 밖에서
+#    지우면(정리 커밋·손삭제) 색인만 남는데, `_dirs()` 가 폴더 없는 도메인에 먼저 400 을
+#    내므로 `list_data` 도 `delete_data` 도 그 키에 닿지 못한다 — 지울 코드가 없고
+#    evict 대상도 아닌 키다. 실제로 셋 있었다(`흡연_E2E`·`흡연_E2E2`·`흡연업로드`,
+#    커밋 99b9121 이 폴더를 지웠다) → 2026-08-11 수동 삭제. TTL 이 있으면 자연히 걷힌다.
+_REDIS_TTL_SEC = 30 * 24 * 3600
+
 
 # ══════════════════════════════════════════════════════════════════════
 # 공용
@@ -589,7 +609,14 @@ def _dataset_map(data_dir: str) -> dict[str, str]:
 
 
 async def _redis_put(redis: aioredis.Redis, domain: str, name: str, meta: dict) -> None:
-    await redis.hset(_REDIS_KEY.format(domain=domain), name, json.dumps(meta, ensure_ascii=False))
+    """색인 한 필드를 쓰고 **키 TTL 을 갱신한다.**
+
+    쓰기가 여기 한 곳으로 모여야 TTL 을 빠뜨릴 자리가 없다 — `hset` 을 직접 부르면
+    그 경로만 무TTL 로 남고, 그건 `volatile-lru` 밑에서 키 하나가 정책 밖에 서는 것이다.
+    """
+    key = _REDIS_KEY.format(domain=domain)
+    await redis.hset(key, name, json.dumps(meta, ensure_ascii=False))
+    await redis.expire(key, _REDIS_TTL_SEC)
 
 
 @router.post("/data")
@@ -677,7 +704,7 @@ async def upload_data(
             continue
         if m.get("dataset_id") != by_name.get(name):
             m["dataset_id"] = by_name.get(name)
-            await redis.hset(key, name, json.dumps(m, ensure_ascii=False))
+            await _redis_put(redis, domain, name, m)  # 직접 hset 하면 TTL 이 안 붙는다
 
     return {
         "ok": True,
