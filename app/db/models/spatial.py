@@ -46,26 +46,6 @@ class Park(Base):
     geom = Column(Geometry(geometry_type="POINT", srid=4326), nullable=True)
 
 
-class CigaretteLitterHotspot(Base):
-    __tablename__ = "cigarette_litter_hotspots"
-
-    id = Column(Integer, primary_key=True, index=True)
-    parcel_address = Column(String(300), nullable=False)
-    longitude = Column(Float, nullable=False)
-    latitude = Column(Float, nullable=False)
-    geom = Column(Geometry(geometry_type="POINT", srid=4326), nullable=True)
-
-
-class FireWaterFacility(Base):
-    __tablename__ = "fire_water_facilities"
-
-    id = Column(Integer, primary_key=True, index=True)
-    road_address = Column(String(300), nullable=False)
-    longitude = Column(Float, nullable=False)
-    latitude = Column(Float, nullable=False)
-    geom = Column(Geometry(geometry_type="POINT", srid=4326), nullable=True)
-
-
 class SmokingArea(Base):
     __tablename__ = "smoking_areas"
 

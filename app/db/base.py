@@ -11,15 +11,7 @@ from app.db.models.spatial import (
     SubwayStation,
     StreetTrashBin,
     Park,
-    CigaretteLitterHotspot,
-    FireWaterFacility,
     SmokingArea,
-)
-from app.db.models.stats import (
-    TransitPassenger,
-    PopulationStat,
-    CivilComplaint,
-    AgeDemographics,
 )
 from app.db.models.rag_feedback import RagFeedbackLog
 
@@ -35,12 +27,6 @@ __all__ = [
     "SubwayStation",
     "StreetTrashBin",
     "Park",
-    "CigaretteLitterHotspot",
-    "FireWaterFacility",
     "SmokingArea",
-    "TransitPassenger",
-    "PopulationStat",
-    "CivilComplaint",
-    "AgeDemographics",
     "RagFeedbackLog",
 ]

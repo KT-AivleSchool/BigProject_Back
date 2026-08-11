@@ -60,7 +60,8 @@ MVP: 용산구 흡연부스 / 2차: 성동구 재활용정거장.
 | **stdout 재래핑이 `-u` 를 무력화** | 같은 스크립트가 `sys.stdout = io.TextIOWrapper(...)` 로 다시 감싸 **`python -u` 가 안 먹었다.** 백그라운드로 돌리니 출력 파일이 끝까지 비어 진행 상황을 알 수 없었다 | 재래핑할 땐 `line_buffering=True` 를 같이 준다. 진행이 안 보이면 멈춘 건지 도는 건지 구분할 수 없다 |
 | 🔴 **MOCK 모드가 DB 실패를 가린다** | 동현님이 프런트에서 화면5 를 **성공적으로 시연**했는데 `conflict_simulations` 는 **0행**이었다. 모순이 아니다 — 시연 시점(`100c8a3`)은 `USE_MOCK_DB = True` 였고 그 분기의 본문은 `print("[MOCK 모드] DB 저장 우회 완료")` **한 줄이 전부**다. DB 를 아예 안 건드렸다. `ff1f873`(08-06)에서 `False` 로 바뀌며 드러났다. "원래 되던 게 지금 DB 작업 때문에 깨졌나?" 로 읽힌다 | **"돌아가는 걸 봤다"는 어느 코드가 돌았는지까지 확인해야 근거가 된다.** 시연 시점의 커밋·플래그를 먼저 본다. 모의 분기는 "우회했다"를 **산출물에도** 남겨야 한다 — 콘솔 print 는 사라진다(원칙 4) |
 | 🔴 **감리 결과 테이블이 통째로 없었다** | 화면5 토론이 **첫 줄에서** `UndefinedTableError`. `schema_cleaned_data.sql` 의 **뒤쪽 §17~19**(`national_owned_properties`·`rag_feedback_log`·`audit_rules`)가 실 DB 에 없었다 — 08-07 `DROP DATABASE` 후 재생성이 중간에 끊긴 흔적이다. **앞쪽은 다 있어서** 테이블 목록을 훑으면 정상으로 보인다 | DB 재생성 뒤엔 개수가 아니라 **DDL 의 테이블명 집합 ↔ `get_table_names()` 를 차집합으로 대조**한다. `scripts/create_missing_tables.py`(dry-run 기본, `--yes` 로 적용) |
-| 🔴 **FK 는 DB 가 아니라 metadata 에서 풀린다** | `create_all` 이 `NoReferencedTableError: transit_passengers.station_id could not find table 'transit_stations'`. 그런데 그 테이블이 DB 에 **있든 없든 똑같이 죽는다** — SQLAlchemy 는 `Base.metadata` 안에서 FK 대상 `Table` 객체를 찾는다. ORM 에 선언만 없으면 나는 에러다. 🔴 **같은 날 두 번 밟았다** — `ConflictSimulation.candidate_land_id` 에 `ForeignKey("candidate_lands.id")` 를 붙였는데 그 테이블은 ORM 선언이 없다. 이번엔 `create_all` 이 아니라 **flush 시점**에 터졌고, 하필 **5분짜리 토론을 다 돌린 뒤**였다 | 두 갈래다. **만들어야 하면** `metadata.reflect(only=[...])`(생성 아님). **읽고 쓰기만 하면** ORM 에서 `ForeignKey` 를 아예 빼고 평범한 `Integer` 로 둔다 — 제약은 실 DB 에 걸려 있으므로 무결성은 그대로다. **ORM 이 FK 를 아는 것과 DB 가 FK 를 거는 것은 별개다.** 에러 문구가 "테이블이 없다"여도 **DB 를 보라는 뜻이 아니다** |
+| 🔴 **FK 는 DB 가 아니라 metadata 에서 풀린다** | `create_all` 이 `NoReferencedTableError: transit_passengers.station_id could not find table 'transit_stations'`. 그런데 그 테이블이 DB 에 **있든 없든 똑같이 죽는다** — SQLAlchemy 는 `Base.metadata` 안에서 FK 대상 `Table` 객체를 찾는다. ORM 에 선언만 없으면 나는 에러다. 🔴 **같은 날 두 번 밟았다** — `ConflictSimulation.candidate_land_id` 에 `ForeignKey("candidate_lands.id")` 를 붙였는데 그 테이블은 ORM 선언이 없다. 이번엔 `create_all` 이 아니라 **flush 시점**에 터졌고, 하필 **5분짜리 토론을 다 돌린 뒤**였다 | 두 갈래다. **만들어야 하면** `metadata.reflect(only=[...])`(생성 아님). **읽고 쓰기만 하면** ORM 에서 `ForeignKey` 를 아예 빼고 평범한 `Integer` 로 둔다 — 제약은 실 DB 에 걸려 있으므로 무결성은 그대로다. **ORM 이 FK 를 아는 것과 DB 가 FK 를 거는 것은 별개다.** 에러 문구가 "테이블이 없다"여도 **DB 를 보라는 뜻이 아니다** 🔴 **세 번째는 내가 만들었다**(2026-08-11). 안 쓰는 테이블 13개를 DB 에서 지웠는데 ORM 선언을 안 지워서 `create_missing_tables.py --yes` 가 같은 에러로 죽었다 — **`dry-run` 은 통과한다**(FK 해석이 `create_all` 시점이라). 회복 도구가 회복 대상과 같은 이유로 죽는 모양이다. ✅ ORM 선언도 같이 지워 해소(A안, 사람 승인) |
+| 🔴 **`CASCADE` 를 붙였으면 못 봤을 것** | 위 정리(2026-08-11)에서 테이블 13개를 지울 때 `DROP TABLE … CASCADE` 를 **일부러 안 썼다.** 그랬더니 `DependentObjectsStillExist: materialized view mv_restricted_zones depends on table smoking_area_polygons` 로 멈췄다 — **아무도 모르던 매터리얼라이즈드 뷰**가 있었다(0행·소스 0행·참조 0회). `CASCADE` 였으면 조용히 같이 쓸려 나가고 **지웠다는 사실조차 안 남았다.** 실패가 아니라 **의도한 결과**다 | 파괴적 DDL 에서 `CASCADE` 는 편의가 아니라 **탐지기를 끄는 스위치**다(원칙 1). 먼저 `CASCADE` 없이 쳐서 **무엇이 매달려 있는지 이름으로 듣고**, 하나씩 이름을 적어 지운다. 사전 점검은 `pg_depend`·`pg_rewrite` 로 뷰·매터뷰를 센다. ⚠ `VACUUM` 은 `FULL` 이 아니면 **파일이 안 줄어든다** — 708.8→709.0MB 였다. 「정리했으니 용량이 줄었다」고 적으면 거짓말이 된다 |
 | 🔴 **필드 하나로 두 의미를 쓰면 소비 코드가 조용히 틀린다** | `audit_rules.facility_type` 이 「배제 대상 시설(금연구역)」과 「입지를 정하려는 대상 시설(흡연부스)」을 겸했다. 그래서 `facility = facility_types[0]` 은 **대상 시설을 "금연구역"** 으로 만들고, `factor_name = r.facility_type or "요인"` 은 positive_factor **8개를 dict 키 하나로 뭉갠다**. 둘 다 예외 없이 값만 틀린다 | 의미가 둘이면 **컬럼도 둘**이다(`target_facility` / `facility_type` / `factor_name`). 산출물이 한 자리에 두 의미를 섞어 쓰면(`source` = 조항 문자열 or 리터럴 `human_confirmed`) **원문을 유지하고 임의로 쪼개지 않는다** — 쪼개면 없는 정보를 지어낸다(원칙 5) |
 | 🔴 **「테스트용 폴백」이 본선에서 돌고 있었다** | `gam2_audit_judgment_test.py:2023` 의 `DOMAIN = {"facility":"흡연부스","region":"용산구"}` 는 주석에 **"테스트용 폴백 기본값"** 이라 적혀 있었지만 실제로는 `fac.get("region") or DOMAIN["region"]` 형태로 **실행 경로 3곳**(`gam2_run_pipeline.py:191` 본선 · real · mock)에서 쓰였다. 성동구 입력에서 지역이 안 잡히면 조용히 **용산구** 조례·상위법을 검색한다. `enrich_with_search(region="용산구")` 도 같은 함수가 **`facility` 는 파일에서 읽으면서 `region` 만** 기본값을 썼다. 더 나쁜 건 `simulations.py` 의 좌표 폴백 — 후보점 조회가 실패하면 (37.534, 126.994) "이태원동 123-45 (테스트용)" 으로 갈아끼우고 **5분짜리 LLM 토론을 그대로 완주**해 DB 에 저장했다. 프런트엔 정상 결과로 보인다 | `or <기본값>` 은 **폴백이 아니라 분기**다 — 주석이 "테스트용"이라고 말해도 호출자를 세어 본다. 한 함수 안에서 값 A 는 파일에서 읽고 값 B 는 기본값을 쓰면 **B 가 A 와 다른 도메인**을 가리킬 수 있다: 출처를 같은 곳으로 맞춘다. **✅ 2026-08-10 제거**(사람 승인) — `require_region()` 신설(비면 `SystemExit`) · `enrich_with_search(region=None)` → `facility_inference.region` · 좌표 폴백은 `CandidateNotFound` → SSE `error_code: CANDIDATE_NOT_FOUND`. 픽스처 57/57 유지 |
 | **`docker exec` 에 `-i` 가 없으면 stdin 이 무시된다** | `docker exec <c> psql … <<'SQL'` 이 **출력도 없고 exit 0** 인데 테이블이 안 생겼다. 성공으로 보인다 | heredoc·파이프로 SQL 을 넘길 땐 **`docker exec -i`**. 그리고 실행 후 `\d` 로 **결과를 확인**한다 — rc=0 은 "명령이 돌았다"만 뜻한다 |
@@ -72,7 +73,7 @@ MVP: 용산구 흡연부스 / 2차: 성동구 재활용정거장.
 | 🔴 **적재 키와 조회 키가 다르다** | 위 건을 고친 뒤 같은 도메인을 두 번 돌리니 `audit_rules` 가 **26행**(hard 10 · positive 16, 고유 요인명은 14). 적재기는 `(domain, run_id)` 를 교체하는데 `_select_audit_rules` 는 `(domain, target_facility)` 만 본다 → 근거가 두 배, AHP 가중치가 묽어진다. **예외가 안 난다.** `booth_candidates` 는 같은 사고가 안 나는데, 조회(`/candidates`)가 최신 run 하나만 돌려주기 때문이다 — **짝이 한쪽만 맞춰져 있었다** | 테이블마다 **적재 단위 ↔ 조회 단위**를 짝지어 적어둔다. 한쪽을 고치면 다른 쪽을 같이 본다. 🔴 **어긋났을 때 어느 쪽을 고칠지가 진짜 갈림길이다.** 나는 처음에 "적재기를 domain 단위 전량 교체로" (A안) 권고했다 — **맞는 쪽(저장)을 틀린 쪽(조회)에 맞추는** 안이었다. `audit_rules` 는 STEP1 **산출물**이고 두 적재기는 이미 `(domain, run_id)` 로 옳게 교체하고 있었다. 실측 없이 "고치기 쉬운 쪽"을 고르면 방향이 뒤집힌다. **✅ 2026-08-10 해소**(B안, 사람 승인) — 조회에 `run_id` 추가(값은 `booth_candidates` 행에서, 요청으로 안 받는다) + 정본 run_id 어휘 통일: 예전엔 STEP 폴더 이름을 넣어 `audit_rules='step1_output'` ↔ `booth_candidates='step4_output'` 로 갈렸는데, run_id 는 "어느 STEP 폴더에서 왔나"가 아니라 **"어느 실행에서 나왔나"** 다 → 양쪽 다 **`'정본'`**(기존 33행 마이그레이션). 실측: 26행 저장 ↔ **13행 조회**, 규칙 없는 run 은 **0.56초**에 정지(고치기 전엔 남의 run 근거로 39.5초 완주). 계약 §6·§8-9 |
 | **입력 파일 이름만 바꿔도 모드 하나가 죽는다** | `fixture` 모드가 STEP2 에서 10.6초 만에 `FileNotFoundError: …\흡연\fixture\profiles.json`. 누군가 그 파일을 `fix_profiles.json` 으로 바꿔놓았다(sha256 은 동일). `gam2_audit_judgment_test.build_fixtures()` 는 없으면 만들어 주지만 `gam2_clean_data.py` 는 안 만든다 → **STEP1 을 안 도는 fixture 모드에서만** 드러난다. `.gitignore` 대상이라 clone 에도 없다 | 모드마다 **첫 칸이 다르면 선행 파일도 다르다.** 한 모드가 돈다고 다른 모드가 도는 게 아니다. 재생성: `python app\services\gam2_profile.py data_임시\<도메인>` |
 | 🔴 **캐시로 바꿔치기하면 업로드가 안 보인다** | PR #220 이 부팅 시 `data_임시/흡연/` 을 Redis 에 바이트로 시딩하고, `_child_env` 가 **Redis 에 키가 있으면** `OMNISITE_DATA_ROOT` 를 `runs/<id>/raw_data` 로 갈아끼우게 했다. 그런데 화면1 업로드(`upload.py:109`)는 **디스크**에 쓴다 → 부팅 이후 올린 파일은 파이프라인에 **영원히 안 들어간다**(서버를 다시 띄우기 전까지). 예외가 안 나고 값만 옛것이 된다. 2026-08-10 에 업로드→STEP0~4→토론→PDF 를 9분 11초로 관통한 경로가 통째로 무력화된다 | 데이터 경로를 **가로채는** 최적화는 「원본이 바뀌는 지점」을 전부 세고 나서 넣는다. 캐시는 **쓰는 쪽도 같은 캐시를 봐야** 캐시다 — 한쪽만 보면 그건 캐시가 아니라 **분기**다. ✅ 통합하되 **배선하지 않았다** — `seed_redis.py` 로 사람이 명시적으로 넣고 꺼낸다 |
-| 🔴 **무TTL 키가 캐시 정책을 죽인다** | 위 시딩은 키에 TTL 을 안 줬다. compose 는 `--maxmemory-policy volatile-lru` 라 **TTL 있는 키만** evict 한다 → 원본 바이트(흡연 `data/` 만 537MB · 단일 최대 279MB)가 한도를 채우면 Redis 가 **모든 쓰기를 OOM 으로 거절**한다. 🔴 **여기 "지오코딩·지목 캐시가 같이 죽는다"고 적었던 건 틀렸다**(정정 2026-08-11 실측). 그 둘은 Redis 가 아니라 **디스크 JSON** 이다(`search_cache/`). 실제로 같이 죽는 건 **refresh_token(RTR)·access 블랙리스트·로그인 잠금/레이트리밋 카운터·A 토론 SSE 중계(pub/sub)·업로드 메타데이터** — 즉 **로그인과 토론 스트림**이다. 피해자를 틀리게 적으면 다음 사람이 엉뚱한 데를 본다. ⚠ 살아 있는 Redis 의 `maxmemory` 는 compose 가 적은 2gb 가 아니라 **512M** 이다(다른 시점에 뜬 컨테이너다) | 무TTL 로 넣을 값은 **크기 상한이 있는 것만**이다. `--maxmemory` 를 올리는 건 시간을 버는 것이지 고치는 게 아니다. 시딩 키는 TTL 필수(`seed_redis.py --ttl`, 기본 24h) |
+| 🔴 **무TTL 키가 캐시 정책을 죽인다** | 위 시딩은 키에 TTL 을 안 줬다. compose 는 `--maxmemory-policy volatile-lru` 라 **TTL 있는 키만** evict 한다 → 원본 바이트(흡연 `data/` 만 537MB · 단일 최대 279MB)가 한도를 채우면 Redis 가 **모든 쓰기를 OOM 으로 거절**한다. 🔴 **여기 "지오코딩·지목 캐시가 같이 죽는다"고 적었던 건 틀렸다**(정정 2026-08-11 실측). 그 둘은 Redis 가 아니라 **디스크 JSON** 이다(`search_cache/`). 실제로 같이 죽는 건 **refresh_token(RTR)·access 블랙리스트·로그인 잠금/레이트리밋 카운터·A 토론 SSE 중계(pub/sub)·업로드 메타데이터** — 즉 **로그인과 토론 스트림**이다. 피해자를 틀리게 적으면 다음 사람이 엉뚱한 데를 본다. ⚠ 살아 있는 Redis 의 `maxmemory` 는 compose 가 적은 2gb 가 아니라 **512M** 이다(다른 시점에 뜬 컨테이너다) | 무TTL 로 넣을 값은 **크기 상한이 있는 것만**이다. `--maxmemory` 를 올리는 건 시간을 버는 것이지 고치는 게 아니다. 시딩 키는 TTL 필수(`seed_redis.py --ttl`, 기본 24h). **✅ 2026-08-11 — 무TTL 로 남아 있던 마지막 자리도 막았다**: 업로드 색인(`upload.py`)이 `hset` 만 하고 TTL 을 안 줬다. `_redis_put` 한 곳으로 모아 쓸 때마다 **30일 키 TTL 을 갱신**한다(`_REDIS_TTL_SEC`). 🔴 요점은 **길이가 아니라 evict 대상이 되는 것**이다 — 30일이든 24시간이든 TTL 만 있으면 `volatile-lru` 가 걷어낼 수 있고, 없으면 그 키 하나가 **로그인 전체를 OOM 으로 막는다**. 실측하다 **닿을 수 없는 고아 키 3개**(`흡연_E2E`·`흡연_E2E2`·`흡연업로드` — 커밋 `99b9121` 이 도메인 폴더를 지워 참조가 끊겼다)를 찾았다: 무TTL 이면 고아도 영원히 산다 |
 | 🔴 **부분 복원이 조용히 통과한다** | 같은 PR 의 복원 함수는 Redis 접속 실패·키 누락을 전부 `warning` 으로 넘기고 `{}` 를 반환했다. 호출자는 「스테이징 결과가 비었으면 안 쓴다」만 봤다 → **반만 복원되면 그대로 주입**되고 파이프라인이 일부 데이터셋으로 완주한다. 지표가 0 이 아니라 **작아질 뿐**이라 안 걸린다 | 복원은 **전량·크기 대조**가 있어야 복원이다. 매니페스트(`__manifest__` 키)에 (상대경로 → 바이트수)를 남기고 하나라도 어긋나면 `raise`. 실측 확인: 키 1개를 지우고 재복원 → `RuntimeError: 매니페스트 3개 중 2개만` |
 | 🔴 **확인 문구가 삭제 범위를 축소해서 말한다** | `reset_db_redis.py` 는 `input()` 하나로 `public` 스키마를 통째로 DROP 하는데 문구는 "**파이프라인** 데이터가 삭제됩니다" 였다. 실측하면 **39테이블 688.1MB** 이고 지적도(`cadastral_lands`)·경계 3종처럼 다시 만드는 데 몇 시간 걸리는 것이 대부분이다. 게다가 실패를 `print` 로 삼켜 rc=0 으로 끝난다 | 파괴적 도구는 **지울 것을 전부 나열한 뒤** 승인을 받는다. 범위를 좁게 말하는 확인은 확인이 아니다(원칙 4). 저장소 관례대로 **계획만 출력이 기본**, `--yes` + `'DELETE'` 타이핑으로만 실행 |
 | 🔴 **표시값인 줄 알았는데 입력값이었다** | `simulations.py` 가 토론 시작 상태를 `css_pro/css_con = random.choice(["LOW","MEDIUM","HIGH"])` 로 잡았다. 화면에 뜨는 지표라 "표시가 흔들린다" 로 읽히지만, 이 값은 `graph.pro_node`·`con_node` 가 **1라운드 시스템 프롬프트를 고르는 키**다(`css_high.txt` "충분한 근거 없이는 양보하지 마세요" ↔ `css_low.txt` "가능한 빠르게 합의점을 찾으세요"). 라운드 2부터는 수용도로 결정론 재매핑되지만 **1라운드가 이후 전부의 입력**이라 결과 시나리오까지 갈린다. 같은 후보지·같은 감리 근거로 돌려도 매번 다르다 — 안 터지고 값만 틀린다 | 프런트에 나가는 값을 볼 때 **그 값이 어디로 또 흘러가는지**를 센다. "표시용"이라는 판단은 소비자를 세어 본 뒤에만 할 수 있다. **✅ 2026-08-10 제거**(사람 결정 A안) — `INITIAL_CSS_LEVEL = "HIGH"` 로 고정. 새로 정한 값이 아니라 **이미 세 곳에 선언돼 있던 기본값**이다(`state.get("css_pro","HIGH")` · `CSS_PROMPT_TEMPLATE` 폴백 · `_map_css_by_score(0.0)`). 값과 출처는 `result_json["determinism"]` 에 남긴다 |
@@ -168,6 +169,11 @@ python app\tools\check_hearings.py                   :: 화면5 — /simulations
                                                      :: 🔴 404 `detail` 의 **다섯 갈래**를 같이 본다.
                                                      ::    STATUS_UNREADABLE 은 깨진 status.json 을
                                                      ::    실제로 만들어 보고 지운다
+                                                     :: ⚠ `정본` 의 공청회 **개수는 는다** — 관통
+                                                     ::    대조기가 실 DB 에 행을 남기기 때문이다
+                                                     ::    (2026-08-11 하루에 A 6 + B 1 = 7행,
+                                                     ::    11→18). **회귀가 아니다.** 개수로 판단
+                                                     ::    하지 말고 `is_latest_for_parcel` 을 본다
 python app\tools\check_stakeholders.py               :: 화면5 B — /stakeholders/* 어댑터 60항목
                                                      :: (🔴 거절 경로 + SSE 정규화 + 근거 스냅샷. LLM 0회)
 python app\tools\check_stakeholders_e2e.py           :: 화면5 B **정상 경로** 관통 36항목
@@ -209,7 +215,9 @@ python app\tools\get_cache.py {geocode|jimok|list} [질의]   :: Redis 캐시 �
 python app\tools\seed_redis.py seed  <도메인> [--ttl 86400] :: 도메인 폴더 → Redis 바이트
 python app\tools\seed_redis.py stage <도메인> <복원폴더>     :: Redis → 폴더 (매니페스트 전량 대조)
 python app\tools\reset_db_redis.py                          :: 계획만 출력. --yes + 'DELETE' 입력으로 실행
-                                                     :: 🔴 public 스키마 **전부** DROP 한다(실측 39테이블 688MB)
+                                                     :: 🔴 public 스키마 **전부** DROP 한다
+                                                     ::    (2026-08-11 재실측 **28테이블 695.8MB**.
+                                                     ::     그전 39테이블 688MB 는 정리 전 값이다)
 python app\tools\prune_runs.py [--keep N] [--yes]           :: runs/ 의 .gpkg·.parquet 정리. 계획만 출력이 기본
                                                      :: 🔴 **부팅 시 자동으로도 돈다**(사람 결정 2026-08-11).
                                                      ::    최근 5개 + 진행 중 + booth_candidates 참조분은 보호.
@@ -422,6 +430,9 @@ D:\obsidian_claude\10_OmniSite\
                                        707MB 를 `\d` 로 전수 정리. 필수 17 / 비어있음 4 /
                                        줄일 수 있음 3 / **제거 가능 14**(0행+참조0회).
                                        §6 에 STEP5 저장 구조 B안 적용 내역과 검증 8항목
+                                       ⚠ **표의 개수는 2026-08-11 부로 옛 값이다** —
+                                       그 「제거 가능」을 실제로 지웠다: **41 → 28 테이블**
+                                       (경위·근거는 `02_작업일지\2026-08-11.md` §20)
   배포후_작업일지\20260809_동현님구간_conflict_simulations_정합.md
                                      ← 동현님 설명용 단독 문서. 3중 불일치의 **경위와 근거**.
                                        처치는 위 문서 §6 (B안, 2026-08-09 적용·검증 완료)
@@ -497,6 +508,14 @@ D:\obsidian_claude\10_OmniSite\
                                        타임라인·처치·팀 전파 문구·점검 명령
   04_이슈\2026-08-05_GH이슈_PostGIS_공간연산전환_중단.md  ← S5 중단 근거(팀 공유용)
   01_설계결정\프런트_설계.md            ← 프런트 세션이 쓴다. 화면↔산출물 대응·rewrite 경계
+  01_설계결정\프리셋_대기없는_조회모드_설계메모.md
+                                     ← 🔵 **보류분.** 「업로드 없이」는 이미 되고
+                                       「대기 0」만 안 된다 — 둘을 갈라 앞만 프리셋의
+                                       책임으로 두기로 했다(2026-08-11 사람 결정).
+                                       나중에 착수할 때 다시 안 재도 되게 적어둔 것:
+                                       실행 시간의 정체(매체가 아니다) · 산출물 출처가
+                                       파일/DB 둘로 갈린 것 · `_ACTIVE` 409 ·
+                                       미정 갈림길 (가)고정run/(나)복제/(다)간접참조
   작업 노트\배제구역_점면판정_지목배수.md  ← S9
   작업 노트\S10_조례_단서조항_설치가부.md ← S10
 ```
@@ -677,7 +696,15 @@ D:\obsidian_claude\10_OmniSite\
             설정을 고친 뒤 **55/55**. 실패 2건은 라우터가 아니라 **`.env` 설정**이었고
             (함정표 「대조기가 설정값을 자기 자신과 비교했다」), 같은 날 access 수명을
             **60분**으로 네 곳(`.env`·`.env.example`·`config.py` 기본값·대조기 설계값)
-            에 맞춰 해소했다. 🔴 **살아 있는 서버에는 재시작 전까지 안 먹는다.**
+            에 맞춰 해소했다. 🔴 **살아 있는 서버에는 재시작 전까지 안 먹는다**(설정은
+            import 시점에 읽는다) → **✅ 같은 날 재시작해 살아 있는 서버로 확인**(사람 지시).
+            🔴 in-process 대조기로는 이걸 증명할 수 없다 — 자기 프로세스의 `settings` 를
+            읽으므로 위 항등식과 같은 함정이다. `127.0.0.1:8000` 에 임시 계정을 만들어
+            토큰을 디코딩했다: **access 60분 · refresh 7일**(넣은 행은 지웠고 **지워졌는지
+            까지** 봤다). 재시작 **전에** `runs/*/status.json` 을 **직접 읽어** 활성 run 을
+            셌다(9폴더 · 활성 0) — `reap_orphans` 가 남의 run 을 `failed` 로 닫는다.
+            ⚠ Windows `taskkill //PID //F` 는 **아무 말 없이 실패**했다(포트가 계속
+            LISTENING). PowerShell `Stop-Process -Force` 로 죽였다.
             목이 못 보던 것 4가지가 전부 통과했다: Redis TTL 이 실제로
             붙는가(목의 `expire` 는 `pass` 다) · `keys()` 패턴이 같은 집합을 주는가 ·
             bcrypt 해시가 DB 왕복 후에도 검증되는가 · 중복 이메일 400 이 **DB UNIQUE
@@ -734,6 +761,12 @@ D:\obsidian_claude\10_OmniSite\
           동작을 계속 요구한다). ⚠ `importance_grade` 가 비면 **`"미상"`** 이다 — `"C"` 로
           채우면 없는 등급을 지어내고(원칙 4), `None` 은 하류 `PersonaConfig.importance_grade`
           가 `str` 이라 못 넘긴다(`Optional` 로 바꾸면 프롬프트에 `None` 이 찍힌다).
+          ✅ **프런트 쪽 안전도 회신으로 확인됐다**(2026-08-11 · `e16dc79`) — 옛 키를
+          보내는 자리 **0곳**이고 `/generate` 응답에서 여섯 키(`display_name` ·
+          `stakeholder_type` · `relationship_to_topic` · `importance_grade` · `keywords` ·
+          `recommendation_reason`)만 **이름을 안 바꾸고** 골라 담는다. `"미상"` 도 양쪽이
+          같아져 화면에서 **「서버가 등급을 못 냈다」와 「진짜 C등급」이 구분된다** —
+          기본값을 지어내지 않은 이유가 화면에서 그대로 값을 한다. 3단계 다리는 닫혔다.
           검증·매핑은 SSE 제너레이터 **밖**에서 한다 — 안에서 하면
           잘못된 요청도 `200 + data: {"error": …}` 로 나가 프런트가 "토론 시작"으로 읽는다.
           `/generate` 가 파싱 실패로 `[]` 를 돌려주던 것도 **502** 로 드러낸다
@@ -753,7 +786,12 @@ D:\obsidian_claude\10_OmniSite\
           ✅ **B 결과도 DB 에 남는다**(2026-08-11 신설 · 사람 승인). `conflict_simulations`
           에 넣을 수는 없었다 — `css_score`·`css_vector` 가 NOT NULL 인데 그건 **A 전용
           지표**다. 억지로 0 을 넣으면 「합의도 0」으로 읽힌다(원칙 4). 그래서 별도
-          `hearing_results_b`(+`hearing_logs_b`)를 뒀다. `?engine=B` 는 이제 **200** 이다
+          `hearing_results_b` 를 뒀다. 🔴 여기 **`+hearing_logs_b`** 라고 적어뒀던 건
+          **거짓이다**(2026-08-11 실측 정정) — 그런 테이블은 실 DB 에도 `schema_step5_b.sql`
+          에도 코드에도 **없다.** B 는 A 와 달리 발화를 행으로 안 쪼갠다: 발화는
+          `result_json` 안에 있고 개수만 **`message_count` 컬럼**으로 뽑아 둔다
+          (A 의 `debate_logs` 에 해당하는 것이 B 엔 없다). 없는 테이블을 적어두면 다음
+          사람이 **JOIN 을 짤 때까지** 안 걸린다. `?engine=B` 는 이제 **200** 이다
           (그전엔 501 이었다 — 빈 배열로 답하면 "토론을 안 했다"로 읽히는데 사실은
           "저장을 안 한다"였기 때문이다).
           🔴 **`/hearings` 행의 키 집합은 `engine` 에 따라 다르다.** A 는
@@ -779,6 +817,19 @@ D:\obsidian_claude\10_OmniSite\
           `DOMAIN_MISMATCH`(run 엔 행이 있는데 그 domain 만 없다).
           **`message` 는 전 갈래에서 항상 채운다** — 프런트는 모르는 `code` 를 만나면
           분기하지 않고 `message` 를 그대로 띄운다(코드를 늘려도 프런트 배포를 안 기다린다).
+          ✅ **설계 의도였던 이 문장이 2026-08-11 구현으로 확인됐다**(프런트 `e16dc79`).
+          `code` 분기는 **0곳**이고 화면 문장은 언제나 서버 `message` 그대로다
+          (`HTTP 404 [LOADED_BUT_MISSING] — <message>` 형식으로 `code` 는 덧붙이기만).
+          🔴 그래서 **`message` 가 비면 화면이 통째로 빈다.** 갈래를 늘릴 때 `code` 만
+          정하고 `message` 를 안 채우면 그 갈래는 프런트에서 **아무 말도 안 하는 404** 가
+          된다 — 갈래를 늘리면 `check_hearings.py` 의 「`message` 비지 않음」 항목도
+          같이 늘린다. 프런트 실측은 네 갈래(`UNKNOWN_RUN`·`DOMAIN_MISMATCH`·
+          `LOADED_BUT_MISSING`·`NEVER_LOADED`)이고 `STATUS_UNREADABLE` 은 **대조기 몫**이다
+          (재현하려면 `status.json` 을 일부러 깨야 하는데 그건 남의 저장소를 건드리는 일이다).
+          ⚠ 프런트가 자기 `ApiError.detail` 을 **문자열로 유지**하고 원본을 `body` 로
+          따로 싣기로 한 것은 **그쪽 사정이다** — 서버 응답의 `detail` 은 여전히 객체다.
+          「프런트가 문자열로 유지했다」를 「서버도 문자열로 돌려라」로 읽으면 다섯 갈래가
+          도로 한 덩어리가 된다.
           🔴 사유는 **묻는 시점에 두 기록을 대조해서** 만든다(`_missing_run_detail`):
           `pipeline_runner.loaded_record()`(그때 넣었다는 기록)와 DB 조회(지금 있다).
           `status.json` 에 `invalidated_by` 같은 표시를 **되쓰지 않는다** — ⓐ 「20행을
