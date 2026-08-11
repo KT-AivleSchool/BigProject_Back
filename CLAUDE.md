@@ -42,7 +42,7 @@ MVP: 용산구 흡연부스 / 2차: 성동구 재활용정거장.
 | **타임아웃을 "무한"으로 읽음** | 위 건을 240초 타임아웃으로 재고 "끝나지 않는다"고 단정했다. 실제로는 525.7초에 **성공**했다. 게다가 `simulations` 의 진짜 사유는 DB 가 아니라 15행 `pdf_service` 부재였는데, 12행 DB 대기에 가려 240초 안에 안 드러났다 | 타임아웃은 "여기까진 안 끝났다"만 증명한다. **"끝나지 않는다"는 다른 주장이다**(원칙 5). 끝까지 돌려보고 말할 것. import 실패는 **첫 에러가 진짜 원인이 아닐 수 있다** — 앞 줄이 느리면 뒷줄 에러가 안 보인다 |
 | **응답 Content-Type** | `.gpkg` 25MB 바이너리가 `text/plain; charset=utf-8` 로 나갔다. `FileResponse` 에 `media_type` 미지정 → `mimetypes` 가 모르면 텍스트로 떨어진다. `res.text()` 쓰면 조용히 깨짐 | 파일 응답에 `media_type` 을 **명시**한다. 모르면 `text/plain` 이 아니라 `application/octet-stream` — 틀린 단정보다 참인 진술이 낫다 |
 | **전이 의존 버전 이동** | `pip install langchain-openai` 가 `openai` 를 2.44→2.53 으로 말없이 올렸다. `sse-starlette` 은 `starlette` 0.37→1.3 을 시도(막힘). **감시 목록 밖이라 안 보인다** | `pip install -c constraints.txt` + `--dry-run` 선행. 사후엔 `pip freeze` **전체 diff** — 5개만 보면 놓친다 |
-| **커밋했는데 절반만 돈다** | `3cc73ff` 후에도 서버가 **기동 14:16 / 커밋 18:03** 인 옛 프로세스였다(`--reload` 없음). 그런데 `run_weight_model.py` 는 **자식 프로세스라 즉시 새 코드**, `pipeline_runner.py` 는 **import 라 옛 코드** → 새 인자를 안 넘겨 `argparse` 기본값이 들어갔다. 안 터지고 값만 틀린다 | "고쳤다"고 말하기 전에 **프로세스 기동 시각 ↔ 커밋 시각**을 비교한다. 자식 CLI 와 임포트 모듈은 **반영 시점이 다르다** |
+| **커밋했는데 절반만 돈다** | `3cc73ff` 후에도 서버가 **기동 14:16 / 커밋 18:03** 인 옛 프로세스였다(`--reload` 없음). 그런데 `run_weight_model.py` 는 **자식 프로세스라 즉시 새 코드**, `pipeline_runner.py` 는 **import 라 옛 코드** → 새 인자를 안 넘겨 `argparse` 기본값이 들어갔다. 안 터지고 값만 틀린다 🔴 **두 번째 사례(2026-08-12) — 이번엔 대조기가 초록불이었다.** `POST /pipeline/runs` 에 선택적 인증을 붙이고 `check_optional_auth.py` **27/27** 을 받고 커밋·푸시했는데, 프런트가 **죽은 토큰으로 치니 401 이 아니라 202** 였고 run 이 하나 생겼다(`r_20260812_005`). PID 50352 기동 **00:19:07** ↔ `pipeline.py`·`deps.py` mtime **01:07**, `--reload` 없음. 🔴 **in-process 대조기(`httpx.ASGITransport`)는 이걸 원리적으로 증명 못 한다** — 자기 프로세스에 **방금 import 한** 코드를 재므로 **배포된 코드가 무엇이든 항상 초록불**이다(「대조기가 설정값을 자기 자신과 비교했다」의 사촌). 게다가 그 대조기는 `start_run` 을 목으로 갈아끼우는데, 살아 있는 서버에는 목이 없어 **거절 실패가 곧 run 생성**이 된다 | "고쳤다"고 말하기 전에 **프로세스 기동 시각 ↔ 커밋 시각**을 비교한다. 자식 CLI 와 임포트 모듈은 **반영 시점이 다르다**. 🔴 **「27/27 통과」는 「배포됐다」가 아니다** — in-process 로 잰 항목은 **재시작 뒤 살아 있는 서버로 한 번 더** 친다(옛 사례: access 60분도 재시작 후에야 확인됐다). 공유 서버라 재시작을 못 하면 **「미검증」이라고 적고 넘긴다** — 안 적으면 남이 그걸 근거로 계획을 짠다. ✅ **2026-08-12 재시작 후 해소**(사람 승인 · 새 PID 12216 기동 01:58:43 > 파일 mtime 01:07): 죽은 토큰 4갈래 전부 **401** 이고 `runs/r_*` 가 **18→18**(run 이 안 생겼다). ⚠ 재시작 전에 `runs/*/status.json` 을 **직접 읽어** 활성 run 을 셌다(18폴더·활성 0). ⚠ `taskkill //PID //F` 말고 **`Stop-Process -Force`** |
 | **시각 정밀도 불일치** | `_SERVER_BOOT` 는 마이크로초인데 `started_at` 은 `timespec="seconds"` → 부팅과 **같은 초**에 시작된 run 을 `_reap_orphans` 가 "이전 서버의 고아"로 보고 실행 중에 `failed` 로 닫았다. uvicorn 으로는 부팅·요청 간격 때문에 **한 번도 안 나타난다** | 비교하는 두 값의 **절삭 단위를 맞춘다**. "실서버에서 안 나오니 없는 버그"가 아니다 — in-process 로도 돌려본다 |
 | **같은 이름의 다른 스키마** | `schema.sql` 과 ORM 이 테이블명은 같은데 컬럼이 다르다. 공통 14개 중 11개는 완전 일치이고 `conflict_simulations`·`verified_precedents` 만 갈리는데 **하필 `/audit/*` 이 쓰는 둘.** 이름이 같아 **`SELECT` 를 짤 때까지 안 보인다** | 이름이 아니라 **컬럼 집합**을 대조한다(`Base.metadata` ↔ `schema.sql` 파싱). 스크립트는 `01_설계결정\백엔드팀_API현황_및_Redis_Postgres_전환.md` §10-1 |
 | 🔴 **대조 대상이 둘인 줄 알았는데 셋** | 위 항목의 확장(2026-08-08 실측, 정정). `conflict_simulations` 는 **ORM·`schema.sql`·실제 DB 가 전부 다르다.** 필지 참조 컬럼이 `parcel_id`(FK `booth_candidates.id`) / `cadastral_land_id` / `candidate_land_id` 로 셋 다 이름도 대상도 다르고, **공통 컬럼은 `id`·`created_at` 둘뿐**이다. 위 항목이 적어둔 `ForeignKey("parcels.id")` 도 `merge_Back` 에선 틀렸다 → `booth_candidates.id`. `/simulation(s)/results/{id}` 가 **500**(`UndefinedColumnError`)이고, 쓰기(`simulations.py:492`)는 예외를 `print` 로 삼켜 **조용히 실패**한다(원칙 1·4) → 그래서 `conflict_simulations`·`verified_precedents` 둘 다 **0행**이다. 🔴 2026-08-09 추가 실측 — **컬럼 이름만 맞춰선 안 끝난다**: ① 엔진은 시나리오를 **1개만** 내는데 컬럼은 3개(A/B/C) ② `result_json` 이 갈 컬럼이 없고 그 안의 **`debate_logs` 는 재구성 불가**(Redis TTL 600초뿐) ③ 런타임 `parcel_id` 는 `booth_candidates.id` 인데 FK 는 `candidate_lands` — **id 공간이 다르다**(1행 ↔ 6,524행). 그냥 넣으면 FK 는 통과하고 **다른 필지**를 가리킨다 | `schema.sql` 이 현행이라고 가정하지 않는다 — **실제 DB 를 `\d` 로 직접 본다.** 시드를 뜬 기준이 저장소 SQL 과 다를 수 있다. **✅ 2026-08-09 해소(B안, 사람 승인)** — `schema_step5.sql` 로 `conflict_simulations` 에 `parcel_id`(FK→`booth_candidates.id`)·`facility_type`·`result_json` 가산, 기존 `css_score`·`css_vector`·`candidate_land_id`·시나리오 1칸은 **채운다**(NOT NULL 완화 안 함). `debate_logs` 테이블 신설(발화 1건=1행). `verified_precedents` 는 **반대로 DB 이름이 맞아서** ORM 을 고쳤다(`parcel_id=simulation_id` 는 오기였다). 쓰기는 `_persist_simulation()` 으로 분해했고 **읽기 경로는 한 줄도 안 고쳤다.** 실측: 토론 299.9s → `conflict_simulations` 1행 · `debate_logs` 14행 · `/results/1` 정상 · `/report/1` 86,260 bytes PDF. 상세: `배포후_작업일지\20260809_DB_현재구조_정리.md` · `20260808_…_WinError5.md` §B |
@@ -274,6 +274,18 @@ python app\tools\check_optional_auth.py              :: 선택적 인증 — run
                                                      ::    부르면 fixture run 이 95초씩 돌고 runs/ 와 DB 적재가
                                                      ::    남는다. 「DB 에 진짜 남나」는 §3 이 목 없이 묻는다
                                                      :: `users`·`run_records` 에 넣고 지운다(남의 행 개수 전후 대조)
+                                                     :: 🔴 **27/27 은 「배포됐다」를 증명하지 않는다.** ASGITransport 라
+                                                     ::    자기 프로세스에 방금 import 한 코드를 잰다 — 살아 있는
+                                                     ::    uvicorn 이 옛 프로세스여도 초록불이다(2026-08-12 실제 사고:
+                                                     ::    죽은 토큰에 401 이 아니라 **202** 가 났다). 재시작 뒤
+                                                     ::    실제 포트로 한 번 더 칠 것
+                                                     :: ✅ **2026-08-12 재시작 후 살아 있는 서버로 확인**(사람 승인).
+                                                     ::    만료·위조·refresh를access자리·없는사용자 **넷 다 401** 이고
+                                                     ::    `runs/r_*` 개수 **18→18**(네 번 쳤는데 안 늘었다) ·
+                                                     ::    빈 Bearer 는 **202**(익명이 살아 있다) ·
+                                                     ::    `GET /runs?mine=true` 는 **405**
+                                                     :: 🔴 **유효 토큰 → user_id 가 박히는가는 실서버 미검증**이다 —
+                                                     ::    지금 근거는 in-process §2·§3 뿐이다. 실 로그인으로 칠 것
 
 :: 운영 도구 (PR #220 통합 — 전부 수동. 자동으로 안 돈다)
 python app\tools\get_cache.py {geocode|jimok|list} [질의]   :: Redis 캐시 조회(읽기 전용)
@@ -527,15 +539,32 @@ D:\obsidian_claude\10_OmniSite\
                                        + 프런트 저장소 **첫 열람**(읽기 전용).
                                        §1 실측 3건 — ⓐ 프런트는 **모든 요청에** 토큰을 이미
                                        싣는다(`client.ts:112`, 공통 `request()`) → 서버 한 칸만
-                                       채우면 값이 흐른다 ⓑ 프런트가 **없는 엔드포인트**
-                                       `GET /pipeline/runs?mine=true` 를 이미 부르고 404 를
-                                       `console.error` 로 삼켜 **마이페이지가 빈 화면**이다
+                                       채우면 값이 흐른다 ⓑ 프런트가 **아직 없는 마이페이지
+                                       조회**(`GET /pipeline/runs?mine=true`)를 이미 부르고
+                                       실패를 `console.error` 로 삼켜 **빈 화면**이다
                                        (응답 모양 `RunMeta` 는 이미 굳었다 — 계약 §3-3)
                                        ⓒ `mypage/page.tsx:177` 「주인 미상**(이관 전)**」은
                                        **㉠ 위반**(익명은 미구현이 아니라 정상 상태이고 소급
                                        귀속 경로가 **없다**) — 우리가 못 고치니 **전달할 것**.
                                        §2 (가) 근거 · §3 `_resolve_user` 공유 · §4 대조기가
                                        묻는 것은 **거절**(401 시 `start_run` 0회) · §5 안 한 것
+                                       🔴 **§7 — 내 주장 두 개가 프런트 실측으로 뒤집혔다.**
+                                       ⑴ 「없는 경로 → 404」는 틀렸고 **405 Method Not
+                                       Allowed** 다(`POST /runs` 가 같은 경로를 점유해
+                                       라우터는 경로를 찾고 **메서드에서** 막는다). 404 로
+                                       적으면 **없는 것을 만드는 문제**로 읽히는데 실제로는
+                                       **있는 경로에 메서드를 더하는 문제**다.
+                                       ⑵ 죽은 토큰에 401 이 아니라 **202** 가 났다 — 코드가
+                                       아니라 **살아 있는 uvicorn 이 변경 전 프로세스**였다
+                                       (PID 50352 기동 00:19:07 ↔ 파일 mtime 01:07,
+                                       `--reload` 없음). **27/27 은 이걸 증명 못 한다** —
+                                       in-process 대조기는 자기 프로세스에 방금 import 한
+                                       코드를 재므로 배포본이 무엇이든 초록불이다.
+                                       ⑶ `mine=true` 는 **「내 것만」이 아니라 「내 것 +
+                                       익명을 같이」**다(프런트가 `is_mine` 으로 두 구획을
+                                       가른다). 서버가 익명을 거르면 아래 구획이 **영원히
+                                       비는데 에러가 안 난다** — 이름 말고 계약 §3-3 의
+                                       문장을 따를 것
   02_작업일지\2026-08-11.md           ← 화면5 분기 뒷받침 3건 —
                                        A `/simulations/hearings`(run 별 공청회 목록. `run_id`
                                        컬럼이 없어 **조인으로만 존재**한다) ·
