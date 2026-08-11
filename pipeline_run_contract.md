@@ -162,10 +162,13 @@ URL 이 트레이스백에 실릴 수 있고, **하필 그때가 로그를 제�
 ## 2. 단계 (steps)
 
 단계 id 는 확정된 전체 체계 `0-1/0-2 · 1-1/1-2/1-3 · 2 · 3-1/3-2 · 4-1/4-2/4-3` 를 따른다.
-**픽스처 재실행 범위는 아래 6개뿐이다.** STEP0·1 은 실행하지 않으므로 `steps` 에 넣지 않는다.
+**픽스처 재실행 범위는 아래 8개다.** STEP0·1 은 실행하지 않으므로 `steps` 에 넣지 않는다.
 
 🔴 **단계 목록은 `mode` 가 정한다. 개수를 상수로 갖지 마라**(2026-08-10).
-`full` 은 앞에 `0`·`1`, 뒤에 `적재-감리`·`적재-후보` 가 붙어 **10개**다(8절). 안 도는 단계를 모든 모드에
+`full` 은 앞에 `0`·`1` 이 더 붙어 **10개**, `hitl` 은 게이트·제안 칸이 끼어 **8개**다(8절).
+(게이트·제안 칸은 `steps` 에 안 들어간다 — 프로세스가 없다. 그래서 `hitl` 은 `fixture` 와
+같은 8칸이다.)
+안 도는 단계를 모든 모드에
 같이 두면 영원히 `idle` 인 칸이 화면에 남아 진행률이 거짓말을 한다(원칙 4).
 프런트는 `status.steps` 배열을 **그대로** 그리면 된다.
 
@@ -177,6 +180,22 @@ URL 이 트레이스백에 실릴 수 있고, **하필 그때가 로그를 제�
 | `4-1` | 후보점 생성 | `gam4_site_select.py` `[B]` | 1.7s |
 | `4-2` | 점수화·배제 적용 | `gam4_site_select.py` `[C]~[G]` | 12.4s |
 | `4-3` | 위치 선정 | `gam4_site_select.py` `[H]~[J]` | 6.1s |
+| `적재-감리` | 감리 규칙 DB 적재 (토론 근거) | `scripts/load_audit_data.py` | 1.6s |
+| `적재-후보` | 후보점 DB 적재 (화면5 목록) | `scripts/load_topn_candidates.py` | 2.8s |
+
+🔴 **뒤 두 칸은 2026-08-11 에 `fixture`·`hitl` 에도 붙였다**(사람 결정). 그전엔 `full` 에만
+있었고 사유는 「fixture 는 정본 산출물의 재생이고 그 Top-N 은 이미 `run_id='정본'` 으로
+DB 에 있다」였다. 맞는 말이지만 **결론이 틀렸다** — `/candidates` 가 읽는 건 파일이 아니라
+`booth_candidates` 이므로, 적재 칸이 없으면 그 run 의 `topN.geojson` 이 폴더에 있어도
+**프런트는 닿지 못한다.** 즉 fixture run 의 결과는 화면5 에서 볼 수가 없었다.
+시연에서 업로드를 건너뛰고 화면5까지 가려면 이 두 칸이 있어야 한다.
+
+🔴 **`hitl` 은 같은 날 조금 뒤에 붙였다**(사람 지시). 처음엔 뺐고 사유는 「게이트에서
+사람을 기다리므로 시연 프리셋이 아니다」였는데, 그건 **왜 `fixture` 에 넣는가**의 답이지
+**왜 `hitl` 에서 빼는가**의 답이 아니다. 게이트를 지나 완주한 run 은 사람이 값을 확정한
+run 이고, 그 결과를 화면5 에서 못 보는 건 `fixture` 와 **똑같은 구멍**이다.
+지금은 **세 모드 다** 적재 칸을 갖는다.
+누적 우려(그때의 반대 근거)는 `runs/` 정리 정책 쪽에서 받는다(`app/services/run_pruner.py`).
 
 **id 와 개수는 구판 그대로다.** label 만 실제 실행 단계에 맞췄다 — 구판의 `3-1 가중치 산정`
 `3-2 가중치 확정` 은 실제와 달랐다. STEP3 은 *후보 필지 생성* 과 *가중치 산정* 두 프로세스이고,
@@ -221,6 +240,7 @@ URL 이 트레이스백에 실릴 수 있고, **하필 그때가 로그를 제�
     "exclusion": null
   },
   "loaded": null,
+  "user_id": null,
   "error": null,
   "started_at": "2026-08-04T14:02:11",
   "finished_at": null
@@ -237,6 +257,8 @@ URL 이 트레이스백에 실릴 수 있고, **하필 그때가 로그를 제�
 | `steps[].sec` | 완료된 단계의 소요 초(float). 미완료면 `null` |
 | `artifacts[name]` | 생성됐으면 **GET URL 문자열**, 아직이면 `null` |
 | `loaded` | 이 run 이 **DB 에 넣은 것**. 안 넣었으면 `null` (3-1) |
+| `user_id` | 이 run 을 돌린 사람. **익명 실행이 정상 상태**라 보통 `null` (3-3) |
+| `run_record_errors` | `run_records` 기록이 **실패했을 때만 생기는 키**(3-3). 성공이면 키가 없다 |
 | `error` | `failed` 일 때만 문자열. 그 외 `null` |
 | `started_at` / `finished_at` | ISO 8601. 진행 중이면 `finished_at` 은 `null` |
 
@@ -269,7 +291,7 @@ URL 이 트레이스백에 실릴 수 있고, **하필 그때가 로그를 제�
 
 | 값 | 뜻 |
 |---|---|
-| `null` | 이 run 은 **아무것도 적재하지 않았다.** `fixture`·`hitl` 은 계획에 적재 칸이 아예 없고(8-5), `full` 도 적재 칸에 닿기 전까지는 `null` 이다 |
+| `null` | 이 run 은 **아직 아무것도 적재하지 않았다.** 2026-08-11 부터 **세 모드 다** 적재 칸을 가지므로(8-5), `null` 은 「그 칸에 아직 안 닿았다」는 뜻이다. 옛 run 은 키 자체가 없어 `null` 로 채워진다 — 「기록 없음」과 구분이 필요하면 `steps` 의 `적재-감리`·`적재-후보` 칸을 본다 |
 | 객체 | 넣었다. `run_id` 는 프런트가 `GET /api/v1/simulations/candidates` 의 **`run_id` 파라미터에 그대로 넣을 값**이다 |
 
 - **`run_id` 를 값으로 준다.** 프런트가 "full 이면 최상위 run_id 와 같다"는 규칙을
@@ -336,6 +358,17 @@ URL 이 트레이스백에 실릴 수 있고, **하필 그때가 로그를 제�
 | `debate_logs` | 위를 따라 지워진 발화 행 수 |
 | `verified_precedents_unlinked` | 연결이 끊긴(행은 남은) 판례 수 |
 
+🔴 **이 세 필드는 「넣은 수」가 아니라 「지운 수」다. 실제로 반대로 읽힌 적이 있다**
+(2026-08-11, 백엔드 회신). 「`loaded` 에 `conflict_simulations` 적재 건수가 기록된다」는
+말이 나왔는데, 문장은 **글자 그대로 참**이고 뜻만 정반대였다 — 그대로 마이페이지에
+띄웠으면 **토론 N건이 열린 run 이 「0건」으로** 보였을 것이다(실측값이 전부 0 이라
+한동안 안 걸린다). 🔴 **run 별 토론 건수는 `status.json` 에 없다.** 토론은 run 이 끝난
+뒤에 따로 치는 것이라 **run 수명 밖**이고, 토론 API 는 `status.json` 을 **읽기만 한다**
+(`_write_status` 호출 0회). 건수를 내려면 조인뿐이다 —
+`conflict_simulations.parcel_id → booth_candidates.id → .run_id`(§8-5-2).
+⚠ 원인은 읽는 쪽이 아니라 **쓰는 쪽**에 있다: `loaded`(넣은 수) 안에 `cascaded`(지운 수)를
+두면 이름만으로 뜻이 안 선다. **한 블록에는 한 방향만 담는다** — 늘릴 때 지킬 것.
+
 - **러너 경로에서는 항상 0 이다.** `_new_run_id` 가 `runs/run_seq.json` 의
   **최고수위(high-water mark)** 를 쓰므로 run 폴더를 지워도 번호가 안 되돌아간다
   (2026-08-11 수정. 예전엔 폴더를 세어 매겼고, 그래서 폴더를 지우면 그 번호로 이미
@@ -383,16 +416,68 @@ URL 이 트레이스백에 실릴 수 있고, **하필 그때가 로그를 제�
 - **지우면 `artifacts` 의 해당 키가 `null` 로 되돌아간다.** 안 되돌리면 status 는 URL 을
   주는데 엔드포인트는 404 다 — status 가 거짓말을 한다(원칙 4).
   실측: `candidates` 만 `null`, 나머지 7키는 URL 유지.
-- **안 지우는 조건 셋** — 하나라도 걸리면 남긴다.
-  ① 최근 N개 ② 상태가 `queued`·`running`·`awaiting_hitl` ③ `booth_candidates.run_id`
-  가 참조 중. ③ 을 **못 확인하면(DB 실패) 아무것도 안 지운다** — 보호 목록 없이
-  지우는 건 보호가 없는 것과 같다.
+- **안 지우는 조건 둘** — 하나라도 걸리면 남긴다.
+  ① 최근 N개(기본 100) ② 상태가 `queued`·`running`·`awaiting_hitl`.
+  🔴 예전엔 셋이었다 — ③ `booth_candidates.run_id` 가 참조 중이면 남긴다.
+  **2026-08-11 에 없앴다**(사람 결정). 근거(살아 있는 후보점의 출처가 그 폴더다)는
+  지금도 참이지만 **이 조건엔 상한이 없다**: 세 모드가 다 적재하게 되자 「적재한 run
+  은 전부 참조됨」이 되어 정리기가 사실상 꺼졌고, 반대로 **적재도 토론도 안 한 버려진
+  run**(가치가 가장 낮다)이 ③ 에 안 걸려 **먼저** 지워졌다 — 실패 방향이 뒤집힌다.
+  상한이 없는 보호는 보호가 아니라 **정지**다. 지금 조절 지점은 `keep` 하나뿐이고
+  디스크는 `39MB × keep` 으로 묶인다.
+  ⚠ 그래서 **DB 에 행이 있어도 폴더는 안 지켜진다** — 정리기는 DB 를 아예 안 본다.
+  이미 한 토론의 근거는 폴더가 아니라 `result_json.basis` 에 **본문으로** 박혀 있고
+  (`basis_snapshot`), 아직 안 한 토론의 POI 는 `poi_context` 가 「정리됐거나 만들어지지
+  않았다」를 `skipped` 로 남긴다.
 - 계획은 `keep` 항목에도 **이유**를 붙인다. 「지울 것」만 말하는 계획은 왜 안 지웠는지를
   사람이 다시 캐게 만든다.
 - 부팅 훅은 **`reap_orphans()` 뒤**에 돈다. 먼저 돌면 이전 서버가 죽여놓고 간 run 이
   아직 `running` 이라 영원히 보호된다.
 - 도구: `python app\tools\prune_runs.py [--keep N] [--yes]`(계획만 출력이 기본) ·
-  대조 `python app\tools\check_prune_runs.py`(39항목, 진짜 `runs/` 를 안 쓴다).
+  대조 `python app\tools\check_prune_runs.py`(40항목, 진짜 `runs/` 를 안 쓴다).
+
+### 3-3. `user_id` · `run_record_errors` — run 메타데이터를 DB 에도 적는다 (2026-08-11 신설)
+
+`status.json` 은 **한 run 의 진행 상태**만 안다. 「내가 돌린 run 을 최신순으로」(마이페이지)
+는 폴더 N개를 전부 열어야 답할 수 있는 질문이라 파일로는 못 푼다 → run 메타데이터를
+Postgres **`run_records`** 에 **사본으로** 적는다(4계층 중 ③).
+
+```json
+"user_id": null,
+"run_record_errors": [
+  {"at": "start", "time": "2026-08-11T23:41:34", "reason": "OperationalError: 연결 실패"}
+]
+```
+
+- 🔴 **정본은 여전히 `status.json` 이다.** 그래서 DB 컬럼명이 `status` 가 아니라
+  **`last_known_status`** 이고 값은 셋뿐이다 — `queued`·`succeeded`·`failed`.
+  `running`·`awaiting_hitl` 은 **일부러 안 넣는다**: 진행률을 DB 에 물으면 정본이 둘이
+  되고 그 둘은 언젠가 갈린다. **지금 어디까지 갔는지는 `GET /runs/{id}` 로 본다.**
+- **행은 발급 시점에 만든다**(`queued`). 「DB 는 끝난 사실만」을 문자대로 읽으면 돌다
+  죽은 run 은 행이 아예 안 생겨 `reap_orphans` 가 갱신할 대상이 없다(원칙 4).
+  「끝난 사실만」은 *행을 언제 만드나*가 아니라 *무엇을 DB 에 묻지 않나*로 읽는다.
+- **`user_id` 는 영구 nullable 이다.** 「아직 로그인 배선 전」이라서가 아니라
+  **익명 실행이 정상 상태**이기 때문이다(사람 결정). 옛 run 은 키가 없어 `read_status`
+  가 `null` 로 채우는데, 그 `null` 은 「주인 없음」과 「그 시절엔 안 적었다」를 **둘 다**
+  포함한다.
+- 🔴 **이 기록이 실패해도 run 은 그대로 돈다.** 다만 「catch 한다」와 「조용히 삼킨다」는
+  다르다(원칙 1·4) — 실패하면 `run_record_errors` 에 `{at, time, reason}` 을 쌓고
+  `warning` 로그를 남긴다. `at` 은 `start`·`end`·`reap` 셋 중 하나다.
+  **성공이면 키 자체가 없다** — 항상 두고 `[]` 를 넣으면 옛 run 까지 「시도했고 다
+  성공」으로 읽힌다.
+- 🔴 **`loaded.cascaded` 는 DB 로 안 옮긴다.** 그건 「넣은 수」가 아니라 재적재로
+  **지워진 수**다(뜻이 정반대). 같은 지붕 아래 두 방향을 담으면 읽는 쪽이 반드시 한
+  번은 틀린다. 옮기는 건 `loaded.audit_rules`·`loaded.booth_candidates` 둘뿐이다.
+- 🔴 **여기 행이 있다고 `runs/<run_id>/` 폴더가 지켜지지 않는다**(3-2). 마이페이지는
+  `RUN_FOLDER_GONE`·`ARTIFACT_PRUNED` 갈래를 반드시 갖는다.
+- 구현: 모델 `app/db/models/run_record.py` · 기록 `app/services/run_records.py`
+  (`record_run_start` · `record_run_end` · `record_runs_end`) · 대조
+  `python app\tools\check_run_records.py`(64항목, 넣은 행을 지우고 **지워졌는지까지** 본다).
+  ⚠ 러너는 `threading.Thread` 위의 **동기 코드**라 앱의 async 엔진을 못 쓴다
+  (`asyncio.run` 을 쓰면 전역 풀이 닫힌 루프에 커넥션을 물고 있어 이후 요청이
+  `Event loop is closed` 로 죽는다) → **psycopg 동기 + `connect_timeout`**.
+- ⚠ **마이페이지 API 는 아직 없다.** 지금 있는 건 「적는 쪽」뿐이고, 읽는 엔드포인트가
+  생기면 이 절에 추가한다.
 
 ---
 
@@ -533,9 +618,14 @@ STEP0/1 감리 ─▶ ⏸ 게이트A ─▶ STEP2 ─▶ STEP3-1 ─▶ (제안�
 게이트 두 칸과 제안 패스를 끼워 넣은 것이고, **단계 커맨드는 두 모드가 같은 함수를 탄다.**
 
 ```
-fixture : 2 · 3-1 · 3-2 · 4
-hitl    : ⏸audit · 2 · 3-1 · propose · ⏸weight · 3-2 · 4
+fixture : 2 · 3-1 · 3-2 · 4 · load-audit · load
+hitl    : ⏸audit · 2 · 3-1 · propose · ⏸weight · 3-2 · 4 · load-audit · load
 ```
+
+🔴 **적재 칸은 이제 세 모드에 다 있다**(2026-08-11). 계획 배열만 바꿨고 실행부(`_execute`)는
+`load-audit`/`load` 를 이미 일반 경로로 넘기고 있어 **디스패치는 한 줄도 안 고쳤다**(2절 끝 참조).
+적재 칸은 **꼬리에** 붙인다 — 게이트 앞에 끼우면 `_resume_index`(게이트 답변 후 재개 위치)가
+조용히 밀린다. 지금 값은 `hitl` 에서 audit=1 · weight=5 로 붙이기 전과 같다.
 
 게이트를 만나면 **실행 스레드가 그냥 끝난다.** 진행 상태는 전부 디스크에 있으므로
 서버가 재시작돼도 답변 POST 로 이어갈 수 있다. 이어갈 위치는 `gate.id` 로 유도한다 —
@@ -567,8 +657,8 @@ hitl    : ⏸audit · 2 · 3-1 · propose · ⏸weight · 3-2 · 4
 
 | `mode` | 게이트 | 용도 |
 |---|---|---|
-| `fixture` | **없음** — 무입력 완주 | 회귀 검증. 지금 있는 것 |
-| `hitl` | **있음** — 게이트A·B 에서 멈춤 | 실제 사용(픽스처 감리 결과로 시작) |
+| `fixture` | **없음** — 무입력 완주 | 회귀 검증 + **시연 프리셋**(업로드·게이트를 건너뛰고 화면5까지). 실측 **95초 · 8칸** (`r_20260811_002` · `loaded {audit_rules:13, booth_candidates:20}`) |
+| `hitl` | **있음** — 게이트A·B 에서 멈춤 | 실제 사용(픽스처 감리 결과로 시작). 완주하면 **8칸**(2026-08-11 부터 적재 2칸 포함). 실측 `r_20260811_004` · `loaded {audit_rules:13, booth_candidates:20}` · fixture 와 **값 10항목 전 일치**(`check_hitl_e2e.py`) |
 | `full` | **있음** — `hitl` 과 같은 게이트 2개 | 업로드한 도메인을 STEP0 부터 (8절) |
 
 🔴 픽스처 모드에 게이트를 넣으면 안 된다. 사람 입력이 끼는 순간
@@ -1043,9 +1133,30 @@ STEP4 는 `topN.geojson` **파일만** 쓴다. 화면5 는 테이블 **두 개**
 - 순서상 의존은 없지만 **근거를 먼저** 넣는다. 목록이 먼저 보이면 사람이 고를 수 있는데
   눌러도 안 되는 구간이 생긴다.
 - 한 칸에 두 프로세스를 넣지 않는다 — 어느 쪽이 실패했는지 진행 표시에서 사라진다.
-- **`full` 에만 있다.** `fixture`·`hitl` 은 정본 재생이고 그 산출물은 이미
-  `audit_rules` · `booth_candidates` 에 **`run_id='정본'`** 으로 있다.
-  재생할 때마다 다시 넣는 건 적재가 아니라 누적이다.
+- 🔴 **세 모드 다 있다**(2026-08-11, 사람 결정으로 두 번 정정).
+  예전 문구는 「`full` 에만 있다 — `fixture`·`hitl` 은 정본 재생이고 그 산출물은 이미
+  `run_id='정본'` 으로 DB 에 있다. 재생할 때마다 다시 넣는 건 적재가 아니라 누적이다」
+  였다. 앞 절반은 지금도 참이지만 **결론이 틀렸다**: `/candidates` 가 읽는 건 파일이
+  아니라 `booth_candidates` 이므로, 적재 칸이 없으면 그 run 의 `topN.geojson` 이
+  폴더에 있어도 프런트는 닿지 못한다 — **fixture run 의 결과는 화면5 에서 볼 수가
+  없었다.** 정본 행이 DB 에 있다는 건 「그 run 을 볼 수 있다」가 아니라 「다른 run 을
+  볼 수 있다」다. 시연에서 업로드를 건너뛰고 화면5까지 가려면 이 두 칸이 필요하다.
+  누적 우려는 없앤 게 아니라 **옮겼다** — `runs/` 정리(`app/services/run_pruner.py`,
+  `OMNISITE_RUNS_KEEP` 기본 100)가 상한을 준다.
+  🔴 **`hitl` 은 같은 날 조금 뒤에 붙였다**(사람 지시). 처음엔 「게이트에서 사람을
+  기다리므로 시연 프리셋이 아니다」로 뺐는데, 그건 **왜 `fixture` 에 넣는가**의 답이지
+  **왜 `hitl` 에서 빼는가**의 답이 아니다. 게이트를 지나 완주한 run 은 사람이 값을
+  확정한 run 이고, 그 결과를 화면5 에서 못 보는 건 같은 구멍이다.
+  같은 자리를 이틀에 두 번 정정했다 — 「어느 모드에 넣나」를 **모드의 성격**(프리셋이냐)
+  으로 판단했기 때문이다. 기준은 그게 아니라 **「그 run 의 결과를 화면5 가 읽어야 하나」**
+  하나다. 그 기준으로는 세 모드가 전부 예다.
+  ✅ **`hitl` 완주 실측**(2026-08-11 · `check_hitl_e2e.py` 통과) — `r_20260811_003`(fixture)
+  ↔ `r_20260811_004`(hitl) 둘 다 **8칸 succeeded**, 꼬리 두 칸 done,
+  `loaded {audit_rules:13, booth_candidates:20}`, `cascaded` 전부 0.
+  실 DB 에서 `정본`/`_002`/`_003`/`_004` 가 각각 13·20행으로 **격리**돼 있다.
+  🔴 안 돌리려던 사유(「게이트 뒤쪽이 fixture 와 같은 배열·같은 `_proc_of` 라 새로 도는
+  코드가 없다」)는 **맞았지만 증명이 아니었다** — 코드를 읽은 결론과 끝까지 갔다는 사실은
+  다른 문장이다(원칙 5).
 - 적재기는 같은 `(domain, run_id)` 만 지우고 다시 넣는다. 다른 도메인·정본 행은 안 건드린다.
 - 개수는 **파일에 있는 만큼 전부**다. 적재기에 20 이 박혀 있지 않다.
 - 두 칸이 끝나면 `status.json` 의 **`loaded`** 에 넣은 결과가 남는다(3-1).
@@ -1059,6 +1170,121 @@ STEP4 는 `topN.geojson` **파일만** 쓴다. 화면5 는 테이블 **두 개**
 **적재 단위 ↔ 조회 단위가 같아졌다.** 정본 `run_id` 어휘도 두 테이블 모두 `"정본"` 이다
 (예전엔 `step1_output` ↔ `step4_output` 으로 갈려 run_id 조인이 0건이었다).
 `booth_candidates` 는 `/candidates` 가 최신 run 하나만 돌려줘 애초에 짝이 맞아 있었다.
+
+### 8-5-1. 왜 **이 둘만** DB 인가 — 산출물의 자리를 정하는 기준 (2026-08-11)
+
+산출물은 STEP0~4 를 통틀어 열 몇 개인데 DB 로 가는 건 위 둘뿐이다. **「중요해서」가
+아니다** — 그건 기준이 못 된다(`weight_set` 도 중요하다). 기준은 셋이고, 셋을 다
+만족하는 산출물만 테이블을 갖는다.
+
+**① 파이프라인이 안 읽는다 (읽는 건 웹 요청뿐).**
+`audit_rules`·`booth_candidates` 를 참조하는 파일 19개를 전수로 셌다 —
+`gam2_*`·`gam4_*`·`make_parcel_candidates`·`run_weight_model` 은 **한 곳도 없다.**
+전부 `api/v1/{simulations,stakeholders}` · `candidate_context` · 적재기 · 대조기다.
+그래서 DB 로 가도 **정본이 안 갈린다.** 반대로 `clean_report`·`weight_set`·`report.json`
+은 `gam4_site_select.py:81` 등이 **파일로 읽는 파이프라인 입력**이라, DB 로 옮기면
+정본을 고치거나 사본을 하나 더 만들어야 한다.
+
+**② 행 단위로 좁혀야 한다 (통짜 JSON 으로는 불가능).**
+```sql
+audit_rules       WHERE domain=? AND run_id=? AND target_facility=?
+booth_candidates  WHERE id=?                       -- 사람이 화면4 에서 고른 parcel_id
+                  WHERE domain=? [AND run_id=?] ORDER BY rank   -- /candidates 목록
+```
+`reviewed.json` 을 매 요청마다 통째로 파싱하면 저 3중 조건을 **요청 코드에서 재구현**해야
+한다. 실제로 그 조건 하나가 빠져 근거가 26행으로 두 배가 됐던 것이 6절 B안이다.
+나머지 산출물은 통째로 쓰는 값이라 좁힐 게 없다.
+
+**③ 다른 테이블이 FK 로 가리킨다 (파일에는 FK 를 못 건다).**
+`conflict_simulations.parcel_id → booth_candidates.id` (ON DELETE CASCADE) ·
+`debate_logs.simulation_id → conflict_simulations.id`.
+
+넷째로, **파일은 언젠가 지워진다.** `run_pruner` 가 부팅마다 돌고 보호는 `keep`
+최근 N개(기본 100)와 진행 중 둘뿐이다(3-2). 오래된 run 의 `.gpkg`·`.parquet` 는
+사라지지만 그 후보점으로 연 공청회는 계속 조회돼야 한다.
+
+같은 기준으로 나머지를 재면 —
+
+| 산출물 | ① 파이프라인 미참조 | ② 행 질의 | ③ FK 대상 | 자리 |
+|---|---|---|---|---|
+| STEP1 `reviewed.json` | ✅ | ✅ | — | **DB** `audit_rules` |
+| STEP4 `topN.geojson` | ✅ | ✅ | ✅ | **DB** `booth_candidates` |
+| STEP2 `clean_report.json` | ❌ STEP3·POI 가 읽는다 | ❌ | ❌ | 파일 |
+| STEP2 `clean_NN.gpkg/parquet` | ❌ STEP3·4 가 읽는다 | ❌ | ❌ | 파일 |
+| STEP3 `weight_set.json` | ❌ STEP4 가 읽는다 | ❌ | ❌ | 파일 |
+| STEP3 `후보_지적도필지.gpkg` | ❌ STEP3·4 가 읽는다 | ❌ | ❌ | 파일 |
+| STEP4 `report.json` | ❌ 대조기가 읽는다 | ❌ | ❌ | 파일 |
+| STEP0 `profile.json` | ✅ | ❌ | ❌ | 파일 |
+
+**한 줄로: DB 에는 「웹이 조인·필터해야 하는 것」만 넣는다. 파이프라인이 파일로 읽는
+것은 파일에 둔다 — 옮기면 정본이 둘이 된다.**
+
+🔴 이 기준이 어디에도 안 적혀 있어서 실제로 「그럼 나머지도 넣자」가 한 번 올라왔다
+(`feature/pipeline-db-export`, STEP1~4 산출물 8테이블). run 1회당 약 **106,077행**이
+되고, 그중 `selected_topn_sites` 는 `booth_candidates` 와 **같은 것을 SRID 만 다르게**
+한 벌 더 갖는 구조다. 채택하지 않은 이유가 곧 이 절이다.
+이 절은 **규칙**이고, 그렇게 정한 **근거**(전수 census 19파일 · 반례 검토 · 이 기준이
+말하지 **않는** 것 3가지)는 `02_작업일지\2026-08-11_산출물의_자리_왜_이_둘만_DB.md` 에 있다.
+바꿀 때는 **이 절을 먼저** 고친다 — 여기가 정본이다.
+
+⚠ run **메타데이터**(`status`·`started_at`·`finished_at`·`error`·`user_id`)는 여기서
+말하는 산출물이 아니라 **별개 축**이다 — 산출물 행은 단계가 성공해야만 생기므로
+실패·대기 중인 run 은 DB 에서 아예 안 보인다(원칙 4).
+그쪽 구조는 **확정됐다** — `01_설계결정\산출물_저장구조_4계층_확정.md`
+(① 산출물 中 DB 2개 = 이 절 · ② 나머지 산출물 = 디스크 · ③ run 메타데이터 =
+`run_records` 신설 · ④ 진행 상태 = `status.json`).
+✅ **`run_records` 는 2026-08-11 에 만들었다** — 규약은 **3-3 절**에 있다.
+⚠ 만든 뒤에도 정본은 여전히 `status.json` 이다 — DB 컬럼 이름이 `last_known_status`
+인 이유가 그것이다.
+**설계는 2왕복으로 닫혔다**(2026-08-11) — 행은 **발급 시** 만들고(`queued`) 진행률만
+DB 에 안 묻는다 · 러너는 `record_run_start()`/`record_run_end()` **둘만** 부른다 ·
+그 함수가 실패해도 run 은 안 죽이되 **사유는 남긴다**.
+🔴 **배선 순서는 하나뿐이다: 테이블+함수 실재 → 우리 호출 배선 → 마이페이지 API.**
+호출을 먼저 넣으면 함수가 없는 동안 **모든 run 이 시작에서 죽는다**.
+⚠ 여기 「그쪽이 주는 함수를 부른다」고 적혀 있던 건 **소유가 바뀌기 전** 문장이다
+(2026-08-11 정정). 사람 지시로 테이블·함수·배선을 **우리가 만들었다** — 앞 두 칸은
+끝났고 남은 건 **마이페이지 API** 하나다. 소유가 바뀌었으므로 상대에게 **통보**한다.
+
+### 8-5-2. `conflict_simulations.parcel_id` 는 **NOT NULL** 이다 (2026-08-11)
+
+이 테이블에는 **`run_id` 컬럼이 없다.** run 에 닿는 경로는
+
+```
+conflict_simulations.parcel_id → booth_candidates.id → booth_candidates.run_id
+```
+
+**조인 하나뿐**이다. `parcel_id` 가 NULL 이면 「어느 실행의 어느 입지를 토론했나」를
+알 방법이 아예 사라진다. 그래서 실 DB 를 `SET NOT NULL` 로 조였다(사람 승인).
+`hearing_results_b.parcel_id` 는 처음부터 NOT NULL 이었다 — 짝을 맞춘 것이다.
+
+**왜 `run_id` 컬럼을 대신 넣지 않았나** — 값이 이미 두 곳에 있다.
+
+| 경로 | 뜻 |
+|---|---|
+| ⓐ 위 조인 | 이 후보점이 **지금 속한** run |
+| ⓑ `result_json->'basis'->>'run_id'` | 토론할 때 **근거로 삼은** run |
+
+- 컬럼은 **세 번째 사본**이 된다.
+- ⓐ·ⓑ 는 원래 **다른 문장**이라 컬럼이 어느 쪽을 담을지 정할 수 없다 — 정하지 않으면
+  한 필드가 두 의미를 갖는다(CLAUDE.md 함정표 `audit_rules.facility_type` 과 같은 모양).
+- FK 가 `ON DELETE CASCADE` 라 ⓐ 는 **dangling 이 구조적으로 불가능**하다. 컬럼에는
+  그 보증이 없다: 같은 run 을 재적재하면 후보점이 새 `id` 로 들어오는데(그때 토론은
+  CASCADE 로 사라진다) 컬럼 방식이었다면 옛 `run_id` 를 가리키는 행이 남는다.
+- 읽는 쪽(`GET /simulations/hearings?run_id=`)이 이미 이 조인 하나로 동작한다.
+  컬럼을 더하면 **같은 질문에 답이 둘**이 되고 갈렸을 때 정본 규칙을 또 만들어야 한다.
+
+실측(2026-08-11): `conflict_simulations` 3행 · `hearing_results_b` 1행 모두
+`parcel_id` 가 채워져 있고 조인이 **전부 해석**된다. 다만 `basis` 는 옛 행 2건(id 15·17)
+에 **없다**(`basis_snapshot` 이 2026-08-11 신설) — 그 행들에게는 ⓐ 조인이 **유일한**
+경로다. 그래서 보증해야 할 것은 ⓑ 가 아니라 ⓐ 였다.
+
+⚠ 쓰기 경로는 `resolve_candidate`(실패 시 `CandidateNotFound`)를 통과해야만 저장하므로
+NULL 은 원래 생길 수 없었다. 하지만 그건 **코드의 약속이지 DB 의 보증이 아니다** —
+손입력·다른 도구로 들어오면 막을 게 없었다. 적용은 `schema_step5.sql`(기존 DB) +
+ORM `nullable=False`(새 DB). 이 테이블은 **어느 `.sql` 에도 `CREATE TABLE` 이 없고**
+`create_missing_tables.py` 가 ORM 으로 만든다 — **양쪽을 같이 고칠 것.**
+검증: `schema_step5.sql` 재실행 rc=0(멱등) · NULL INSERT 는 not-null 위반으로 거절 ·
+`check_hearings.py` **60/60**.
 
 ### 8-6. 화면4 → 화면5 — **위치는 사람이 고른다**
 
