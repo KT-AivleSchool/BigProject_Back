@@ -27,8 +27,10 @@ jobs:
           script: |
             cd ~/BigProject_Back
             
-            # 1. Fetch the latest code
-            git pull origin HEAD
+            # 1. Fetch the exact triggered branch code
+            git fetch origin ${{ github.ref_name }}
+            git checkout ${{ github.ref_name }}
+            git reset --hard origin/${{ github.ref_name }}
             
             # 2. Build and restart containers (runs detached)
             # The .env file must be created manually on the EC2 instance in ~/BigProject_Back/.env
