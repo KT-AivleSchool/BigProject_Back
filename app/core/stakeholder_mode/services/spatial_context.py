@@ -2,22 +2,31 @@ import os
 import glob
 from typing import Dict, Any, List
 
-FACILITY_MAP = {
-    "_clean_01": "공공기관",
-    "_clean_05": "어린이집",
-    "_clean_06": "노인복지시설",
-    "_clean_07": "학교",
-    "_clean_08": "의료시설",
-    "_clean_09": "문화시설",
-    "_clean_10": "상업 및 음식점",
-    "_clean_11": "대형마트"
-}
 
-def extract_spatial_context(top_n_path: str, clean_gpkg_dir: str, radius_m: float = 200.0) -> Dict[str, str]:
+def extract_spatial_context(
+    top_n_path: str,
+    clean_gpkg_dir: str,
+    radius_m: float = 200.0,
+    facility_labels: Dict[str, str] | None = None,
+) -> Dict[str, str]:
     """
     지어진 topN.geojson 파일과 clean_*.gpkg 파일들을 바탕으로
     각 후보지 반경(radius_m) 이내의 인프라/시설물 개수 요약 정보를 생성합니다.
+
+    🔴 2026-08-11. `FACILITY_MAP` 상수를 지웠다. `{"_clean_01": "공공기관",
+       "_clean_06": "노인복지시설", "_clean_07": "학교", "_clean_11": "대형마트", …}`
+       였는데 **흡연 도메인 실측과 8개 중 4개가 다르다**(01 금연구역 · 06 지하철역 ·
+       07 버스정류소 · 11 어린이보호구역. 맞은 건 05 어린이집 하나뿐이다).
+
+       고쳐 적는 것으로는 안 끝난다 — `dataset_id`(`_clean_NN`) 번호는 **도메인마다
+       다르게 매겨진다**(업로드 API 가 파일명 가나다순으로 부여). 즉 어떤 고정 사전도
+       다음 도메인에서 틀린다(원칙 2). 그래서 이름표는 **주입**받고, 안 주면 파일명을
+       그대로 쓴다 — 「모르는 것을 그럴듯한 이름으로 바꾸지 않는다」(원칙 4·5).
+       도메인별 이름표의 출처는 그 실행의 `audit_result_reviewed.json` 이다.
+
+    ⚠ 이 모듈은 아직 API 경로에 안 물려 있다(호출자: `tests/test_spatial_persona.py`).
     """
+    facility_labels = facility_labels or {}
     try:
         import geopandas as gpd
     except ImportError:
@@ -48,7 +57,7 @@ def extract_spatial_context(top_n_path: str, clean_gpkg_dir: str, radius_m: floa
         filename = os.path.basename(gpkg_path)
         base_name = filename.split('.')[0]
         facility_type = base_name
-        for k, v in FACILITY_MAP.items():
+        for k, v in facility_labels.items():
             if k in base_name:
                 facility_type = v
                 break

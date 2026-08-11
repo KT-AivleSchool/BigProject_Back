@@ -11,30 +11,45 @@ from sqlalchemy import select, func
 
 from app.schemas.simulations import SimulationResultResponse, StreamRequest
 from app.core.sim_ai.graph import build_discussion_graph
-from app.core.sim_ai.vector_db import get_vector_db
 from app.api.deps import get_db, get_redis
-from app.db.models.simulation import Parcel, ConflictSimulation, DebateLog
+from app.db.models.simulation import (
+    Parcel,
+    ConflictSimulation,
+    DebateLog,
+    HearingResultB,
+)
 
 # 🔴 `from app.services.pdf_service import pdf_builder` 를 여기서 뺐다 (2026-08-04).
 #    이 모듈 전체가 그 한 줄 때문에 import 불가였다 — PDF 내보내기(화면6) 하나 때문에
 #    공청회 토론(화면5) 라우터 512행이 통째로 못 떴다.
 #    실사용은 `download_feasibility_report_pdf` **한 곳뿐**이라 그 함수 안으로 옮겼다.
 #    화면6 을 붙이는 사람이 볼 것: 이 파일이 아니라 그 함수의 주석이다.
-from app.db.models.audit import AuditRule
-from app.services.gis_service import gis_service
+from app.services.poi_context import build_poi_context
+
+# 🔴 아래 다섯은 **이 파일에 있던 것을 옮긴 것**이다(2026-08-11). 사본이 아니라 이동이다.
+#    화면5 토론 엔진이 둘(A `/simulation(s)/stream` · B `/stakeholders/*`)이라
+#    "어디를·무엇을 근거로" 조달하는 코드가 한 곳에 있어야 한다. 여기 두면 B 가
+#    이 API 모듈을 import 하게 되고, 그러면 곧 각자 조달하는 사본이 생긴다.
+#    이름을 그대로 둔 이유는 그쪽 모듈 docstring 참조.
+from app.services.candidate_context import (  # noqa: F401
+    CandidateNotFound,
+    _extract_dynamic_meta_from_audit_rules,
+    _fetch_and_parse_audit_rules_from_db,
+    basis_snapshot,
+    resolve_candidate,
+    retrieve_ordinance_texts,
+    site_jibun,
+)
 from app.db.session import AsyncSessionLocal
 from app.utils.redis_pubsub import RedisPubSubManager
 from app.core.security_limiter import rate_limiter
+from app.core.sim_ai.scenario import scenario_code
 
 # API 라우터 인스턴스 초기화
 router = APIRouter()
 
 # uvicorn 콘솔로 나가는 로거. `print` 는 백그라운드 태스크에서 묻힌다.
 logger = logging.getLogger("uvicorn.error")
-
-# 임시 DB 우회용 스위치 (Mock 데이터 모드 활성화 여부)
-USE_MOCK_DB = False
-
 
 # 시나리오 코드 → conflict_simulations 의 어느 칸에 넣을지.
 # 근거는 `app/templates/default/reporter.txt` 다 — 수용도 0.8↑ A(원만한 타결),
@@ -44,10 +59,6 @@ _SCENARIO_COLUMN = {
     "B": "normal_scenario",
     "C": "worst_scenario",
 }
-
-
-class CandidateNotFound(Exception):
-    """`parcel_id` 로 booth_candidates 를 못 찾았다. 좌표를 지어내지 않고 멈추기 위한 예외."""
 
 
 # 토론 1라운드의 CSS(갈등 민감도) 초기값.
@@ -72,13 +83,12 @@ INITIAL_CSS_LEVEL = "HIGH"
 INITIAL_CSS_SOURCE = "deterministic_default"
 
 
-def _scenario_code(scenario: dict) -> str | None:
-    """시나리오 객체에서 A/B/C 를 뽑는다. 못 뽑으면 None (추측하지 않는다)."""
-    raw = str(scenario.get("scenario") or "").strip().upper()
-    for ch in raw:
-        if ch in _SCENARIO_COLUMN:
-            return ch
-    return None
+# 🔴 2026-08-11. 코드 추출을 `app/core/sim_ai/scenario.py` 로 **옮겼다**(사본 아님).
+#    여기 있던 구현은 `"Scenario A"` 를 받으면 `SCENARIO` 의 **`C`** 를 먼저 집어
+#    `worst_scenario` 칸에 넣었다. A 엔진 템플릿이 `"A (또는 B, C)"` 형식이라
+#    여태 안 드러났을 뿐이다. `audit_ai/classifier.py` 도 같은 함수를 쓴다 —
+#    소비자마다 각자 뽑으면 어휘가 갈린다(실제로 갈려 있었다).
+_scenario_code = scenario_code
 
 
 def _scenario_text(scenario: dict) -> str:
@@ -160,233 +170,6 @@ async def _persist_simulation(
     return sim.id
 
 
-async def _select_audit_rules(
-    db: AsyncSession, facility_type: str, domain: str, run_id: str
-) -> list[AuditRule]:
-    """`audit_rules` 에서 **이 실행·이 도메인·이 시설의** 규칙만 가져온다.
-
-    🔴 2026-08-09 신설. 예전엔 두 함수가 각자 `select(AuditRule)` 로 전량을 읽었다.
-       도메인이 하나뿐일 땐 안 걸리지만, 성동구(재활용정거장)가 붙는 순간
-       흡연부스 규칙으로 재활용정거장 토론을 한다 — 안 터지고 값만 틀린다.
-
-    🔴 2026-08-10 `domain` 추가. `target_facility` 만으로는 부족하다 —
-       적재기(`load_audit_data.py`)는 **`(domain, run_id)` 단위**로 지우고 넣는데
-       읽기가 도메인을 안 걸렀다. 같은 시설을 쓰는 도메인이 둘이면(실측: 흡연 13 +
-       흡연_E2E 13 = **26행**) 감리 근거가 두 배가 되고 AHP 가중치가 갈라진다.
-
-    🔴 2026-08-10(2) `run_id` 추가 — **적재 단위와 완전히 같아졌다**(사람 승인).
-       도메인까지 걸러도 **같은 도메인을 두 번 돌리면** 또 쌓인다. 적재기는
-       `(domain, run_id)` 를 교체하므로 2회차에 두 run 의 규칙이 공존한다
-       (실측 26행 · hard 10 + positive 16, 고유 요인명은 14). 예외가 안 나고
-       AHP 가중치만 묽어진다 — **안 터지고 값만 틀리는** 유형이다.
-
-       `run_id` 는 요청으로 받지 않는다. `domain` 과 **같이** `booth_candidates`
-       행에서 온다(`/stream` 이 `parcel_id` 로 이미 읽는 그 행). 같은 행에서 뽑으면
-       "논의 대상"과 "논의 근거"가 어긋날 수가 없다. 파라미터로 받으면 A run 의
-       후보점에 B run 의 감리 근거를 넘길 수 있다.
-
-       ⚠ 정본 산출물의 run_id 는 두 테이블 모두 `"정본"` 이다. 예전엔 각 적재기가
-       STEP 폴더 이름(`step1_output` / `step4_output`)을 넣어 **같은 정본인데 값이
-       갈렸다** — 그대로 두고 run_id 를 걸면 정본 도메인이 0건이 된다.
-
-    맞는 행이 0개면 **조용히 넓히지 않고 raise 한다**(원칙 1). 예컨대 run_id 를 빼고
-    다시 찾으면 다른 실행의 근거로 5분짜리 토론이 완주한다.
-    바깥 except 가 SSE 에러 패킷으로 바꿔주므로 프런트는 "AI 엔진 오류"가 아니라
-    무엇이 없는지를 받는다.
-    """
-    rows = (
-        (
-            await db.execute(
-                select(AuditRule).where(
-                    AuditRule.domain == domain,
-                    AuditRule.run_id == run_id,
-                    AuditRule.target_facility == facility_type,
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    if rows:
-        return list(rows)
-
-    total = await db.scalar(select(func.count()).select_from(AuditRule))
-    if not total:
-        raise RuntimeError(
-            "audit_rules 가 비어 있다. STEP1 감리 산출물을 먼저 적재할 것: "
-            "python scripts/load_audit_data.py <도메인>"
-        )
-    # 어느 쪽이 어긋났는지 구분해서 알려준다 — 도메인이 없는 것, 그 도메인에 그 실행이
-    # 없는 것, 그 실행에 그 시설이 없는 것은 처치가 전부 다르다.
-    known = (
-        (
-            await db.execute(
-                select(
-                    AuditRule.domain, AuditRule.run_id, AuditRule.target_facility
-                ).distinct()
-            )
-        )
-        .all()
-    )
-    raise RuntimeError(
-        f"audit_rules 에 도메인 '{domain}' · 실행 '{run_id}' · 시설 '{facility_type}' "
-        f"규칙이 없다. 적재된 (도메인, 실행, 시설): {[tuple(r) for r in known]}. "
-        f"적재: python scripts/load_audit_data.py {domain}"
-        + (f" --run {run_id}" if run_id != "정본" else "")
-    )
-
-
-async def _fetch_and_parse_audit_rules_from_db(
-    db: AsyncSession, facility_type: str, domain: str, run_id: str
-) -> str:
-    """DB에서 AuditRule을 가져와 포맷팅된 문자열로 반환"""
-    if USE_MOCK_DB:
-        try:
-            with open("dummy_audit.json", "r", encoding="utf-8") as f:
-                audit_data = json.load(f)
-
-            class MockRule:
-                def __init__(self, r_type, rat, src):
-                    self.role_type = r_type
-                    self.rationale = rat
-                    self.source = src
-
-            rules = []
-            for result in audit_data.get("results", []):
-                for role in result.get("roles", []):
-                    rules.append(
-                        MockRule(
-                            role.get("role"), role.get("rationale"), role.get("source")
-                        )
-                    )
-        except Exception as e:
-            print(f"Mock Audit Load Error: {e}")
-            rules = []
-    else:
-        rules = await _select_audit_rules(db, facility_type, domain, run_id)
-
-    if not rules:
-        return "프론트엔드 감리 데이터 없음"
-
-    positive = set()
-    negative = set()
-    hard_exclusion = set()
-
-    for r in rules:
-        rationale = r.rationale or ""
-        # 산출물의 `source` 는 조항 문자열이거나 리터럴 'human_confirmed' 다
-        # (gam2_audit_judgment_test.apply_radius_answer 가 사람 확정 시 덮어쓴다).
-        # 그대로 찍으면 프롬프트에 "(근거: human_confirmed)" 가 들어간다.
-        source = r.source or "출처 불명"
-        if source == "human_confirmed":
-            source = "담당자 확정(HITL)"
-
-        if r.role_type == "positive_factor":
-            positive.add(f"- {rationale}")
-        elif r.role_type == "negative_factor":
-            negative.add(f"- {rationale}")
-        elif r.role_type == "hard_exclusion":
-            # 🔴 배제반경은 토론의 핵심 사실이다. 예전 스키마엔 컬럼이 없어
-            #    "10m 이내 금지" 가 프롬프트에서 통째로 빠져 있었다.
-            what = r.facility_type or "해당 시설"
-            if r.exclusion_radius_m is not None:
-                head = f"{what} 반경 {int(r.exclusion_radius_m)}m 이내 설치 금지"
-            elif r.exclusion_type == "polygon":
-                head = f"{what} 구역 내 설치 금지(면 배제)"
-            else:
-                head = f"{what} 배제(반경 미확정)"
-            hard_exclusion.add(f"- [절대금지] {head} — {rationale} (근거: {source})")
-
-    lines = []
-    if positive:
-        lines.append("## 설치 가점 요인\n" + "\n".join(sorted(positive)))
-    if negative:
-        lines.append("## 설치 감점/갈등 요인\n" + "\n".join(sorted(negative)))
-    if hard_exclusion:
-        lines.append("## 절대 배제(금지) 요인\n" + "\n".join(sorted(hard_exclusion)))
-
-    if not lines:
-        return "유효한 감리 팩터가 발견되지 않았습니다."
-
-    return "\n\n".join(lines)
-
-
-async def _extract_dynamic_meta_from_audit_rules(
-    db: AsyncSession, facility_type: str, domain: str, run_id: str
-) -> dict:
-    """DB에서 AuditRule을 가져와 동적 메타데이터 반환"""
-    if USE_MOCK_DB:
-        facility = "흡연부스"
-        raw_weights = {"보행혼잡도": 0.4, "소음민감도": 0.3, "상권활성화": 0.3}
-        try:
-            with open("dummy_audit.json", "r", encoding="utf-8") as f:
-                audit_data = json.load(f)
-            facility = audit_data.get("facility_inference", {}).get(
-                "facility", "흡연부스"
-            )
-            parsed_weights = {}
-            for result in audit_data.get("results", []):
-                for role in result.get("roles", []):
-                    if (
-                        role.get("role") in ["positive_factor", "negative_factor"]
-                        and role.get("weight") is not None
-                    ):
-                        f_type = (
-                            role.get("facility_type") or result.get("summary", "")[:100]
-                        )
-                        parsed_weights[f_type] = abs(float(role.get("weight")))
-            if parsed_weights:
-                raw_weights = parsed_weights
-        except Exception:
-            pass
-
-        jibun = "서울특별시 용산구 (감리 대상 부지)"
-        total_w = sum(raw_weights.values())
-        ahp_weights = (
-            {k: round(v / total_w, 2) for k, v in raw_weights.items()}
-            if total_w > 0
-            else {}
-        )
-        return {"facility_type": facility, "jibun": jibun, "ahp_weights": ahp_weights}
-
-    rules = await _select_audit_rules(db, facility_type, domain, run_id)
-
-    # 🔴 2026-08-09 — 여기 두 줄이 원래 이랬다:
-    #      facility = [r.facility_type for r in rules ...][0]
-    #      factor_name = r.facility_type or "요인"
-    #    `facility_type` 하나로 **대상 시설**과 **요인 이름**을 겸했다. 실제 산출물에서
-    #    `facility_type` 은 배제 대상(금연구역·어린이집…)이라 첫 값이 "금연구역" 이었고,
-    #    가점 요인 8건은 전부 `facility_type` 이 없어 이름이 죄다 `"요인"` 으로 겹쳐
-    #    **dict 키 충돌로 1개만 남았다**(8개 → 1개). 안 터지고 값만 사라진다.
-    #    이제 컬럼이 분리돼 있다 — target_facility(대상) / factor_name(요인).
-    facility = next((r.target_facility for r in rules if r.target_facility), facility_type)
-
-    # 지역도 산출물의 facility_inference.region 을 쓴다. "용산구" 하드코딩이었다(원칙 2).
-    region = next((r.region for r in rules if r.region), None)
-    jibun = f"{region} (감리 대상 부지)" if region else "감리 대상 부지"
-
-    raw_weights = {}
-    for r in rules:
-        if (
-            r.role_type in ["positive_factor", "negative_factor"]
-            and r.weight is not None
-        ):
-            name = r.factor_name or r.facility_type or f"데이터셋 {r.dataset_id}"
-            raw_weights[name] = abs(float(r.weight))
-
-    total_w = sum(raw_weights.values())
-    ahp_weights = {}
-    if total_w > 0:
-        for k, v in raw_weights.items():
-            ahp_weights[k] = round(v / total_w, 2)
-
-    return {
-        "facility_type": facility,
-        "jibun": jibun,
-        "ahp_weights": ahp_weights,
-    }
-
-
 async def run_debate_and_publish(
     parcel_id: int,
     facility_type: str,
@@ -407,48 +190,20 @@ async def run_debate_and_publish(
             #    돌아 DB 에 저장되고, 프런트엔 정상 결과로 보인다 — 안 터지고 값만 틀린다.
             #    게다가 용산은 MVP 도메인 값이라 성동구에서도 용산 좌표가 나온다.
             #    조회가 안 되면 멈춘다. 바깥 except 가 SSE 로 사유를 내보낸다.
-            result = await db.execute(
-                select(
-                    Parcel,
-                    func.ST_Y(Parcel.geom).label("lat"),
-                    func.ST_X(Parcel.geom).label("lng"),
-                ).where(Parcel.id == parcel_id)
-            )
-            row = result.first()
-            if row is None:
-                raise CandidateNotFound(
-                    f"booth_candidates 에 id={parcel_id} 인 후보점이 없다. "
-                    "STEP4 Top-N 을 먼저 적재할 것: "
-                    f"python scripts/load_topn_candidates.py <도메인> --yes"
-                )
-
-            parcel = row[0]
-
-            # 도메인이 비어 있으면 **어느 도메인의 감리 근거를 쓸지 알 수 없다.**
-            # 추측해서 아무 규칙이나 쓰면 5분짜리 토론이 엉뚱한 근거로 완주한다(원칙 1·3).
-            # 실제로 `load_topn_candidates.py` 이전에 손으로 넣은 1행이 domain NULL 이다.
-            domain = parcel.domain
-            if not domain:
-                raise CandidateNotFound(
-                    f"booth_candidates id={parcel_id} 에 domain 이 없다. "
-                    "어느 도메인의 감리 규칙을 쓸지 판단할 수 없다. "
-                    "STEP4 Top-N 을 적재기로 다시 넣을 것: "
-                    "python scripts/load_topn_candidates.py <도메인> --yes"
-                )
-
+            #    조회가 안 되면 멈춘다. 바깥 except 가 SSE 로 사유를 내보낸다.
+            #
             # 🔴 `run_id` 도 **같은 행에서** 꺼낸다 (2026-08-10, 사람 승인).
             #    감리 규칙은 실행마다 다시 적재되므로 도메인만으로는 2회차에
             #    두 실행의 규칙이 섞인다(`_select_audit_rules` 주석).
             #    "어디를 논의할지"와 "무엇을 근거로 논의할지"가 한 행에서 나오면
             #    둘이 어긋날 수가 없다 — domain 을 여기서 꺼내는 이유와 같다.
-            run_id = parcel.run_id
-            if not run_id:
-                raise CandidateNotFound(
-                    f"booth_candidates id={parcel_id} 에 run_id 가 없다. "
-                    "어느 실행의 감리 규칙을 쓸지 판단할 수 없다. "
-                    "STEP4 Top-N 을 적재기로 다시 넣을 것: "
-                    "python scripts/load_topn_candidates.py <도메인> --yes"
-                )
+            #
+            # 위 세 검사는 `resolve_candidate` 안에 있다. B 다인 토론도 같은 함수를
+            # 쓴다 — 폴백 금지 규칙이 엔진마다 따로 있으면 한쪽만 되살아난다.
+            resolved = await resolve_candidate(db, parcel_id)
+            parcel = resolved["parcel"]
+            domain = resolved["domain"]
+            run_id = resolved["run_id"]
 
             audit_context = await _fetch_and_parse_audit_rules_from_db(
                 db, facility_type, domain, run_id
@@ -458,41 +213,33 @@ async def run_debate_and_publish(
             )
 
             # (기존에 DB의 facility_type으로 강제 덮어씌우던 로직 제거: 클라이언트 요청 facility_type 유지)
-            # booth_candidates 테이블에는 직접적인 지번 컬럼이 없습니다.
+            # 🔴 "booth_candidates 에는 지번 컬럼이 없습니다" 라고 적혀 있던 자리다.
+            #    2026-08-10 적재기가 `jibun` 을 넣으면서 거짓이 됐고, 2026-08-11
+            #    사람 지시로 **실제 지번을 쓴다**. 조립은 `site_jibun` 한 곳에 있다 —
+            #    B 다인 토론(`build_site_context`)도 같은 함수를 쓴다.
             # 위경도는 ST_Y, ST_X로 추출한 실제 값을 사용합니다.
             gis_data = {
-                "lat": row.lat,
-                "lng": row.lng,
-                "jibun": f"후보지 #{parcel.id} (실제 위치 기반)",
+                "lat": resolved["lat"],
+                "lng": resolved["lng"],
+                "jibun": site_jibun(parcel, audit_meta.get("region")),
                 # ⚠ 측정값이 아니다. 산출 근거가 없어 고정값을 쓰고 있고,
                 #   그 사실을 `result_json["determinism"]` 에 남긴다(원칙 4).
                 "intensity_level": "보통",
                 "ahp_weights": audit_meta.get("ahp_weights", {}),
             }
 
-            # 0. DB에서 실시간 공간 쿼리로 POI 문맥 가져오기
-            if USE_MOCK_DB:
-                try:
-                    import os
+            # 0. 그 후보점의 **run 이 낸 STEP2 산출물**에서 주변 문맥을 센다.
+            #    예전엔 별도 적재 테이블 6개(`gis_service.get_poi_context_from_db`)를 봤는데
+            #    그 테이블엔 `domain`·`run_id` 가 없어 **어떤 run 을 물어도 같은 답**이
+            #    나왔다(사유는 `app/services/poi_context.py` 모듈 주석).
+            #    B 다인 토론도 같은 함수를 쓴다 — 두 엔진이 다른 문맥으로 토론하면
+            #    두 결과를 나란히 놓고 비교할 수 없다.
+            poi_context = (await build_poi_context(resolved))["text"]
 
-                    mock_poi_path = os.path.join(
-                        "data_ai페르소나_임시", "parcel_context.json"
-                    )
-                    with open(mock_poi_path, "r", encoding="utf-8") as f:
-                        mock_poi_data = json.load(f)
-                    poi_lines = mock_poi_data.get(str(parcel_id))
-                    if not poi_lines and mock_poi_data:
-                        poi_lines = next(iter(mock_poi_data.values()))
-                    poi_context = (
-                        "\n".join([f"- {msg}" for msg in poi_lines])
-                        if poi_lines
-                        else ""
-                    )
-                except Exception as e:
-                    print(f"Mock POI Load Error: {e}")
-                    poi_context = ""
-            else:
-                poi_context = await gis_service.get_poi_context_from_db(db, parcel_id)
+            # 🔴 POI 를 붙이기 **전** 상태를 따로 잡아둔다. 아래에서 이어붙이고 나면
+            #    「감리가 말한 것」과 「공간 연산이 말한 것」이 한 덩어리가 되어
+            #    결과 스냅샷에서 구분이 사라진다.
+            audit_context_no_poi = audit_context
 
             if poi_context:
                 audit_context += f"\n\n## 📍 주변 인프라 요인 (DB 연산)\n{poi_context}"
@@ -511,45 +258,27 @@ async def run_debate_and_publish(
             # 2. LangGraph 초기화 및 상태 세팅
             graph = build_discussion_graph()
 
-            # 토론 시작 전 공통 RAG(Common RAG) 1회 선검색
-            # [A-2] 시설 종류별 맞춤형 검색 키워드 매핑 (범용성 확보)
-            facility_keywords = {
-                "흡연부스": "금연구역 지정 흡연시설 간접흡연 위치 거리 제한 조건",
-                "전기차 충전소": "전기자동차 충전시설 주차장 면적 할당 화재 안전 규제",
-                "청년주택": "청년주택 공공임대 용적률 완화 역세권 지원 혜택",
-                "소각장": "폐기물 처리시설 환경오염 배출 허용 기준 주민 보상 갈등",
-            }
-
-            # 딕셔너리에 시설이 있으면 해당 키워드 사용, 없으면 기본(범용) 키워드 사용
-            specific_keywords = facility_keywords.get(
-                facility_type, "설치 기준 허가 규제 갈등 중재 혜택 제한 조건"
+            # 토론 시작 전 공통 RAG(Common RAG) 1회 선검색.
+            # 시설별 검색 키워드와 `facility_type` 필터는 공용 함수 안에 있다 —
+            # B 다인 토론도 **같은 조문**으로 토론해야 두 결과를 나란히 비교할 수 있다.
+            common_rag, rag_docs_list = await retrieve_ordinance_texts(
+                facility_type, terms=audit_meta.get("exclusion_targets")
             )
 
-            # 시설 이름과 맞춤 키워드를 결합하여 최종 쿼리 생성
-            query = f"{facility_type} {specific_keywords}"
-            try:
-                vector_db = get_vector_db()
-                retrieved_docs = await vector_db.retrieve_similar_statutes(
-                    query, top_k=5, facility_type=facility_type
-                )
-                # [C-7] 0건(정상)과 검색 장애를 문구로 구분한다.
-                # common_rag는 조례데이터 rag
-                if not retrieved_docs:
-                    common_rag = (
-                        "현재 해당 지역에 적용할 수 있는 조례나 법령 정보가 없습니다."
-                    )
-                    rag_docs_list = []
-                else:
-                    rag_docs_list = retrieved_docs
-                    # [DOC_ID: N] 형식으로 컨텍스트 조립
-                    rag_texts = []
-                    for d in retrieved_docs:
-                        rag_texts.append(f"[DOC_ID: {d['doc_id']}] {d['text']}")
-                    common_rag = "\n\n".join(rag_texts)
-            except Exception as e:
-                print(f"[RAG Error] 조례 검색 실패: {e}")
-                common_rag = "조례 검색 중 오류가 발생했습니다."
-                rag_docs_list = []
+            # 이 토론이 **무엇을 근거로 했는지**를 결과에 박아둔다(원칙 4).
+            # 「나중에 다시 조회하면 나온다」는 전제는 실제로 깨진다 —
+            # `load_audit_data.py` 는 같은 `(domain, run_id)` 의 audit_rules 를 교체하는데
+            # `conflict_simulations` 와는 FK 가 없어서 **토론은 남고 근거만 바뀐다.**
+            # 조립은 A·B 공용 함수 한 곳에 있다(두 엔진의 근거를 비교하려면 모양이 같아야 한다).
+            basis = basis_snapshot(
+                domain=domain,
+                run_id=run_id,
+                facility_type=facility_type,
+                audit_context=audit_context_no_poi,
+                poi_context=poi_context,
+                rag_docs=rag_docs_list,
+                audit_meta=audit_meta,
+            )
 
             # ===== [검증용 백엔드 터미널 로그] =====
             print("\n" + "=" * 60)
@@ -730,6 +459,9 @@ async def run_debate_and_publish(
                                 "conflict_factors": current_state.get(
                                     "ahp_weights", {}
                                 ),
+                                # 이 토론에 실제로 들어간 근거 원문. 결론만 남기면
+                                # 나중에 "무엇을 보고 이렇게 판단했나"를 되짚을 수 없다.
+                                "basis": basis,
                                 # 이 토론에 들어간 값 중 **측정된 게 아닌 것**을 밝힌다.
                                 # 안 적으면 AI 가 판정한 값처럼 읽힌다(원칙 4).
                                 "determinism": {
@@ -744,35 +476,32 @@ async def run_debate_and_publish(
                             }
 
                             # 최종 JSON을 DB에 저장 (ConflictSimulation)
-                            if USE_MOCK_DB:
-                                print("=== [MOCK 모드] DB 저장 우회 완료 ===")
-                            else:
-                                try:
-                                    sim_id = await _persist_simulation(
-                                        db=db,
-                                        parcel_id=parcel_id,
-                                        facility_type=facility_type,
-                                        result_json=result_json,
-                                        css_score=css_score,
-                                        scenarios=final_scenarios_list,
-                                        debate_logs=debate_logs,
-                                    )
-                                    logger.info(
-                                        "[simulations] DB 저장 성공 "
-                                        f"simulation_id={sim_id} parcel_id={parcel_id} "
-                                        f"debate_logs={len(debate_logs)}행"
-                                    )
-                                except Exception as e:
-                                    await db.rollback()
-                                    # 저장에 실패해도 토론 결과 자체는 Redis 로 나간다.
-                                    # 여기서 raise 하면 5분짜리 토론 결과가 통째로 날아간다.
-                                    # 대신 **반드시 보이게** 남긴다 — 예전엔 `print` 라
-                                    # 백그라운드 태스크 stdout 에 묻혀 아무 데도 안 남았다(원칙 1·4).
-                                    logger.error(
-                                        "[simulations] conflict_simulations 저장 실패 "
-                                        f"(parcel_id={parcel_id}): {e}",
-                                        exc_info=True,
-                                    )
+                            try:
+                                sim_id = await _persist_simulation(
+                                    db=db,
+                                    parcel_id=parcel_id,
+                                    facility_type=facility_type,
+                                    result_json=result_json,
+                                    css_score=css_score,
+                                    scenarios=final_scenarios_list,
+                                    debate_logs=debate_logs,
+                                )
+                                logger.info(
+                                    "[simulations] DB 저장 성공 "
+                                    f"simulation_id={sim_id} parcel_id={parcel_id} "
+                                    f"debate_logs={len(debate_logs)}행"
+                                )
+                            except Exception as e:
+                                await db.rollback()
+                                # 저장에 실패해도 토론 결과 자체는 Redis 로 나간다.
+                                # 여기서 raise 하면 5분짜리 토론 결과가 통째로 날아간다.
+                                # 대신 **반드시 보이게** 남긴다 — 예전엔 `print` 라
+                                # 백그라운드 태스크 stdout 에 묻혀 아무 데도 안 남았다(원칙 1·4).
+                                logger.error(
+                                    "[simulations] conflict_simulations 저장 실패 "
+                                    f"(parcel_id={parcel_id}): {e}",
+                                    exc_info=True,
+                                )
 
                             # Redis에도 최종 JSON 데이터 10분(600초) 임시 저장 (캐싱 및 GUI 검증용)
                             try:
@@ -968,6 +697,254 @@ async def list_booth_candidates(
             }
             for p, lat, lng in rows
         ],
+    }
+
+
+@router.get("/hearings")
+async def list_hearings(
+    run_id: str,
+    domain: str | None = None,
+    engine: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """이 **실행(run)** 에서 열린 공청회 목록.
+
+    🔴 `conflict_simulations` 에는 **`run_id` 컬럼이 없다.** 연결 경로는
+       `parcel_id → booth_candidates.id → booth_candidates.run_id` **조인 하나뿐**이라
+       "이 run 의 토론" 은 여기서만 물을 수 있다. 프런트는 `status.json` 의
+       `loaded.run_id` 를 그대로 넘기면 된다.
+
+    - `run_id` 는 **필수**다. 생략 시 최근 run 을 고르는 편의를 두지 않았다 —
+      결과 문서 목록에서 어느 실행인지 모르면 목록 자체가 근거가 안 된다.
+    - 정렬은 후보 `rank` 오름차순, 같은 후보 안에서는 `simulation_id` 오름차순.
+    - 후보점은 있는데 토론이 없으면 **빈 배열 + 200** 이다(참인 진술). 후보점 자체가
+      없으면 404 — 둘은 다른 상태다.
+
+    🔴 **`result_url` 이 항상 채워지지는 않는다.** `/results/{parcel_id}` 는 그 필지의
+       **가장 최근 1건**만 돌려주므로(`ORDER BY id DESC`), 같은 필지를 여러 번 토론했다면
+       옛 건에는 가리킬 URL 이 없다. 없는 걸 채우면 프런트가 **다른 토론 결과**를 그
+       토론의 결과로 표시한다 — 안 터지고 값만 틀린다. 그래서 `is_latest_for_parcel`
+       를 같이 준다. (같은 필지 재토론 정책은 프런트 회신 대기 중)
+       ⚠ **B 는 이 문제가 없다** — 조회가 `hearing_results_b.id` 단건이라 옛 건도
+         자기 URL 을 갖는다. A 만 「필지 최신 1건」 조회라서 생기는 제약이다.
+
+    🔴 **행의 키 집합은 `engine` 에 따라 다르다.** A 는 `simulation_id`·`css_score`·
+       `scenario_code`·`debate_log_count`, B 는 `hearing_id`·`topic`·`purpose`·
+       `persona_count`·`message_count` 를 갖는다. 두 엔진은 합치지 않기로 한 것이라
+       (2026-08-10) 산출물 지표가 겹치지 않는다 — 공통 칸에 억지로 접으면 없는
+       대응관계를 지어내게 된다(원칙 5). 모든 행에 `engine` 이 있으니 그걸로 가른다.
+    """
+    if engine is not None and engine not in ("A", "B"):
+        raise HTTPException(status_code=400, detail="engine 은 'A' 또는 'B' 다")
+
+    cand_stmt = select(func.count(Parcel.id)).where(Parcel.run_id == run_id)
+    if domain is not None:
+        cand_stmt = cand_stmt.where(Parcel.domain == domain)
+    if await db.scalar(cand_stmt) == 0:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"run_id={run_id!r}"
+                + (f" domain={domain!r}" if domain else "")
+                + " 의 후보점이 booth_candidates 에 없다. "
+                "적재되지 않은 run 이거나 run_id 가 틀렸다."
+            ),
+        )
+
+    hearings: list[dict] = []
+
+    # ── A 대립 토론 (conflict_simulations) ──────────────────────────────
+    a_stmt = (
+        select(
+            ConflictSimulation.id.label("simulation_id"),
+            ConflictSimulation.parcel_id,
+            ConflictSimulation.facility_type,
+            ConflictSimulation.css_score,
+            ConflictSimulation.candidate_land_id,
+            ConflictSimulation.created_at,
+            # 시나리오는 **매 실행 1칸만** 채워진다. 본문 대신 어느 칸인지만 가져온다
+            # (목록 응답에 Text 3칸을 실을 이유가 없다).
+            ConflictSimulation.optimal_scenario.isnot(None).label("has_a"),
+            ConflictSimulation.normal_scenario.isnot(None).label("has_b"),
+            ConflictSimulation.worst_scenario.isnot(None).label("has_c"),
+            Parcel.rank,
+            Parcel.domain,
+            Parcel.run_id,
+            Parcel.jibun,
+            func.count(DebateLog.id).label("debate_log_count"),
+        )
+        .join(Parcel, Parcel.id == ConflictSimulation.parcel_id)
+        .outerjoin(DebateLog, DebateLog.simulation_id == ConflictSimulation.id)
+        .where(Parcel.run_id == run_id)
+        .group_by(ConflictSimulation.id, Parcel.id)
+        .order_by(Parcel.rank.asc().nullslast(), ConflictSimulation.id.asc())
+    )
+    if domain is not None:
+        a_stmt = a_stmt.where(Parcel.domain == domain)
+
+    if engine != "B":
+        rows = (await db.execute(a_stmt)).all()
+
+        # 같은 필지의 여러 토론 중 마지막 것 = `/results/{parcel_id}` 가 돌려주는 그 행.
+        # parcel_id 는 run 마다 새로 발번되는 serial PK 라 이 결과집합 안에서 최대값을
+        # 구하면 전역 최대값과 같다(다른 run 이 같은 parcel_id 를 갖지 않는다).
+        latest_of: dict[int, int] = {}
+        for r in rows:
+            if r.simulation_id > latest_of.get(r.parcel_id, -1):
+                latest_of[r.parcel_id] = r.simulation_id
+
+        for r in rows:
+            is_latest = latest_of[r.parcel_id] == r.simulation_id
+            scenario_code = (
+                "A" if r.has_a else "B" if r.has_b else "C" if r.has_c else None
+            )
+            hearings.append(
+                {
+                    "simulation_id": r.simulation_id,
+                    # 🔴 상수 "A" 다 — 추정이 아니라 **이 쿼리가 읽는 테이블이
+                    #    `conflict_simulations` 하나**라서다. B 는 `hearing_results_b`
+                    #    를 읽는 아래 블록이 따로 만든다(엔진을 안 합쳤으므로 조회도
+                    #    안 합친다).
+                    "engine": "A",
+                    "parcel_id": r.parcel_id,
+                    "rank": r.rank,
+                    "jibun": r.jibun,
+                    "domain": r.domain,
+                    "run_id": r.run_id,
+                    "facility_type": r.facility_type,
+                    "candidate_land_id": r.candidate_land_id,
+                    "css_score": float(r.css_score)
+                    if r.css_score is not None
+                    else None,
+                    "scenario_code": scenario_code,
+                    "debate_log_count": r.debate_log_count,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                    "is_latest_for_parcel": is_latest,
+                    # 위 docstring 참조 — 최신 건에만 URL 을 준다.
+                    "result_url": f"/api/v1/simulations/results/{r.parcel_id}"
+                    if is_latest
+                    else None,
+                    "pdf_url": f"/api/v1/simulations/results/{r.parcel_id}/pdf"
+                    if is_latest
+                    else None,
+                }
+            )
+
+    # ── B 다인 토론 (hearing_results_b) ─────────────────────────────────
+    # 🔴 2026-08-11 이전엔 이 자리가 **501** 이었다("저장 경로가 없다"). 이제 있다.
+    #    A 와 달리 `result_url` 이 **항상** 채워진다 — 조회 키가 필지가 아니라
+    #    `hearing_results_b.id` 라 옛 건도 자기 자신을 가리킬 수 있다.
+    if engine != "A":
+        b_stmt = (
+            select(
+                HearingResultB.id.label("hearing_id"),
+                HearingResultB.parcel_id,
+                HearingResultB.facility_type,
+                HearingResultB.topic,
+                HearingResultB.purpose,
+                # personas·result_json 은 목록에 안 싣는다(통짜 JSONB 다).
+                # 몇 명이 토론했는지만 세어 준다.
+                func.jsonb_array_length(HearingResultB.personas).label("persona_count"),
+                HearingResultB.message_count,
+                HearingResultB.created_at,
+                Parcel.rank,
+                Parcel.domain,
+                Parcel.run_id,
+                Parcel.jibun,
+            )
+            .join(Parcel, Parcel.id == HearingResultB.parcel_id)
+            .where(Parcel.run_id == run_id)
+            .order_by(Parcel.rank.asc().nullslast(), HearingResultB.id.asc())
+        )
+        if domain is not None:
+            b_stmt = b_stmt.where(Parcel.domain == domain)
+
+        for r in (await db.execute(b_stmt)).all():
+            hearings.append(
+                {
+                    "hearing_id": r.hearing_id,
+                    "engine": "B",
+                    "parcel_id": r.parcel_id,
+                    "rank": r.rank,
+                    "jibun": r.jibun,
+                    "domain": r.domain,
+                    "run_id": r.run_id,
+                    "facility_type": r.facility_type,
+                    "topic": r.topic,
+                    "purpose": r.purpose,
+                    "persona_count": r.persona_count,
+                    # 0 이면 "한 마디도 안 나온 토론" 이다 — 행이 없는 것과 다르다.
+                    "message_count": r.message_count,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                    "result_url": f"/api/v1/simulations/hearings/b/{r.hearing_id}",
+                }
+            )
+
+    # 엔진이 섞이면 각 블록의 정렬이 이어지지 않는다 — 합친 뒤 한 번 더 세운다.
+    # 키는 (rank, created_at) 이고 rank 가 없는 행은 뒤로 보낸다.
+    hearings.sort(
+        key=lambda h: (
+            h["rank"] is None,
+            h["rank"] if h["rank"] is not None else 0,
+            h["created_at"] or "",
+        )
+    )
+
+    return {
+        "run_id": run_id,
+        "domain": domain,
+        "engine": engine,
+        "count": len(hearings),
+        "hearings": hearings,
+    }
+
+
+@router.get("/hearings/b/{hearing_id}")
+async def get_hearing_b(hearing_id: int, db: AsyncSession = Depends(get_db)):
+    """B 다인 토론 결과 **1건**.
+
+    A 의 `/results/{parcel_id}`(필지의 **최신 1건**)와 키가 다르다 — 여기는
+    `hearing_results_b.id` 단건이다. 그래서 같은 필지를 여러 번 토론해도 옛 건이
+    자기 URL 을 갖는다(`/hearings` 의 `result_url` 이 B 는 항상 채워지는 이유).
+
+    🔴 `result_json` 은 **통짜로 그대로** 내보낸다. B 산출물 모양이 아직 움직이고
+       있어서(B 담당자 소유) 여기서 쪼개면 키가 하나 바뀔 때마다 조용히 NULL 이 된다.
+       `run_id`·`rank`·`jibun` 은 저장돼 있지 않고 `booth_candidates` 조인으로 얻는다.
+    """
+    stmt = (
+        select(
+            HearingResultB,
+            Parcel.rank,
+            Parcel.domain,
+            Parcel.run_id,
+            Parcel.jibun,
+        )
+        .join(Parcel, Parcel.id == HearingResultB.parcel_id)
+        .where(HearingResultB.id == hearing_id)
+    )
+    row = (await db.execute(stmt)).first()
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"hearing_id={hearing_id} 의 B 다인 토론 결과가 없다.",
+        )
+    h, rank, domain, run_id, jibun = row
+
+    return {
+        "hearing_id": h.id,
+        "engine": "B",
+        "parcel_id": h.parcel_id,
+        "rank": rank,
+        "jibun": jibun,
+        "domain": domain,
+        "run_id": run_id,
+        "facility_type": h.facility_type,
+        "topic": h.topic,
+        "purpose": h.purpose,
+        "personas": h.personas,
+        "message_count": h.message_count,
+        "result_json": h.result_json,
+        "created_at": h.created_at.isoformat() if h.created_at else None,
     }
 
 

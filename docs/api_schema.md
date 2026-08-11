@@ -135,20 +135,13 @@
 
 ### `POST /simulations/stream` — 요청 (`StreamRequest`)
 ```json
-{
-  "parcel_id": 123, "facility_type": "흡연부스",
-  "audit_data": {
-    "facility_inference": { "facility": "흡연부스", "region": "용산구" },
-    "results": [
-      { "summary": "보행혼잡도로 인한 갈등 요인",
-        "roles": [
-          { "role": "negative_factor", "weight": -0.4, "rationale": "..." },
-          { "role": "hard_exclusion", "rationale": "학교 30m 이내", "source": "국민건강증진법 제9조제6항제3호" }
-        ] }
-    ]
-  }
-}
+{ "parcel_id": 123, "facility_type": "흡연부스" }
 ```
+
+🔴 **`audit_data` 는 없다**(2026-08-11 제거, 프런트 합의). 프런트가 감리 결과 JSON 을
+실어 보내던 칸인데 핸들러가 **한 번도 읽지 않았다.** 감리 근거는 `parcel_id` →
+`booth_candidates` 행의 `(domain, run_id, facility_type)` 으로 백엔드가 조달한다 —
+요청으로 받으면 후보지와 근거가 어긋날 수 있다. 지금 보내도 **무시**된다(422 아님).
 
 ### 응답 (SSE, `SseMessagePacket`)
 ```json

@@ -142,3 +142,42 @@ class DebateLog(Base):
     created_at = Column(DateTime, server_default=func.current_timestamp())
 
     simulation = relationship("ConflictSimulation", back_populates="debate_logs")
+
+
+class HearingResultB(Base):
+    """화면5 **B 다인 토론**(이해관계자 페르소나) 1회 = 1행.
+
+    A 대립 토론은 `ConflictSimulation` 이다. **합치지 않았다** — 이유는
+    `schema_step5_b.sql` 머리말에 있다(요약: `css_score`·`css_vector` 가 NOT NULL 인데
+    B 는 그 지표를 안 내고, 완화하면 A 의 반쪽 결과도 저장 가능해진다).
+
+    🔴 `run_id` 컬럼이 없다. A 와 같은 경로로 잇는다 —
+       `parcel_id → booth_candidates.id → booth_candidates.run_id`.
+       복사해 두면 후보점 쪽과 어긋날 수 있고, 어긋나도 안 터진다.
+    """
+
+    __tablename__ = "hearing_results_b"
+
+    id = Column(Integer, primary_key=True, index=True)
+    parcel_id = Column(
+        Integer,
+        ForeignKey("booth_candidates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    facility_type = Column(String(100), nullable=True)
+    topic = Column(Text, nullable=True)
+    purpose = Column(Text, nullable=True)
+
+    # 사람이 확정한 페르소나 배열(HITL 결과). 누가 토론했는지 없이는 결과를
+    # 읽을 수 없어서 result_json 안에 묻지 않고 밖으로 뺀다.
+    personas = Column(JSONB, nullable=False)
+
+    # 🔴 통짜다. B 산출물 모양이 아직 움직인다(B 담당자 소유) — 지금 컬럼으로
+    #    쪼개면 그쪽이 키를 하나 바꿀 때마다 조용히 NULL 이 된다.
+    result_json = Column(JSONB, nullable=False)
+
+    # 완성 발화 수. 0 이면 "한 마디도 안 나온 토론" 이고, 행이 없는 것과 다르다.
+    message_count = Column(Integer, nullable=False, default=0)
+
+    created_at = Column(DateTime, server_default=func.current_timestamp())

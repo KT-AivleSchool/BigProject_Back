@@ -167,6 +167,80 @@ def build_rows(doc: dict, domain: str, run_id: str, facility: str) -> list[dict]
     return rows
 
 
+# 삭제로 **딸려 나가는 것**을 세는 질의. 값은 「지우기 전」 기준이다.
+#   conflict_simulations   ON DELETE CASCADE  → 같이 지워진다  (화면5 **A** 대립 토론)
+#   debate_logs            ON DELETE CASCADE  → 위를 따라 같이 지워진다
+#   hearing_results_b      ON DELETE CASCADE  → 같이 지워진다  (화면5 **B** 다인 토론)
+#   verified_precedents    ON DELETE SET NULL → 행은 남고 **연결만 끊긴다**
+#                                               (지워지지 않아 더 안 보인다)
+#
+# 🔴 B 를 빠뜨리면 안 된다. `hearing_results_b` 도 `booth_candidates.id` 를 CASCADE 로
+#    참조한다(`schema_step5_b.sql`). 안 세면 5분짜리 다인 토론이 **소리 없이** 사라지고,
+#    `cascade_loss()` 가 False 를 돌려 `--force` 없이도 지워진다.
+CASCADE_SQL = """
+WITH cs AS (
+    SELECT cs.id FROM conflict_simulations cs
+      JOIN booth_candidates bc ON bc.id = cs.parcel_id
+     WHERE bc.domain = %(domain)s AND bc.run_id = %(run_id)s
+)
+SELECT (SELECT count(*) FROM cs),
+       (SELECT count(*) FROM debate_logs WHERE simulation_id IN (SELECT id FROM cs)),
+       (SELECT count(*) FROM verified_precedents
+         WHERE conflict_simulation_id IN (SELECT id FROM cs)),
+       (SELECT count(*) FROM hearing_results_b hb
+          JOIN booth_candidates bc ON bc.id = hb.parcel_id
+         WHERE bc.domain = %(domain)s AND bc.run_id = %(run_id)s)
+"""
+
+
+def count_cascade(cur, domain: str, run_id: str) -> dict[str, int]:
+    cur.execute(CASCADE_SQL, {"domain": domain, "run_id": run_id})
+    cs, dl, vp, hb = cur.fetchone()
+    return {
+        "conflict_simulations": cs,
+        "debate_logs": dl,
+        "verified_precedents_unlinked": vp,
+        "hearing_results_b": hb,
+    }
+
+
+def cascade_loss(counts: dict[str, int]) -> bool:
+    """덮어쓰면 **되살릴 수 없는 것**이 딸려 나가는가.
+
+    후보점 행 자체는 손실이 아니다 — 같은 `topN.geojson` 에서 다시 만들어진다.
+    공청회 결과는 다르다: LLM 토론 5분이고 발화는 Redis TTL 600초라 **재구성이 안 된다**.
+    A(`conflict_simulations`)든 B(`hearing_results_b`)든 같다 — 엔진이 둘이라고
+    한쪽만 지키면 안 지킨 것과 같다.
+    판례 연결(SET NULL)도 한 번 끊기면 어느 공청회였는지 알 방법이 없다.
+    """
+    return bool(
+        counts["conflict_simulations"]
+        or counts["hearing_results_b"]
+        or counts["verified_precedents_unlinked"]
+    )
+
+
+def print_cascade(counts: dict[str, int], run_id: str) -> None:
+    """사람용 경고 + 러너용 약속된 한 줄.
+
+    🔴 **0 이어도 찍는다.** 줄이 없으면 「딸려 나간 게 없다」가 아니라
+       「옛 적재기라 세지 않았다」다 — 둘은 다르다(원칙 4). 콘솔 출력은 사라지므로
+       러너가 `status.json` 의 `loaded.cascaded` 로 옮겨 남긴다.
+    """
+    if cascade_loss(counts):
+        print(
+            f"⚠ 같은 (domain, run_id) 를 덮어쓴다 — 기존 후보점에 매달린 "
+            f"A 공청회 {counts['conflict_simulations']}건 · "
+            f"발화 {counts['debate_logs']}행 · "
+            f"B 다인토론 {counts['hearing_results_b']}건이 CASCADE 로 함께 지워지고, "
+            f"판례 {counts['verified_precedents_unlinked']}행은 연결이 끊긴다(SET NULL)."
+        )
+    print(
+        f"[CASCADED] table=booth_candidates run_id={run_id} "
+        + " ".join(f"{k}={v}" for k, v in counts.items())
+    )
+
+
 INSERT_SQL = """
 INSERT INTO booth_candidates
     (domain, run_id, facility_type, pnu, jibun, area_m2, width_m,
@@ -189,6 +263,14 @@ def main() -> int:
     ap.add_argument("--run", dest="run_id", default=None, help="runs/<run_id> 산출물 사용")
     ap.add_argument(
         "--yes", action="store_true", help="실제로 적재한다 (기본은 계획만 출력)"
+    )
+    # 🔴 `--yes` 와 별개다. `--yes` 는 「쓰겠다」이고 `--force` 는 「**남의 공청회
+    #    결과를 지우면서까지** 쓰겠다」다. 하나로 합치면 평소 적재와 파괴적 적재가
+    #    같은 손짓이 된다 (2026-08-11 프런트 요청 ⑤).
+    ap.add_argument(
+        "--force",
+        action="store_true",
+        help="기존 공청회 결과가 CASCADE 로 지워지는 것을 감수하고 덮어쓴다",
     )
     args = ap.parse_args()
 
@@ -217,7 +299,14 @@ def main() -> int:
                 f"({r['lon']:.6f}, {r['lat']:.6f})"
             )
         print(f"   … 이하 {max(0, len(rows) - 5)}행")
-        print("\n[dry-run] DB 에 쓰지 않았다. 적재하려면 --yes 를 붙일 것.")
+        # 🔴 계획 출력이 **지울 것**을 안 말하면 계획이 아니다. 읽기만 하므로
+        #    dry-run 에서도 접속한다 — 접속이 안 되면 그것도 지금 드러나는 게 낫다.
+        with psycopg.connect(DSN, connect_timeout=DB_CONNECT_TIMEOUT) as conn:
+            with conn.cursor() as cur:
+                counts = count_cascade(cur, args.domain, run_id)
+        print_cascade(counts, run_id)
+        need_force = " --force" if cascade_loss(counts) else ""
+        print(f"\n[dry-run] DB 에 쓰지 않았다. 적재하려면 --yes{need_force} 를 붙일 것.")
         return 0
 
     # connect_timeout 을 명시한다 — 없으면 도커가 죽었을 때 libpq 가 260초를
@@ -238,18 +327,27 @@ def main() -> int:
                 )
 
             # 같은 (domain, run_id) 만 교체한다. 다른 도메인·손으로 넣은 행은 안 건드린다.
-            # 🔴 conflict_simulations 가 ON DELETE CASCADE 로 매달려 있다 —
-            #    지우면 그 후보점의 토론 결과도 같이 사라진다. 그래서 몇 건이
-            #    딸려 나가는지 **지우기 전에** 센다.
-            cur.execute(
-                "SELECT count(*) FROM conflict_simulations cs "
-                "JOIN booth_candidates bc ON bc.id = cs.parcel_id "
-                "WHERE bc.domain = %s AND bc.run_id = %s",
-                (args.domain, run_id),
-            )
-            cascaded = cur.fetchone()[0]
-            if cascaded:
-                print(f"⚠ 기존 행에 매달린 conflict_simulations {cascaded}건이 함께 지워진다")
+            # 딸려 나가는 것은 **지우기 전에** 센다 — 지운 뒤엔 셀 방법이 없다.
+            counts = count_cascade(cur, args.domain, run_id)
+            print_cascade(counts, run_id)
+
+            # 🔴 되살릴 수 없는 게 딸려 나가면 **멈춘다**(2026-08-11, 프런트 요청 ⑤).
+            #    예전엔 경고 한 줄을 찍고 그냥 지웠다 — 러너가 돌리면 그 줄은
+            #    run.log 로 흘러가 사라진다. 조용한 파괴보다 시끄러운 정지가 낫다.
+            #    ⚠ 이 정지는 `full` 모드의 정상 경로를 막지 않는다. 새 run_id 에는
+            #      매달린 공청회가 없다 — `_new_run_id` 는 `runs/run_seq.json` 의
+            #      **최고수위**를 쓰므로 run 폴더를 지워도 번호가 안 되돌아간다.
+            #      걸리는 건 **정본 재적재**이거나 원장 밖에서 손수 고른 run_id 이고,
+            #      그때는 실제로 남의 결과를 밟는 것이 맞다.
+            if cascade_loss(counts) and not args.force:
+                raise SystemExit(
+                    f"🔴 (domain={args.domain}, run_id={run_id}) 를 덮어쓰면 "
+                    f"공청회 {counts['conflict_simulations']}건 · "
+                    f"발화 {counts['debate_logs']}행이 지워지고 "
+                    f"판례 {counts['verified_precedents_unlinked']}행의 연결이 끊긴다. "
+                    "LLM 토론은 재구성이 안 된다(발화는 Redis TTL 600초뿐). "
+                    "다른 run_id 로 적재하거나, 정말 지울 거면 --force 를 붙일 것."
+                )
 
             cur.execute(
                 "DELETE FROM booth_candidates WHERE domain = %s AND run_id = %s",

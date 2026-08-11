@@ -133,13 +133,21 @@ def parse_statute(
     text: str,
     doc_title: str,
     *,
-    facility_type: str = "흡연부스",
+    facility_type: str,
     document_id: Optional[int] = None,
     district_id: Optional[int] = None,
     doc_meta: Optional[dict] = None,
 ) -> List[StatuteChunk]:
     """doc_meta: extract_doc_meta() 결과(enforcement_date·doc_no)를 넘기면
-    전 청크 메타데이터에 병합된다. 조례 개정 시 '어느 판(版)의 조문인지' 식별용."""
+    전 청크 메타데이터에 병합된다. 조례 개정 시 '어느 판(版)의 조문인지' 식별용.
+
+    🔴 2026-08-11. `facility_type` 은 **기본값이 없다.** 예전엔 `"흡연부스"` 였다 —
+       어느 도메인의 조례를 올려도 흡연부스로 태깅되고, 그 태그는 검색 필터
+       (`retrieve_similar_statutes(facility_type=…)`)가 그대로 쓴다. 안 터지고
+       근거만 틀린다. 지금 호출자 둘(`upload.py:466` · `ingest_statutes.py:172`)은
+       이미 값을 정해서 넘기고 있었다 — 기본값은 **아무도 안 쓰면서 다음 사람만
+       기다리는 함정**이었다(원칙 2).
+    """
     chunks: List[StatuteChunk] = []
     text = _strip_noise(text, doc_title)  # A5
     body, addenda = _split_addenda(text)

@@ -349,6 +349,26 @@ def _flag_to_dict(f) -> dict:
     return d
 
 
+def _dataset_label(roles) -> tuple[str | None, str | None]:
+    """데이터셋의 **짧은 표시명**. 감리가 낸 값을 옮겨 적을 뿐 만들지 않는다.
+
+    왜 여기서 적나 — 토론 POI 문맥이 「반경 300m 안에 무엇이 몇 개」를 말하려면
+    `clean_NN` 파일마다 사람이 읽을 이름이 필요하다. 예전엔 소비 측이
+    `{"01":"금연구역", …}` 같은 **고정 사전**을 들고 있었는데, `dataset_id` 는
+    업로드 파일명 가나다순이라 도메인이 바뀌면 번호가 다시 매겨진다 —
+    어떤 고정 사전도 다음 도메인에서 틀린다(원칙 2. 흡연 실측 8개 중 4개 오답).
+
+    출처는 `roles[].facility_type` 하나뿐이다. 감리는 이 값을 **배제 대상에만** 낸다
+    (흡연 실측: 11개 중 5개). 나머지는 이름이 **없는 것**이지 못 찾은 게 아니다 —
+    지어내지 않고 `None` 을 돌려주고, 소비 측이 파일명으로 갈지 말지를 정한다(원칙 1·4).
+    """
+    for r in roles or []:
+        ft = r.get("facility_type")
+        if ft:
+            return ft, "audit.facility_type"
+    return None, None
+
+
 def _is_reference_only(roles) -> bool:
     """위치선정 입력 role 이 하나도 없으면 True (GIS 입력 제외 대상)."""
     if not roles:
@@ -588,6 +608,9 @@ def clean_domain(domain_dir: str, csv_preview: bool = False, prune: bool = True)
                     "dataset_id": did,
                     "filename": prof.get("filename"),
                     "roles": [x.get("role") for x in r.get("roles", [])],
+                    # 짧은 표시명. 없으면 null — 파일명으로 대신할지는 소비 측이 정한다.
+                    "label": _dataset_label(r.get("roles", []))[0],
+                    "label_source": _dataset_label(r.get("roles", []))[1],
                     "reference_only": ref_only,
                     "gis_input": not ref_only,  # 위치선정 입력 여부
                     "rows_before": before,
@@ -725,6 +748,9 @@ def clean_domain(domain_dir: str, csv_preview: bool = False, prune: bool = True)
                 "_schema": {
                     "설명": "STEP3 정제 실행 리포트. dataset별 정제 결과·flag·op로그.",
                     "gis_input": "위치선정 GIS 입력 대상 여부(reference_only면 false)",
+                    "label": "데이터셋 표시명. 감리 roles[].facility_type 을 옮겨 적은 것. "
+                    "감리가 안 냈으면 null 이고, 그건 '없다'이지 '못 찾았다'가 아니다",
+                    "label_source": "label 의 출처. 지금은 audit.facility_type 뿐",
                     "whitelists_생산": wl_summary,
                 },
                 "facility": facility,

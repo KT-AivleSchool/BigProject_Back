@@ -24,9 +24,19 @@ from app.core.stakeholder_mode.prompts.renderer import (
 
 
 async def receive_input_node(state: StakeholderGraphState) -> Dict[str, Any]:
-    """1. 감리 AI 데이터 및 조례 결과 수신/파싱 노드"""
-    project_id = state.get("project_id", "PROJECT-001")
-    topic = state.get("topic", "공공시설 후보지 선정")
+    """1. 감리 AI 데이터 및 조례 결과 수신/파싱 노드
+
+    🔴 2026-08-11. `project_id`·`topic` 에 `"PROJECT-001"`·`"공공시설 후보지 선정"`
+       기본값이 있었다. 안건이 안 실려 오면 **그 문구로 토론이 완주한다** — 안 터지고
+       주제만 틀린다. 없으면 멈춘다(원칙 1).
+    """
+    project_id = state.get("project_id")
+    topic = state.get("topic")
+    if not project_id or not topic:
+        raise ValueError(
+            "receive_input_node: project_id·topic 이 필요하다 "
+            f"(project_id={project_id!r}, topic={topic!r}). 기본 안건으로 대신하지 않는다."
+        )
     candidate_sites = state.get("candidate_sites", [])
     ordinance_contexts = state.get("ordinance_contexts", [])
 

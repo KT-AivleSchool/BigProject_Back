@@ -50,8 +50,20 @@ app/core/stakeholder_mode/
 
 ### 📁 `app/api/v1/` (API 엔드포인트 라우터)
 - **`stakeholders.py`**:
-  - `POST /api/v1/stakeholders/generate`: 안건/GIS/조례 입력 시 AI 이해관계자 자동 발굴 API
+  - `POST /api/v1/stakeholders/generate`: AI 이해관계자 자동 발굴 API
   - `POST /api/v1/stakeholders/dynamic/discuss/stream`: LangGraph 기반 실시간 토론 SSE 스트리밍 API
+
+  🔴 **입력은 `parcel_id`(필수) + 사람이 적는 `topic`·`purpose` 다**(2026-08-11).
+  GIS·조례·감리 근거를 요청으로 받던 칸(`gis_data`·`ordinance_data`·`ordinance_contexts`)은
+  **없앴다** — 후보지와 근거가 어긋날 수 있고, A 엔진과 다른 근거로 토론하면 두 결과를
+  나란히 놓고 비교할 수 없다. 조달은 `app/services/candidate_context.py` 한 곳에서 한다.
+  없앤 키를 보내면 **400 이고 본문에 이유가 적힌다**(조용히 무시하지 않는다).
+  `personas` 만은 사람이 준다 — B 의 본질이 HITL 이다.
+
+  🔴 **SSE 는 평평한 이벤트다**(2026-08-11). `{type, node, speaker{id,name,kind}, text, seq}` ·
+  끝은 `data: [DONE]`. 예전엔 LangGraph 청크 원형(`{노드이름: {상태변화}}`)이 그대로 나가
+  **내부 노드 이름이 곧 프런트 계약**이었고 발화자는 프런트가 문자열을 잘라 되찾았다.
+  `type` — `message` · `evaluation` · `report` · `raw`(모르는 노드·키) · `error`.
 - **`report.py`**:
   - `POST /api/v1/report/download/hwpx`: 공문서 규격 HWPX 한글 보고서 바이너리 생성 및 다운로드 API
 

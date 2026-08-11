@@ -21,6 +21,10 @@ from app.api.v1 import auth, audit, pipeline
 #    "구현이 아직 안 된" 게 아니라 **폐기된 것**이다. 되살릴 조건이
 #    "그 서비스를 만들어라"가 아니다 — 만들면 안 된다. 대체재가 이미 있다.
 #      gis_service  → geopandas 로 간다 (메모리 한계 때문. S5 결론 참조)
+#                     ※ 2026-08-06 에 "STEP5 가 쓴다"고 정정했다가, POI 문맥이
+#                       `app/services/poi_context.py` 로 교체되며 import 처가 0곳이
+#                       됐다 → **2026-08-11 파일 삭제**(사람 지시). 자세한 경위는
+#                       CLAUDE.md 「라우터 표면 확정」 절
 #      ahp_service  → STEP3 가중치 구조가 이미 그 일을 한다 (gam2_weight_model.py)
 #    lands.py · ahp.py 는 **삭제했다**(7f66fd9). 죽은 서비스 호출 아니면 하드코딩
 #    응답이었다 — `/lock` 은 입력과 무관하게 `is_locked: True`, `/upload` 는 항상
@@ -103,6 +107,15 @@ async def lifespan(app: FastAPI):
 
     pipeline_runner.reap_orphans()
     logger.info("🧹 [Runs] 이전 서버의 중단된 run 정리 완료.")
+
+    # 🔴 반드시 `reap_orphans()` **뒤**다. 정리기는 `running`·`awaiting_hitl` 인 run 을
+    #    보호하는데, 이전 서버가 죽여놓고 간 run 은 닫히기 전까지 `running` 이다 —
+    #    먼저 돌리면 그 run 들이 영원히 보호되어 디스크가 안 준다.
+    #    실패해도 기동을 막지 않는다(안 지우면 디스크만 쓰지만, 기동이 막히면
+    #    프런트가 통째로 멈춘다). 대신 왜 못 했는지는 로그에 남는다.
+    from app.services import run_pruner
+
+    await run_pruner.prune_on_boot_hook()
 
     yield
 

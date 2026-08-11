@@ -38,6 +38,9 @@ from pathlib import Path
 from app.config import BASE_DIR, DOMAIN_ROOT, domain_prefix, settings
 
 RUNS_ROOT = Path(BASE_DIR) / "runs"
+# 발급한 run 번호의 최고수위 원장. 이름이 `r_<날짜>_*` 와 안 겹쳐야 한다 —
+# 겹치면 자기 자신을 run 폴더로 세게 된다.
+_SEQ_PATH = RUNS_ROOT / "run_seq.json"
 SERVICES_DIR = Path(BASE_DIR) / "app" / "services"
 SCRIPTS_DIR = Path(BASE_DIR) / "scripts"
 
@@ -437,6 +440,8 @@ class _Proc:
         self.markers = markers or {}
         # 적재 프로세스가 `[LOADED] …` 로 알려준 결과. 안 알려주면 빈 dict 다.
         self.loaded: dict[str, int] = {}
+        # `[CASCADED] …` — 덮어쓰면서 **딸려 나간 것**. 0 도 기록한다(빈 dict 와 다르다).
+        self.cascaded: dict[str, int] = {}
 
 
 # DB 적재 스크립트가 마지막에 찍는 **약속된 줄**.
@@ -449,6 +454,15 @@ class _Proc:
 #    `scripts/load_{audit_data,topn_candidates}.py` 의 마지막 print 와 짝이다.
 _LOADED_RE = re.compile(
     r"^\[LOADED\]\s+table=(?P<table>\w+)\s+run_id=(?P<run_id>\S+)\s+rows=(?P<rows>\d+)\s*$"
+)
+
+# 덮어쓰기로 **딸려 나간 것**을 알리는 줄. 같은 이유로 자식이 선언한다 —
+# 지운 뒤엔 셀 방법이 없고, 콘솔 출력은 사라진다.
+#   `[CASCADED] table=booth_candidates run_id=… conflict_simulations=1 debate_logs=14 …`
+# 🔴 값이 0 이어도 자식이 찍는다. 줄이 **없는** 것은 「딸려 나간 게 없다」가 아니라
+#    「그 적재기가 세지 않았다」다 — status 에서도 둘을 섞지 않는다(원칙 4).
+_CASCADED_RE = re.compile(
+    r"^\[CASCADED\]\s+table=(?P<table>\w+)\s+run_id=(?P<run_id>\S+)\s+(?P<pairs>.+?)\s*$"
 )
 
 
@@ -664,14 +678,71 @@ def _validate_domain(domain: str) -> None:
         raise RunRequestError(f"도메인 폴더가 없습니다: {DOMAIN_ROOT}/{domain}")
 
 
+def _read_seq_ledger() -> dict[str, int]:
+    """날짜별 **최고수위**(그날 지금까지 발급한 최대 번호). 파일이 없으면 `{}`.
+
+    🔴 깨져 있으면 `raise` 한다. 조용히 `{}` 로 넘기면 판정이 폴더 세기로 되돌아가는데,
+       그게 바로 이 파일이 막으려는 재사용이다(원칙 1). 사람이 보고 지우는 건 되지만
+       코드가 알아서 무시하면 안 된다.
+    """
+    if not _SEQ_PATH.exists():
+        return {}
+    try:
+        d = json.loads(_SEQ_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        raise RuntimeError(
+            f"run 번호 원장을 읽을 수 없습니다: {_SEQ_PATH} ({e}). "
+            "직접 열어 고치거나 지우십시오 — 지우면 번호가 폴더 기준으로 되돌아가 "
+            "이전 run 의 id 를 다시 쓸 수 있습니다.") from e
+    if not isinstance(d, dict) or not all(
+            isinstance(k, str) and isinstance(v, int) for k, v in d.items()):
+        raise RuntimeError(f"run 번호 원장의 형식이 잘못됐습니다: {_SEQ_PATH}")
+    return d
+
+
+def _write_seq_ledger(ledger: dict[str, int]) -> None:
+    """원장 기록. `_write_status` 와 같은 이유로 원자적 + 재시도다."""
+    tmp = _SEQ_PATH.with_suffix(f".json.{threading.get_ident()}.tmp")
+    with _IO_LOCK:
+        tmp.write_text(json.dumps(ledger, ensure_ascii=False, indent=2), encoding="utf-8")
+        for attempt in range(_REPLACE_RETRIES):
+            try:
+                os.replace(tmp, _SEQ_PATH)
+                return
+            except PermissionError:
+                if attempt == _REPLACE_RETRIES - 1:
+                    raise
+                time.sleep(_REPLACE_BACKOFF_S)
+
+
 def _new_run_id() -> str:
-    """r_YYYYMMDD_NNN. 같은 날짜의 기존 run 다음 번호를 쓴다."""
+    """r_YYYYMMDD_NNN. **한 번 발급한 번호는 다시 쓰지 않는다.**
+
+    🔴 예전엔 `runs/r_<날짜>_*` **폴더를 세어** 다음 번호를 매겼다. 그래서 폴더를
+       지우면 번호가 **되돌아갔다** — 같은 run_id 가 다른 실행을 가리킨다. 대가가 셋이다:
+       ① 적재기가 그 run_id 로 `booth_candidates` 를 덮으면 이전 run 의 공청회·발화가
+       `ON DELETE CASCADE` 로 사라진다 ② 문서에 적어둔 run_id 가 나중에 다른 run 을
+       가리킨다(2026-08-10 에 실제로 밟았다 — 근거로 든 `r_20260810_002/hitl/` 이
+       다른 도메인 run 이었다) ③ `status.json.loaded.cascaded` 가 0 이 아닌 이유를
+       "재사용됐다"로 읽는 진단 자체가 성립하지 않는다.
+       이제 발급한 번호를 `runs/run_seq.json` 에 남기고 **폴더와 원장 중 큰 쪽** 다음을
+       쓴다. 폴더를 지워도 번호는 안 되돌아간다.
+
+    ⚠ 원장은 **발급 시점에** 쓴다. 뒤이어 `start_run` 이 실패하면 그 번호는 버려진다 —
+      번호를 하나 버리는 건 싸고, 다시 쓰는 건 위 셋을 부른다.
+    """
     day = datetime.now().strftime("%Y%m%d")
     RUNS_ROOT.mkdir(parents=True, exist_ok=True)
-    used = [int(m.group(1))
-            for p in RUNS_ROOT.glob(f"r_{day}_*")
-            if (m := re.match(rf"^r_{day}_(\d+)$", p.name))]
-    return f"r_{day}_{max(used, default=0) + 1:03d}"
+    # 폴더도 여전히 본다. 원장이 없던 시절의 run 들이 남아 있고, 원장을 지운 사람이
+    # 있을 수도 있다 — 둘 중 **큰 쪽**을 쓰면 어느 경우에도 안 겹친다.
+    folder_max = max([int(m.group(1))
+                      for p in RUNS_ROOT.glob(f"r_{day}_*")
+                      if (m := re.match(rf"^r_{day}_(\d+)$", p.name))], default=0)
+    ledger = _read_seq_ledger()
+    n = max(folder_max, ledger.get(day, 0)) + 1
+    ledger[day] = n
+    _write_seq_ledger(ledger)
+    return f"r_{day}_{n:03d}"
 
 
 def _prepare_dirs(run_id: str, domain: str, mode: str = MODE_FIXTURE) -> None:
@@ -971,11 +1042,20 @@ def _execute(run_id: str, domain: str, mode: str, start: int = 0) -> None:
                         else _proc_of(stage, domain, base,
                                       *_stage_args(run_id, mode, stage)))
                 _run_one(run_id, doc, proc, log)
-                if proc.loaded:
+                if proc.loaded or proc.cascaded:
                     # 적재 칸이 둘이라 두 번 합류한다. `run_id` 는 _run_one 이
                     # 자식이 찍은 값과 대조해 통과시킨 것이다.
                     doc["loaded"] = {"run_id": run_id,
                                      **(doc.get("loaded") or {}), **proc.loaded}
+                    if proc.cascaded:
+                        # 🔴 덮어쓰면서 지워진 것. 러너 경로에서는 **항상 0 이어야**
+                        #    한다 — `_new_run_id` 가 최고수위 원장을 쓰므로 이 run_id 로
+                        #    적재된 게 있을 수 없다. 0 이 아니면 원장이 지워졌거나
+                        #    누가 같은 run_id 로 손수 적재한 것이다.
+                        #    그 run 의 공청회 결과가 사라졌다는 사실이 여기 말고는
+                        #    남는 곳이 없다 — 자식 콘솔은 run.log 로만 흘러간다.
+                        doc["loaded"]["cascaded"] = {
+                            **(doc["loaded"].get("cascaded") or {}), **proc.cascaded}
                     _write_status(run_id, doc)
                 if stage == "3-2":
                     _assert_provenance(run_id, mode)
@@ -1103,6 +1183,13 @@ def _run_one(run_id: str, doc: dict, proc: _Proc, log) -> None:
                             f"(table={m['table']})")
             else:
                 proc.loaded[m["table"]] = int(m["rows"])
+        elif (m := _CASCADED_RE.match(s)) and m["run_id"] == run_id:
+            # run_id 가 어긋나면 위 `[LOADED]` 대조가 어차피 잡는다.
+            # 여기서 또 던지면 같은 사실을 두 곳에서 판정하게 된다.
+            for kv in m["pairs"].split():
+                k, _, v = kv.partition("=")
+                if v.isdigit():
+                    proc.cascaded[k] = int(v)
         for sid, marker in proc.markers.items():
             if sid != cur and s.startswith(marker):
                 _step(doc, cur).update(
