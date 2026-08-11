@@ -266,6 +266,14 @@ python app\tools\check_auth_real_db.py               :: /auth/* 4개를 **실 DB
                                                      :: 🔴 설정 정합 3항목은 **손으로 적은 설계값**과 댄다
                                                      ::    (`_DESIGN_ACCESS_MIN`=60 · `_DESIGN_REFRESH_DAYS`=7).
                                                      ::    `settings` 를 쓰면 항등식이 되어 `.env` 사고를 못 잡는다
+python app\tools\check_optional_auth.py              :: 선택적 인증 — run 의 **주인** 27항목 (실 DB·실 Redis)
+                                                     :: 🔴 묻는 것은 성공이 아니라 **거절**이다: 만료·위조·
+                                                     ::    refresh를access자리·로그아웃된 토큰 넷 다 401 이고
+                                                     ::    그때 `start_run` 이 **아예 안 불렸는가**
+                                                     :: 🔴 §2 는 `start_run` 을 가짜로 갈아끼운다 — 진짜로
+                                                     ::    부르면 fixture run 이 95초씩 돌고 runs/ 와 DB 적재가
+                                                     ::    남는다. 「DB 에 진짜 남나」는 §3 이 목 없이 묻는다
+                                                     :: `users`·`run_records` 에 넣고 지운다(남의 행 개수 전후 대조)
 
 :: 운영 도구 (PR #220 통합 — 전부 수동. 자동으로 안 돈다)
 python app\tools\get_cache.py {geocode|jimok|list} [질의]   :: Redis 캐시 조회(읽기 전용)
@@ -515,7 +523,20 @@ D:\obsidian_claude\10_OmniSite\
                                        ⚠ **그 1행은 2026-08-10 정리 때 지웠다**(손입력 후보점 ·
                                        domain·run_id 가 NULL 이라 화면5 가 못 쓴다) → 지금 `/results/1`
                                        은 404 다. 회귀가 아니다. 살아 있는 예는 `/results/2`
-  02_작업일지\2026-08-11.md           ← 🔴 **최신.** 화면5 분기 뒷받침 3건 —
+  02_작업일지\2026-08-12.md           ← 🔴 **최신.** `POST /pipeline/runs` **선택적 인증**((가)안)
+                                       + 프런트 저장소 **첫 열람**(읽기 전용).
+                                       §1 실측 3건 — ⓐ 프런트는 **모든 요청에** 토큰을 이미
+                                       싣는다(`client.ts:112`, 공통 `request()`) → 서버 한 칸만
+                                       채우면 값이 흐른다 ⓑ 프런트가 **없는 엔드포인트**
+                                       `GET /pipeline/runs?mine=true` 를 이미 부르고 404 를
+                                       `console.error` 로 삼켜 **마이페이지가 빈 화면**이다
+                                       (응답 모양 `RunMeta` 는 이미 굳었다 — 계약 §3-3)
+                                       ⓒ `mypage/page.tsx:177` 「주인 미상**(이관 전)**」은
+                                       **㉠ 위반**(익명은 미구현이 아니라 정상 상태이고 소급
+                                       귀속 경로가 **없다**) — 우리가 못 고치니 **전달할 것**.
+                                       §2 (가) 근거 · §3 `_resolve_user` 공유 · §4 대조기가
+                                       묻는 것은 **거절**(401 시 `start_run` 0회) · §5 안 한 것
+  02_작업일지\2026-08-11.md           ← 화면5 분기 뒷받침 3건 —
                                        A `/simulations/hearings`(run 별 공청회 목록. `run_id`
                                        컬럼이 없어 **조인으로만 존재**한다) ·
                                        B `/stakeholders/*` `parcel_id` 조달 + 페르소나 키
@@ -639,6 +660,9 @@ D:\obsidian_claude\10_OmniSite\
                                        회신 제안과 다르고(`doc` 하나를 받는다 — 낱개가 아니다),
                                        `\d run_records` 실측·만든 파일 5자리·남은 칸(마이페이지 API)
                                        ·지금 행이 전부 익명이라는 것까지 들어 있다.
+                                       ⚠ **마지막 항목은 2026-08-12 부로 옛말이다** — 선택적 인증을
+                                       붙여 `user_id` 가 채워진다(아래 `check_optional_auth.py`).
+                                       **옛 행은 소급해서 안 채운다**(㉠ — 익명은 정상 상태다).
                                        ⚠ **보낼 필요는 없어졌다**(사람 회신 2026-08-11
                                        「우리쪽에서 만들기로 얘기해서 괜찮아」 — 소유 이전은
                                        이미 양쪽 합의). 지우지 않고 남기는 이유는 **무엇을

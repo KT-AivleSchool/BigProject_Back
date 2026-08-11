@@ -9,10 +9,12 @@
    status.json 과 산출물은 **가공하지 않고 그대로** 내보낸다(계약 4절).
 """
 
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 
+from app.api.deps import get_current_user_optional
+from app.db.base import User
 from app.services import pipeline_runner as runner
 
 router = APIRouter()
@@ -55,11 +57,26 @@ class RunRequest(BaseModel):
 
 
 @router.post("/runs", status_code=202)
-def create_run(req: RunRequest):
-    """실행 시작 → 202 `{"run_id": ...}`. run_id 는 **백엔드가 만든다.**"""
+def create_run(
+    req: RunRequest,
+    user: User | None = Depends(get_current_user_optional),
+):
+    """실행 시작 → 202 `{"run_id": ...}`. run_id 는 **백엔드가 만든다.**
+
+    🔴 **인증은 선택이다.** 토큰을 실으면 그 run 의 주인이 되고(`run_records.user_id`),
+       안 실으면 **익명 run** 으로 정상 실행된다 — 익명은 미구현이 아니라 의도된 정상
+       상태다(4계층 문서 ㉠). 다만 **토큰을 실었는데 못 풀면 401** 이다(`deps.py` 의
+       `get_current_user_optional` 참조) — 만료된 사람의 실행이 익명으로 새면
+       마이페이지에서만 조용히 사라진다.
+
+       주인은 **발급 시점에 한 번** 박히고 나중에 안 채워진다. 로그인 전에 시작한
+       run 을 로그인 후에 내 것으로 만드는 경로는 **없다**(만들면 「누구 run 이었나」의
+       정본이 둘이 된다). 그래서 이 값이 비는 것은 사고가 아니라 기록이다.
+    """
     try:
         run_id = runner.start_run(req.domain, req.mode,
-                                  user_input=req.user_input, topn=req.topn)
+                                  user_input=req.user_input, topn=req.topn,
+                                  user_id=user.id if user else None)
     except runner.RunRequestError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except runner.RunConflict as e:
