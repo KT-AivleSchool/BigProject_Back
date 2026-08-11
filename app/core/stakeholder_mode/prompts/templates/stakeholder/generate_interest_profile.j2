@@ -1,0 +1,45 @@
+당신은 이해관계자의 실제 이해관계를 구조화하는 공공정책 분석가입니다.
+
+[주제]
+{{ topic }}
+
+[분석 대상 이해관계자]
+- 이름: {{ stakeholder.display_name }}
+- 대표 집단: {{ stakeholder.constituency }}
+- 주제와의 관계: {{ stakeholder.relationship_to_topic }}
+- 추천 이유: {{ stakeholder.recommendation_reason }}
+
+[후보지 및 공간정보]
+{{ candidate_contexts }}
+
+[관련 조례 및 행정정보]
+{{ ordinance_contexts }}
+
+이 이해관계자가 다른 이해관계자와 구분되는 관점을 갖도록 다음 내용을 생성하십시오.
+
+1. 가장 중요한 1개의 목표 (primary_goal)
+2. 성공으로 판단하는 구체적인 상태 (success_definition)
+3. 사업을 통해 얻을 수 있는 직접 이익 (expected_benefits)
+4. 사업 때문에 부담할 직접 비용·불편 (expected_costs)
+5. 주요 위험 (major_risks)
+6. 반드시 보호하려는 권익 (protected_interests)
+7. 절대 수용할 수 없는 조건 (red_lines)
+8. 협상 가능한 조건 (negotiable_conditions)
+9. GIS에서 우선 확인해야 할 공간정보 (spatial_focus_tags)
+10. 판단에 필요한 근거 유형 (required_evidence_types)
+11. 판단에 사용할 수치·지표 (preferred_metrics)
+12. 이 페르소나만이 우선적으로 물어야 할 질문 (unique_questions)
+13. 의사결정 과정에서의 역할 (decision_authority)
+14. 위험 수용 성향 (risk_tolerance)
+15. 단기·장기 관점 (time_horizon)
+16. 예상 초기 입장과 그 이유 (likely_initial_position, position_reason)
+17. 이 역할이 함부로 가정해서는 안 되는 사항 (forbidden_assumptions)
+
+차별화 규칙:
+- 모든 이해관계자에게 건강·안전·법규 준수를 동일한 최우선 목표로 부여하지 마십시오.
+- 조례는 규제기관의 핵심 판단 근거가 될 수 있지만, 모든 집단의 중심 관심사로 만들지 마십시오.
+- 관광객은 관광 동선과 이용 편의, 주민은 생활환경, 운영기관은 유지관리와 비용처럼 실제 역할에 맞는 이해관계를 부여하십시오.
+- 이익과 비용을 모두 생성하십시오.
+- 무조건 찬성 또는 무조건 반대하는 성격을 만들지 마십시오.
+- 제공되지 않은 조례 기준, 시설 위치, 거리 또는 성능을 만들지 마십시오.
+- 정보가 없을 때는 필요한 데이터로 표시하십시오.

@@ -55,6 +55,7 @@ LLM 이 아니라 **데이터가** 정하게 한다.
    특히 EV 는 `차`(주차장) 기저율이 0.09% 로 낮아 배수가 과대평가될 수 있다.
    `--lift`·`--share`·`--min-pts` 로 조정 가능하게 두고, 판정 근거를 전부 산출물에 남긴다.
 """
+
 from __future__ import annotations
 
 import geopandas as gpd
@@ -63,11 +64,11 @@ from shapely.ops import unary_union
 
 # 임계 — 도메인 값이 아니라 **통계 판정 파라미터**다(하드코딩 금지 대상이 아님).
 # 근거는 위 실측표. 호출부에서 덮어쓸 수 있다.
-LIFT_MIN = 10.0        # 배수
-SHARE_MIN = 0.10       # 관측 비율
-COUNT_MIN = 3          # 최소 표본 점 수
-GAP_M = 1.0            # 인접 판정 여유 — 지적도 슬리버(경계 미세 틈) 보정
-MAX_ITER = 50          # 인접 확장 반복 상한 (폭주 방어)
+LIFT_MIN = 10.0  # 배수
+SHARE_MIN = 0.10  # 관측 비율
+COUNT_MIN = 3  # 최소 표본 점 수
+GAP_M = 1.0  # 인접 판정 여유 — 지적도 슬리버(경계 미세 틈) 보정
+MAX_ITER = 50  # 인접 확장 반복 상한 (폭주 방어)
 
 
 # =========================================================
@@ -95,13 +96,18 @@ def match_parcels(points: gpd.GeoDataFrame, parcels: gpd.GeoDataFrame):
     """
     if points.crs != parcels.crs:
         points = points.to_crs(parcels.crs)
-    j = gpd.sjoin(points[["geometry"]], parcels[["geometry"]],
-                  how="left", predicate="within")
+    j = gpd.sjoin(
+        points[["geometry"]], parcels[["geometry"]], how="left", predicate="within"
+    )
     return j[~j.index.duplicated()]["index_right"]
 
 
-def lift_table(points: gpd.GeoDataFrame, parcels: gpd.GeoDataFrame,
-               base: dict | None = None, matched=None) -> list[dict]:
+def lift_table(
+    points: gpd.GeoDataFrame,
+    parcels: gpd.GeoDataFrame,
+    base: dict | None = None,
+    matched=None,
+) -> list[dict]:
     """지목별 [{지목, 점수, 관측, 기저, 배수}] + 미매칭 행(지목=None).
 
     배수는 관측/기저다. 기저가 0인 지목(지적도에 없는데 점이 떨어질 수는 없다)은
@@ -113,22 +119,35 @@ def lift_table(points: gpd.GeoDataFrame, parcels: gpd.GeoDataFrame,
     if n == 0:
         return []
 
-    jm = pd.Series(parcels["지목"].reindex(m.dropna()).to_numpy(),
-                   index=m.dropna().index)
+    jm = pd.Series(
+        parcels["지목"].reindex(m.dropna()).to_numpy(), index=m.dropna().index
+    )
     rows = []
     for j, c in jm.value_counts().items():
         b = base.get(j, 0.0)
-        rows.append({"지목": j, "점수": int(c), "관측": c / n,
-                     "기저": b, "배수": (c / n) / b if b > 0 else float("inf")})
+        rows.append(
+            {
+                "지목": j,
+                "점수": int(c),
+                "관측": c / n,
+                "기저": b,
+                "배수": (c / n) / b if b > 0 else float("inf"),
+            }
+        )
     n_un = int(m.isna().sum())
     if n_un:
-        rows.append({"지목": None, "점수": n_un, "관측": n_un / n,
-                     "기저": None, "배수": None})
+        rows.append(
+            {"지목": None, "점수": n_un, "관측": n_un / n, "기저": None, "배수": None}
+        )
     return sorted(rows, key=lambda r: -r["점수"])
 
 
-def classify(rows: list[dict], lift_min: float = LIFT_MIN,
-             share_min: float = SHARE_MIN, count_min: int = COUNT_MIN) -> list[dict]:
+def classify(
+    rows: list[dict],
+    lift_min: float = LIFT_MIN,
+    share_min: float = SHARE_MIN,
+    count_min: int = COUNT_MIN,
+) -> list[dict]:
     """lift_table 행에 판정(`면`/`점`)·사유·`확인요청` 을 붙인다.
 
     미매칭(지목=None)은 항상 점이다 — 필지 밖(도로 위 등)이라 복원할 부지가 없다.
@@ -169,26 +188,38 @@ def classify(rows: list[dict], lift_min: float = LIFT_MIN,
     return rows
 
 
-def review_requests(rows: list[dict], lift_min: float = LIFT_MIN,
-                    share_min: float = SHARE_MIN,
-                    count_min: int = COUNT_MIN) -> list[dict]:
+def review_requests(
+    rows: list[dict],
+    lift_min: float = LIFT_MIN,
+    share_min: float = SHARE_MIN,
+    count_min: int = COUNT_MIN,
+) -> list[dict]:
     """`확인요청` 행을 프런트가 그대로 렌더할 수 있는 형태로 뽑는다.
 
     임계값을 함께 실어 보낸다 — 값만 보면 왜 그 판정인지 사람이 되짚을 수 없다.
     """
-    return [{"지목": r["지목"], "점수": r["점수"], "관측": round(r["관측"], 4),
-             "기저": round(r["기저"], 6) if r["기저"] is not None else None,
-             "배수": round(r["배수"], 2) if r["배수"] is not None else None,
-             "판정": r["판정"], "사유": r["사유"],
-             "임계": {"배수": lift_min, "관측": share_min, "표본": count_min}}
-            for r in rows if r.get("확인요청")]
+    return [
+        {
+            "지목": r["지목"],
+            "점수": r["점수"],
+            "관측": round(r["관측"], 4),
+            "기저": round(r["기저"], 6) if r["기저"] is not None else None,
+            "배수": round(r["배수"], 2) if r["배수"] is not None else None,
+            "판정": r["판정"],
+            "사유": r["사유"],
+            "임계": {"배수": lift_min, "관측": share_min, "표본": count_min},
+        }
+        for r in rows
+        if r.get("확인요청")
+    ]
 
 
 # =========================================================
 # 인접 동일지목 확장 — 부지 복원
 # =========================================================
-def expand_adjacent(parcels: gpd.GeoDataFrame, seed_idx, gap: float = GAP_M,
-                    max_iter: int = MAX_ITER) -> tuple[list, int]:
+def expand_adjacent(
+    parcels: gpd.GeoDataFrame, seed_idx, gap: float = GAP_M, max_iter: int = MAX_ITER
+) -> tuple[list, int]:
     """시드 필지에서 **같은 지목이면서 gap 이내로 닿는** 필지를 반복 흡수.
 
     지목 하나가 여러 필지로 쪼개진 것을 원래 부지로 되돌린다
@@ -209,8 +240,9 @@ def expand_adjacent(parcels: gpd.GeoDataFrame, seed_idx, gap: float = GAP_M,
         for _ in range(max_iter):
             iters += 1
             f = pool.loc[sorted(frontier), ["geometry"]]
-            j = gpd.sjoin(pool[["geometry"]], f, how="inner",
-                          predicate="dwithin", distance=gap)
+            j = gpd.sjoin(
+                pool[["geometry"]], f, how="inner", predicate="dwithin", distance=gap
+            )
             new = set(j.index) - out
             if not new:
                 break
@@ -222,10 +254,16 @@ def expand_adjacent(parcels: gpd.GeoDataFrame, seed_idx, gap: float = GAP_M,
 # =========================================================
 # 통합
 # =========================================================
-def resolve(points: gpd.GeoDataFrame, parcels: gpd.GeoDataFrame,
-            radius: float | None, base: dict | None = None,
-            lift_min: float = LIFT_MIN, share_min: float = SHARE_MIN,
-            count_min: int = COUNT_MIN, expand: bool = True) -> dict:
+def resolve(
+    points: gpd.GeoDataFrame,
+    parcels: gpd.GeoDataFrame,
+    radius: float | None,
+    base: dict | None = None,
+    lift_min: float = LIFT_MIN,
+    share_min: float = SHARE_MIN,
+    count_min: int = COUNT_MIN,
+    expand: bool = True,
+) -> dict:
     """배제 레이어 하나 -> 배제 geometry + 판정 근거.
 
     면 지목에 떨어진 점은 **그 필지(+인접 확장)** 로, 나머지 점은 **점 그대로**
@@ -247,17 +285,20 @@ def resolve(points: gpd.GeoDataFrame, parcels: gpd.GeoDataFrame,
         points = points.to_crs(parcels.crs)
     base = base or area_base_rate(parcels)
     matched = match_parcels(points, parcels)
-    rows = classify(lift_table(points, parcels, base, matched),
-                    lift_min, share_min, count_min)
+    rows = classify(
+        lift_table(points, parcels, base, matched), lift_min, share_min, count_min
+    )
 
     poly_jimok = {r["지목"] for r in rows if r["판정"] == "면" and r["지목"]}
     jm_of = parcels["지목"].reindex(matched.fillna(-1)).to_numpy()
-    is_poly = pd.Series([j in poly_jimok for j in jm_of], index=points.index) \
+    is_poly = (
+        pd.Series([j in poly_jimok for j in jm_of], index=points.index)
         & matched.notna()
+    )
 
     parts = []
     seed = sorted(set(matched[is_poly].dropna().astype(int)))
-    grown, iters = (expand_adjacent(parcels, seed) if (expand and seed) else (seed, 0))
+    grown, iters = expand_adjacent(parcels, seed) if (expand and seed) else (seed, 0)
     if grown:
         g = parcels.loc[grown].geometry
         parts.append(unary_union((g.buffer(float(radius)) if radius else g).values))
@@ -271,19 +312,27 @@ def resolve(points: gpd.GeoDataFrame, parcels: gpd.GeoDataFrame,
             # 반경 없는 점은 면적 0 — 배제에 아무 기여를 못 한다.
             # 레이어 전체가 0 이면 호출부 가드가 잡지만, 여기처럼 **일부만** 0 이면
             # 총면적이 0 이 아니라서 가드를 통과한다. 조용히 넘기지 않는다(절대원칙 1·4).
-            warns.append(f"점 처리 {len(pts)}건에 배제반경이 없어 기여 0 "
-                         f"— HITL 에서 반경을 입력하세요")
+            warns.append(
+                f"점 처리 {len(pts)}건에 배제반경이 없어 기여 0 "
+                f"— HITL 에서 반경을 입력하세요"
+            )
 
     geom = unary_union(parts) if parts else None
     n_poly = int(is_poly.sum())
-    etype = ("polygon" if n_poly == len(points) else
-             "point" if n_poly == 0 else "mixed")
-    return {"geom": geom, "exclusion_type": etype, "rows": rows,
-            "n_면점": n_poly, "n_점점": len(points) - n_poly,
-            "n_시드필지": len(seed), "n_확장필지": len(grown), "확장반복": iters,
-            "area_km2": (geom.area / 1e6) if geom is not None else 0.0,
-            "warnings": warns,
-            "확인요청": review_requests(rows, lift_min, share_min, count_min)}
+    etype = "polygon" if n_poly == len(points) else "point" if n_poly == 0 else "mixed"
+    return {
+        "geom": geom,
+        "exclusion_type": etype,
+        "rows": rows,
+        "n_면점": n_poly,
+        "n_점점": len(points) - n_poly,
+        "n_시드필지": len(seed),
+        "n_확장필지": len(grown),
+        "확장반복": iters,
+        "area_km2": (geom.area / 1e6) if geom is not None else 0.0,
+        "warnings": warns,
+        "확인요청": review_requests(rows, lift_min, share_min, count_min),
+    }
 
 
 def format_rows(rows: list[dict], indent: str = "      ") -> list[str]:
@@ -291,9 +340,11 @@ def format_rows(rows: list[dict], indent: str = "      ") -> list[str]:
     out = []
     for r in rows:
         jm = r["지목"] or "(필지밖)"
-        b = f"{r['기저']*100:>5.2f}%" if r["기저"] is not None else "    -"
+        b = f"{r['기저'] * 100:>5.2f}%" if r["기저"] is not None else "    -"
         lf = f"{r['배수']:>7.1f}x" if r["배수"] is not None else "       -"
         ask = " ❓확인요청" if r.get("확인요청") else ""
-        out.append(f"{indent}{jm:<6} {r['점수']:>4}점  관측 {r['관측']*100:>5.1f}%  "
-                   f"기저 {b}  배수 {lf}  → {r['판정']}  ({r['사유']}){ask}")
+        out.append(
+            f"{indent}{jm:<6} {r['점수']:>4}점  관측 {r['관측'] * 100:>5.1f}%  "
+            f"기저 {b}  배수 {lf}  → {r['판정']}  ({r['사유']}){ask}"
+        )
     return out

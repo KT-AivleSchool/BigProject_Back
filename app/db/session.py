@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import declarative_base
-from app.config import settings
+from app.config import settings, DB_CONNECT_TIMEOUT
 
 # 1. SQLAlchemy 비동기 연동을 위해 드라이버 문자열 포매팅
 # (postgresql:// 로 시작 시 postgresql+asyncpg:// 로 치환하여 비동기 연결 보장)
@@ -13,6 +13,10 @@ engine = create_async_engine(
     database_url,
     pool_pre_ping=True,  # 주기적으로 연결 핑을 날려 유실된 세션을 자동 탐지 및 재수거
     echo=False,  # 개발 시 SQL 쿼리 로깅이 필요하면 True로 변경 가능
+    # 🔴 접속 타임아웃을 명시한다. 없으면 DB 가 죽었을 때 요청이 몇 분씩 매달려
+    #    "느린 API" 로 보인다 — 기다림은 실패로 드러나야 한다(원칙 1).
+    #    asyncpg 는 `connect_timeout` 이 아니라 `timeout` 이다(libpq 와 이름이 다르다).
+    connect_args={"timeout": DB_CONNECT_TIMEOUT},
 )
 
 # 3. 비동기 세션 팩토리 생성 (AsyncSession 주입 객체 빌드)

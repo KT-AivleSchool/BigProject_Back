@@ -19,26 +19,26 @@ OmniSite 공간연산 격리층 (STEP 4)
 
 의존성: geopandas, shapely, numpy, pandas 만. (scipy 안 씀 — 원본 파일 방침)
 """
+
 from __future__ import annotations
 
 import os
 import math
 
-os.environ.setdefault("SHAPE_RESTORE_SHX", "YES")   # .shx 없을 때 복구
+os.environ.setdefault("SHAPE_RESTORE_SHX", "YES")  # .shx 없을 때 복구
 
 import numpy as np
 import pandas as pd
 import geopandas as gpd
 import shapely
-from shapely.geometry import box
 from shapely.ops import unary_union
 
 try:
     from app.config import SPATIAL_CRS
-except Exception:                                   # 단독 실행 폴백
+except Exception:  # 단독 실행 폴백
     SPATIAL_CRS = 5186
 
-WORK_CRS = SPATIAL_CRS          # 미터 단위 작업 좌표계 (거리·버퍼)
+WORK_CRS = SPATIAL_CRS  # 미터 단위 작업 좌표계 (거리·버퍼)
 
 # 지적법 표준 지목 부호 28종. 여기 없는 코드는 unknown 으로 격리한다.
 #   실측: 용산구 지적도에 '가' 7건이 섞여 있었다(JIBUN 이 "0-2 가" 형태).
@@ -54,8 +54,9 @@ def clean_geometry(g: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     return g[~g.geometry.is_empty & g.geometry.notna()].copy()
 
 
-def load_parcels(path: str, encoding: str = "cp949",
-                 jibun_col: str = "JIBUN", verbose: bool = True) -> gpd.GeoDataFrame:
+def load_parcels(
+    path: str, encoding: str = "cp949", jibun_col: str = "JIBUN", verbose: bool = True
+) -> gpd.GeoDataFrame:
     """연속지적도 SHP -> GeoDataFrame(WORK_CRS).
 
     추가 컬럼
@@ -90,8 +91,10 @@ def load_parcels(path: str, encoding: str = "cp949",
 
     if verbose:
         bad = int(g["지목"].isna().sum())
-        print(f"  [지적도] {len(g):,}필지 (빈 geom {n0-len(g)}건 제거) "
-              f"CRS=EPSG:{WORK_CRS}  면적합 {g['면적'].sum()/1e6:.2f}km²")
+        print(
+            f"  [지적도] {len(g):,}필지 (빈 geom {n0 - len(g)}건 제거) "
+            f"CRS=EPSG:{WORK_CRS}  면적합 {g['면적'].sum() / 1e6:.2f}km²"
+        )
         if bad:
             odd = sorted(set(g.loc[g["지목"].isna(), "지목_raw"].dropna()))
             print(f"  ⚠ 표준 지목 부호 아님 {bad}건 → 지목=None 격리: {odd}")
@@ -113,19 +116,20 @@ def inscribed_width(gdf: gpd.GeoDataFrame, tol: float = 0.05) -> pd.Series:
         try:
             lines = shapely.maximum_inscribed_circle(gdf.geometry.values, tolerance=tol)
             return pd.Series(shapely.length(lines) * 2.0, index=gdf.index)
-        except TypeError:                      # tolerance 인자 없는 버전
+        except TypeError:  # tolerance 인자 없는 버전
             lines = shapely.maximum_inscribed_circle(gdf.geometry.values)
             return pd.Series(shapely.length(lines) * 2.0, index=gdf.index)
         except Exception:
-            pass                               # 폴백으로 진행
+            pass  # 폴백으로 진행
     return _inscribed_by_buffer(gdf, tol=tol)
 
 
-def _inscribed_by_buffer(gdf: gpd.GeoDataFrame, tol: float = 0.05,
-                         iters: int = 24) -> pd.Series:
+def _inscribed_by_buffer(
+    gdf: gpd.GeoDataFrame, tol: float = 0.05, iters: int = 24
+) -> pd.Series:
     """폴백: 음수 버퍼 이분탐색. buffer(-r) 이 비지 않으면 반지름 r 원이 들어간다."""
     geom = gdf.geometry
-    hi = np.sqrt(np.maximum(geom.area.to_numpy(), 0.0) / math.pi)   # 상한(같은 면적 원)
+    hi = np.sqrt(np.maximum(geom.area.to_numpy(), 0.0) / math.pi)  # 상한(같은 면적 원)
     lo = np.zeros(len(gdf))
     for _ in range(iters):
         if np.all(hi - lo < tol):
@@ -140,9 +144,12 @@ def _inscribed_by_buffer(gdf: gpd.GeoDataFrame, tol: float = 0.05,
 # =========================================================
 # 후보점 생성
 # =========================================================
-def points_in_parcels(parcels: gpd.GeoDataFrame, spacing: float,
-                      max_per_parcel: int | None = 400,
-                      verbose: bool = True) -> gpd.GeoDataFrame:
+def points_in_parcels(
+    parcels: gpd.GeoDataFrame,
+    spacing: float,
+    max_per_parcel: int | None = 400,
+    verbose: bool = True,
+) -> gpd.GeoDataFrame:
     """필지 내부에 spacing 간격 격자점을 찍는다. 점이 하나도 없는 필지는 대표점 1개.
 
     전역 격자를 만들어 필지와 공간조인하는 방식 — 필지마다 루프를 돌지 않는다.
@@ -158,8 +165,9 @@ def points_in_parcels(parcels: gpd.GeoDataFrame, spacing: float,
       상한을 넘으면 그 필지만 균등 솎아낸다. Top-N 은 최댓값 기준이라 영향 미미.
     """
     if parcels.empty:
-        return gpd.GeoDataFrame({"parcel_idx": [], "from_rep": []},
-                                geometry=[], crs=parcels.crs)
+        return gpd.GeoDataFrame(
+            {"parcel_idx": [], "from_rep": []}, geometry=[], crs=parcels.crs
+        )
 
     minx, miny, maxx, maxy = parcels.total_bounds
     xs = np.arange(minx + spacing / 2, maxx, spacing)
@@ -169,17 +177,20 @@ def points_in_parcels(parcels: gpd.GeoDataFrame, spacing: float,
     else:
         gx, gy = np.meshgrid(xs, ys)
         lat = gpd.GeoDataFrame(
-            geometry=gpd.points_from_xy(gx.ravel(), gy.ravel()), crs=parcels.crs)
+            geometry=gpd.points_from_xy(gx.ravel(), gy.ravel()), crs=parcels.crs
+        )
 
-    hit = gpd.GeoDataFrame({"parcel_idx": [], "from_rep": []},
-                           geometry=[], crs=parcels.crs)
+    hit = gpd.GeoDataFrame(
+        {"parcel_idx": [], "from_rep": []}, geometry=[], crs=parcels.crs
+    )
     if len(lat):
         j = gpd.sjoin(lat, parcels[["geometry"]], how="inner", predicate="within")
         if len(j):
             hit = gpd.GeoDataFrame(
-                {"parcel_idx": j["index_right"].to_numpy(),
-                 "from_rep": False},
-                geometry=j.geometry.values, crs=parcels.crs)
+                {"parcel_idx": j["index_right"].to_numpy(), "from_rep": False},
+                geometry=j.geometry.values,
+                crs=parcels.crs,
+            )
 
     # 상한 초과 필지 솎기
     if max_per_parcel and len(hit):
@@ -200,20 +211,25 @@ def points_in_parcels(parcels: gpd.GeoDataFrame, spacing: float,
         rep = parcels.loc[missing].geometry.representative_point()
         rep_gdf = gpd.GeoDataFrame(
             {"parcel_idx": missing.to_numpy(), "from_rep": True},
-            geometry=rep.values, crs=parcels.crs)
+            geometry=rep.values,
+            crs=parcels.crs,
+        )
         hit = pd.concat([hit, rep_gdf]) if len(hit) else rep_gdf
         hit = gpd.GeoDataFrame(hit, geometry="geometry", crs=parcels.crs)
 
     hit = hit.reset_index(drop=True)
     if verbose:
         nrep = int(hit["from_rep"].sum())
-        print(f"  [후보점] {len(hit):,}점 / {len(parcels):,}필지 "
-              f"(격자 {len(hit)-nrep:,} + 대표점 {nrep:,}, spacing={spacing:g}m)")
+        print(
+            f"  [후보점] {len(hit):,}점 / {len(parcels):,}필지 "
+            f"(격자 {len(hit) - nrep:,} + 대표점 {nrep:,}, spacing={spacing:g}m)"
+        )
     return hit
 
 
-def make_grid(boundary, spacing: float, crs=None,
-              verbose: bool = True) -> gpd.GeoDataFrame:
+def make_grid(
+    boundary, spacing: float, crs=None, verbose: bool = True
+) -> gpd.GeoDataFrame:
     """표출용 전역 격자(셀 중심점). 히트맵 배경용 — 후보점과 별개다.
 
     boundary: GeoDataFrame | GeoSeries | shapely geometry
@@ -232,7 +248,9 @@ def make_grid(boundary, spacing: float, crs=None,
 
     pts = gpd.GeoDataFrame(
         {"row": ri.ravel(), "col": ci.ravel()},
-        geometry=gpd.points_from_xy(gx.ravel(), gy.ravel()), crs=crs)
+        geometry=gpd.points_from_xy(gx.ravel(), gy.ravel()),
+        crs=crs,
+    )
     inside = pts.within(geom)
     out = pts[inside].reset_index(drop=True)
     out.attrs["origin"] = (float(minx), float(miny))
@@ -240,8 +258,10 @@ def make_grid(boundary, spacing: float, crs=None,
     out.attrs["cols"] = int(len(xs))
     out.attrs["rows"] = int(len(ys))
     if verbose:
-        print(f"  [표출격자] {len(out):,}셀 ({len(xs)}×{len(ys)} 중 경계 내부, "
-              f"spacing={spacing:g}m)")
+        print(
+            f"  [표출격자] {len(out):,}셀 ({len(xs)}×{len(ys)} 중 경계 내부, "
+            f"spacing={spacing:g}m)"
+        )
     return out
 
 
@@ -277,8 +297,9 @@ def filter_outside(points: gpd.GeoDataFrame, exclusion) -> np.ndarray:
 # =========================================================
 # 근접 질의
 # =========================================================
-def neighbors_within(cand: gpd.GeoDataFrame, targets: gpd.GeoDataFrame,
-                     radius: float, chunk: int = 20000):
+def neighbors_within(
+    cand: gpd.GeoDataFrame, targets: gpd.GeoDataFrame, radius: float, chunk: int = 20000
+):
     """반경 내 (후보 위치인덱스, 대상 위치인덱스, 거리) 배열 3개.
 
     거리 감쇠 점수화의 입력. sjoin(predicate="dwithin") 으로 쌍을 구한 뒤
@@ -305,19 +326,21 @@ def neighbors_within(cand: gpd.GeoDataFrame, targets: gpd.GeoDataFrame,
     if n_bad:
         raise RuntimeError(
             f"neighbors_within: 후보 기하 결측/빈 값 {n_bad}/{len(cg)} "
-            f"— clean_geometry 를 먼저 적용하세요")
+            f"— clean_geometry 를 먼저 적용하세요"
+        )
 
     CI, TI, D = [], [], []
-    tg = t[["geometry"]]                       # _ci 컬럼 충돌 방지 + sjoin 부하 감소
+    tg = t[["geometry"]]  # _ci 컬럼 충돌 방지 + sjoin 부하 감소
     for st in range(0, len(c), chunk):
-        seg = cg.iloc[st:st + chunk]           # CX/CY 와 동일한 기하(폴리곤이면 대표점)
+        seg = cg.iloc[st : st + chunk]  # CX/CY 와 동일한 기하(폴리곤이면 대표점)
         # ⚠ geometry 에 GeoSeries 를 넘기면 프레임 인덱스에 **정렬**된다.
         #   dict 로 만든 프레임의 인덱스는 항상 0..len-1 인데 seg 의 인덱스는
         #   st..st+len-1 이라, 두 번째 청크부터 geometry 가 전부 NaN 이 되고
         #   sjoin 이 경고 없이 0행을 반환한다(실측: 후보 57,530 중 앞 20,000만
         #   쌍을 가져 커버율이 64.3% 에서 정체). .values 로 정렬 자체를 끊는다.
-        buf = gpd.GeoDataFrame({"_ci": np.arange(st, st + len(seg))},
-                               geometry=seg.values, crs=c.crs)
+        buf = gpd.GeoDataFrame(
+            {"_ci": np.arange(st, st + len(seg))}, geometry=seg.values, crs=c.crs
+        )
         # predicate="dwithin" 은 버퍼를 만들지 않고 거리로 직접 판정한다.
         #   구 방식(buffer(R) + "within")은 원을 64각형으로 **내접** 근사해
         #   0.9988R~R 구간 쌍을 놓쳤다(실측 0.13%). PostGIS 의 ST_DWithin 은
@@ -329,7 +352,8 @@ def neighbors_within(cand: gpd.GeoDataFrame, targets: gpd.GeoDataFrame,
             continue
         ci = j["_ci"].to_numpy()
         ti = j.index.to_numpy()
-        CI.append(ci); TI.append(ti)
+        CI.append(ci)
+        TI.append(ti)
         D.append(np.hypot(TX[ti] - CX[ci], TY[ti] - CY[ci]))
 
     if not CI:
@@ -338,8 +362,9 @@ def neighbors_within(cand: gpd.GeoDataFrame, targets: gpd.GeoDataFrame,
     return np.concatenate(CI), np.concatenate(TI), np.concatenate(D)
 
 
-def decay_weights(dist: np.ndarray, radius: float, func: str = "gaussian",
-                  sigma_ratio: float = 1/3) -> np.ndarray:
+def decay_weights(
+    dist: np.ndarray, radius: float, func: str = "gaussian", sigma_ratio: float = 1 / 3
+) -> np.ndarray:
     """거리 -> 가중치. STEP3 build_matrix 와 **같은 식**이어야 한다.
 
     gaussian: exp(-d²/2σ²), σ = R*sigma_ratio.  σ=R/3 이면 d=R 에서 0.011.
@@ -353,8 +378,9 @@ def decay_weights(dist: np.ndarray, radius: float, func: str = "gaussian",
     raise ValueError(f"func 는 'gaussian'/'linear': {func}")
 
 
-def nearest(cand: gpd.GeoDataFrame, targets: gpd.GeoDataFrame,
-            max_distance: float | None = None):
+def nearest(
+    cand: gpd.GeoDataFrame, targets: gpd.GeoDataFrame, max_distance: float | None = None
+):
     """후보별 최근접 대상까지 (거리, 대상 위치인덱스). 없으면 (inf, -1).
 
     국유지 근접도 같은 '실행축' 필드용. 점수와 섞지 않는다(설계 확정 Q-feas).
@@ -366,12 +392,16 @@ def nearest(cand: gpd.GeoDataFrame, targets: gpd.GeoDataFrame,
     if len(c) == 0 or len(t) == 0:
         return d, idx
 
-    j = gpd.sjoin_nearest(c[["geometry"]], t[["geometry"]],
-                          how="left", distance_col="_d",
-                          max_distance=max_distance)
+    j = gpd.sjoin_nearest(
+        c[["geometry"]],
+        t[["geometry"]],
+        how="left",
+        distance_col="_d",
+        max_distance=max_distance,
+    )
     j = j[~j["index_right"].isna()]
     if len(j):
-        j = j.sort_values("_d").groupby(level=0).first()   # 동거리 다중매칭 방어
+        j = j.sort_values("_d").groupby(level=0).first()  # 동거리 다중매칭 방어
         pos = j.index.to_numpy()
         d[pos] = j["_d"].to_numpy()
         idx[pos] = j["index_right"].to_numpy().astype(np.int64)

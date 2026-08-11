@@ -56,6 +56,15 @@ tests/test_geocoder.py
 # Dynamic Uploads & Media Files
 uploads/
 
+# Claude Code 로컬 설정
+.claude/
+
+# DB 덤프 (대용량, 각자 로컬 생성분)
+omnisite_backup.sql
+
+# 적재 제외 문서 보관함 (지침류 등 — 임베딩 부적합)
+seeds_excluded/
+
 # 순수 일회성 스크립트만 남은 로컬 폴더 (analyze_clean_perf.py 하나).
 # 🔴 회귀 대조기·진단기 9개는 2026-08-05 에 `app/tools/` 로 옮겨 **추적한다.**
 #    픽스처(기준값)는 리포에 있는데 대조기가 없으면 재는 자가 없는 자다.
@@ -68,6 +77,16 @@ uploads/
 .claude/
 # 파이프라인 run 산출물 (run 하나가 25MB+ · 로컬 전용)
 runs/
+
+# 서버 실행 로그. 추적하면 커밋마다 수백 줄 diff 가 끼어 진짜 변경을 가린다
+# (2026-08-08: 273줄 변경으로 코드 diff 를 덮고 있었다).
+uvicorn.out
+uvicorn.out.log
+uvicorn.err.log
+# 🔴 위 세 줄은 **파일명 고정**이라 포트를 붙인 이름(`uvicorn_8000.log`)이 그대로
+#    untracked 로 샜다(2026-08-10). 이름을 바꿔 띄우는 사람이 있으므로 패턴으로 받는다.
+uvicorn_*.log
+*.out
 
 # 백업 사본. 기준선을 되돌릴 일이 생기면 git 이력에서 꺼낸다 —
 # 저장소 안에 "이전 기준값"이 하나 더 있으면 어느 쪽이 기준인지 흐려진다.

@@ -30,14 +30,22 @@ from dataclasses import dataclass
 # 프로젝트 루트를 sys.path 에 추가 → `python app\services\...` 로 직접 실행해도
 #   `app.xxx` 절대 임포트가 된다. (`python -m app.services.…` 는 원래 되지만
 #   실행 방식마다 다르게 동작하면 매번 걸린다 — STEP3·4 스크립트와 동일한 보정)
-import os as _os, sys as _sys
+import os as _os
+import sys as _sys
+
 _ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(__file__), "..", ".."))
 if _ROOT not in _sys.path:
     _sys.path.insert(0, _ROOT)
 
 from app import config
 from app.services.gam2_audit_ops_catalog import describe_all
-from app.config import STEP1_OUTPUT_DIR, SEARCH_CACHE_DIR, EXCLUSION_CACHE_PATH
+from app.config import STEP1_OUTPUT_DIR
+
+# 🔴 배제반경 캐시는 2026-08-10 제거했다(사람 지시). 예전엔 사람이 한 번 확정한
+#    시설유형→반경을 `<prefix>_exclusion_radius_cache.json` 에 적어두고 다음 실행에서
+#    **묻지 않고 채웠다.** 자동 진행이 필요한 경우는 이제 `mode:"full"` 이 맡는다 —
+#    HITL 은 "사람이 전부 본다"가 뜻의 전부여야 한다. 캐시가 남아 있으면 화면에
+#    안 뜨는 항목이 생기고, 그건 사람이 확인한 것처럼 기록된다(원칙 4).
 
 
 # ── 도메인 컨텍스트 (실행 시 set_domain 으로 채움; 전까지는 기존 기본값) ──
@@ -47,7 +55,6 @@ _DOMAIN = {
     "law": None,
     "fixture": None,
     "profiles": None,
-    "cache_path": EXCLUSION_CACHE_PATH,
 }
 
 
@@ -60,9 +67,6 @@ def set_domain(domain_dir: str) -> None:
         law=p["law"],
         fixture=p["fixture"],
         profiles=p["profiles"],
-        cache_path=os.path.join(
-            SEARCH_CACHE_DIR, f"{p['prefix']}_exclusion_radius_cache.json"
-        ),
     )
 
 
@@ -313,6 +317,7 @@ def build_prompt(
         #   ※ 배제반경 추출(STEP2)은 전문을 쓴다 — 거긴 호출이 배제 건수뿐이다.
         try:
             from app.services.gam2_ordinance_select import select_articles, keywords_of
+
             ordinance = [select_articles(profile["ordinance"], keywords_of(profile))]
         except Exception as e:
             print(f"  ⚠ 조례 발췌 생략({e}) — 전문 사용")
@@ -363,8 +368,8 @@ def build_prompt(
                     "role": "hard_exclusion",
                     "exclusion_type": "radius|polygon",
                     "facility_type": "시설 유형명(배제반경 캐시 키 + 상위법 검색어). "
-                                     "시설 종류 컬럼에 여러 값이 섞였으면 개별 값이 "
-                                     "아니라 상위 개념. 예: 어린이집·버스정류소·금연구역",
+                    "시설 종류 컬럼에 여러 값이 섞였으면 개별 값이 "
+                    "아니라 상위 개념. 예: 어린이집·버스정류소·금연구역",
                     "배제반경_m": "int|null(radius이고 조례에 있으면 숫자, polygon이면 null)",
                     "source": "조례 조항|null",
                     "confirmed": "bool(조례근거 있으면 true)",
@@ -684,8 +689,11 @@ def run_harness(llm: LLMClient, fixtures: dict, domain: dict, progress=None):
                 "_raw": raw[:200],
             }
         pred.setdefault("dataset_id", did)
-        pred = enrich_hitl_flags(  # 배제반경 null·지역코드 등 → hitl_flags 자동 생성(코드)
-            pred, region=(domain or {}).get("region", ""), fixtures=fixtures)
+        pred = (
+            enrich_hitl_flags(  # 배제반경 null·지역코드 등 → hitl_flags 자동 생성(코드)
+                pred, region=(domain or {}).get("region", ""), fixtures=fixtures
+            )
+        )
         raw_preds[did] = pred
         out.append(review_one(pred, did))
         if progress:
@@ -697,14 +705,14 @@ def apply_radius_answer(
     result: dict, flag: dict, radius_m: int | None, source: str = "human_confirmed"
 ) -> None:
     """HITL 답변을 roles·flag 에 반영(메모리). radius_m=None 이면 '반경 없음(면 배제 등)'.
-    사람이 확정한 값만 confirmed=true → 캐시 저장(다음 실행에서 재사용).
+
+    확정은 **이 run 안에서만** 유효하다. 다음 실행으로 넘기지 않는다(캐시 제거, 2026-08-10).
     """
     idx = flag.get("role_index", 0)
     roles = result.get("roles", [])
     if idx >= len(roles):
         return
     role = roles[idx]
-    ftype = role.get("facility_type")
 
     role["배제반경_m"] = radius_m
     role["confirmed"] = True  # 사람이 확인함 → 확정
@@ -714,9 +722,88 @@ def apply_radius_answer(
     flag["confirmed"] = True
     flag["confirmed_by_human"] = True
 
-    # 사람 확정값만 캐시 (반경이 실제로 있는 경우만 — None 은 캐시 의미 없음)
-    if ftype and radius_m is not None:
-        save_to_exclusion_cache(ftype, radius_m, source, confirmed_by="human")
+
+def reset_exclusion_confirmations(doc: dict) -> int:
+    """이미 확정돼 있던 배제(hard_exclusion)를 **제안값으로 되돌린다**. 반환 = 되돌린 건수.
+
+    `mode:"hitl"` 은 STEP1 을 안 돈다 — 고정된 감리 산출물(픽스처/정본)을 그대로 쓰는데
+    거기엔 예전에 확정된 `confirmed:true` 가 이미 박혀 있다. 그대로 두면 게이트A 가
+    그 항목을 `editable:false` 로 내보내 **사람이 볼 수는 있어도 고칠 수 없다.**
+    "HITL 인데 사람이 전부 확인한다"가 성립하려면 이 값들이 제안값이어야 한다
+    (2026-08-10 사람 지시).
+
+    값은 지우지 않는다 — `배제반경_m`·`source` 는 그대로 두고 flag 의 `제안값` 으로도
+    올린다. 사람이 Enter 로 그대로 승인하면 같은 값이 다시 확정된다.
+    """
+    n = 0
+    for r in doc.get("results", []):
+        flags = r.setdefault("hitl_flags", [])
+        by_idx = {
+            f.get("role_index", 0): f
+            for f in flags
+            if f.get("type") == "exclusion_radius_missing"
+        }
+        for i, role in enumerate(r.get("roles", [])):
+            if role.get("role") != "hard_exclusion":
+                continue
+            was_confirmed = role.get("confirmed") is True
+            f = by_idx.get(i)
+            if f is None:
+                f = {"type": "exclusion_radius_missing", "role_index": i}
+                flags.append(f)
+            if f.get("제안값") is None and role.get("배제반경_m") is not None:
+                f["제안값"] = role["배제반경_m"]
+                f["출처"] = role.get("source") or f.get("출처")
+            f["message"] = (
+                "이전 실행에서 확정된 값입니다(이번 실행에서는 제안값). 다시 확인하세요."
+                if was_confirmed
+                else "배제 대상이나 반경이 확정되지 않았습니다. 확인이 필요합니다."
+            )
+            f["이전_확정"] = was_confirmed
+            # 확정 표시를 지운다 — 남겨두면 게이트A 가 editable:false 로 내보낸다.
+            f.pop("confirmed", None)
+            f.pop("confirmed_by_human", None)
+            role["confirmed"] = False
+            role["need_review"] = True
+            n += 1
+    return n
+
+
+def assert_exclusions_confirmed(doc: dict, src: str = "") -> None:
+    """배제(hard_exclusion) 중 미확정이 하나라도 있으면 **멈춘다**(SystemExit).
+
+    2026-08-10 사람 결정. 예전엔 미확정인 채로 STEP2~4 를 완주하고 `report.json` 의
+    gap(`배제판정_확인요청`)에만 남았다 — 산출물은 정직했지만 **아무도 안 봤고**
+    배제가 빠진 Top-N 이 그대로 화면4·5 로 갔다. 배제는 후보를 지우는 조건이라
+    빠지면 결과가 뒤집힌다. 「경고하고 진행」이 아니라 「멈춤」이 맞다(원칙 1).
+
+    푸는 방법은 하나다 — 게이트A(API `POST /runs/{id}/hitl/audit`) 또는
+    CLI `hitl` 에서 **사람이 반경을 확정**한다. 반경 없이 면으로 배제할 항목은
+    `radius_m: null`(CLI 는 `n`)로 확정한다. 이것도 확정이다.
+    """
+    bad: list[str] = []
+    for r in doc.get("results", []):
+        did = r.get("dataset_id", "?")
+        for i, role in enumerate(r.get("roles", [])):
+            if role.get("role") != "hard_exclusion":
+                continue
+            if role.get("confirmed") is True:
+                continue
+            bad.append(
+                f"  [{did}] roles[{i}] {role.get('facility_type') or role.get('rationale') or '?'}"
+                f"  (배제반경_m={role.get('배제반경_m')} · exclusion_type="
+                f"{role.get('exclusion_type')})"
+            )
+    if not bad:
+        return
+    raise SystemExit(
+        f"🔴 배제 {len(bad)}건이 미확정이라 STEP2 로 넘어가지 않는다"
+        + (f" — {src}" if src else "")
+        + "\n"
+        + "\n".join(bad)
+        + "\n   게이트A(HITL)에서 배제반경을 확정할 것. 반경 없이 면으로 배제할"
+        " 항목은 null(CLI 는 n)로 확정한다 — 그것도 확정이다."
+    )
 
 
 def _read_radius(default: int | None = None) -> int | None | str:
@@ -751,8 +838,7 @@ def _read_radius(default: int | None = None) -> int | None | str:
 def confirm_exclusion_radius(
     enriched_path: str, dataset_id: str, radius_m: int, out_path: str | None = None
 ) -> str:
-    """HITL 담당자가 서핑 제안값을 확인·확정할 때 호출. confirmed=true 로 바꾸고 캐시에 저장.
-    (서핑 제안값은 confirmed=false 라 캐시 안 됨 → 사람이 이 함수로 확정해야 캐시됨)"""
+    """HITL 담당자가 서핑 제안값을 확인·확정할 때 호출. confirmed=true 로 바꾼다."""
     doc = json.load(open(enriched_path, encoding="utf-8"))
     for r in doc["results"]:
         if not r["dataset_id"].startswith(dataset_id):
@@ -761,9 +847,6 @@ def confirm_exclusion_radius(
             if f.get("type") != "exclusion_radius_missing":
                 continue
             idx = f.get("role_index", 0)
-            roles = r.get("roles", [])
-            # facility_type 은 flag 에 중복 저장하지 않는다 — role_index 로 roles[i] 에서 조회.
-            ftype = roles[idx].get("facility_type") if idx < len(roles) else None
             f["제안값"] = radius_m
             f["confirmed_by_human"] = True
             # roles 쪽도 확정 반영
@@ -771,53 +854,9 @@ def confirm_exclusion_radius(
                 r["roles"][idx]["배제반경_m"] = radius_m
                 r["roles"][idx]["confirmed"] = True
                 r["roles"][idx]["need_review"] = False
-            # 사람 확정 → 캐시 저장
-            if ftype:
-                save_to_exclusion_cache(
-                    ftype,
-                    radius_m,
-                    f.get("출처", "human_confirmed"),
-                    confirmed_by="human",
-                )
     path = out_path or enriched_path
     json.dump(doc, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
     return path
-
-
-def load_exclusion_cache(path: str | None = None) -> dict:
-    """시설유형→배제반경 캐시 로드. confirmed=true 로 확인된 값만 들어있다."""
-    import os
-
-    path = path or _DOMAIN["cache_path"]
-    if not os.path.exists(path):
-        return {}
-    try:
-        return json.load(open(path, encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {}
-
-
-def save_to_exclusion_cache(
-    facility_type: str,
-    radius_m,
-    source: str,
-    confirmed_by: str,
-    path: str | None = None,
-) -> None:
-    """confirmed=true 값만 캐시에 저장(호출부에서 confirmed 확인). 키=시설유형."""
-    import os
-    from datetime import date
-
-    path = path or _DOMAIN["cache_path"]
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    cache = load_exclusion_cache(path)
-    cache[facility_type] = {
-        "배제반경_m": radius_m,
-        "출처": source,
-        "confirmed_by": confirmed_by,
-        "date": date.today().isoformat(),
-    }
-    json.dump(cache, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 
 
 def _norm(s: str) -> str:
@@ -827,19 +866,21 @@ def _norm(s: str) -> str:
     return unicodedata.normalize("NFC", s or "")
 
 
-def enrich_hitl_flags(pred: dict, region: str = "",
-                      fixtures: dict | None = None) -> dict:
+def enrich_hitl_flags(
+    pred: dict, region: str = "", fixtures: dict | None = None
+) -> dict:
     """LLM 판정을 받은 뒤, 사람 검토가 필요한 항목을 코드가 결정론적으로 hitl_flags에 채운다.
     (LLM 판정 실수와 무관하게 항상 보장 — '판정=LLM, 확정=코드' 원칙)
-    배제 confirmed 는 LLM 이 emit 한 값을 신뢰하지 않고 코드가 조례로 재판정한다:
-      confirmed=True  ⟺  radius 값이 있고 + 시설유형·값이 조례 텍스트에 실제로 있을 때(→캐시)
-      그 외(조례에 없음/값 null/polygon) 전부 → confirmed=False + exclusion_radius_missing(검색·HITL).
-    캐시 히트(사람·조례로 이미 확정)면 즉시 채움.
+
+    🔴 2026-08-10(사람 지시) — **배제(hard_exclusion)는 예외 없이 전부 사람이 본다.**
+       예전엔 두 경로가 사람을 건너뛰었다: ⓐ 캐시 히트(제거됨) ⓑ 조례 텍스트에
+       시설유형·값이 둘 다 있으면 `confirmed=True`. ⓑ 는 substring 대조라
+       「제5조의 10m 가 이 시설 얘기인지」까지는 알 수 없다 — 근거는 되지만
+       확정은 아니다. 자동으로 끝까지 가야 할 때는 `mode:"full"` 이 따로 있다.
+       이제 조례 근거는 **제안값**으로 내려가고, 확정은 사람 답변으로만 붙는다.
     """
     flags = list(pred.get("hitl_flags", []))
-    pred.get("dataset_id", "")
-    cache = load_exclusion_cache()
-    ord_norm = _norm(load_ordinance())  # 현재 도메인 조례 텍스트(검증 근거)
+    ord_norm = _norm(load_ordinance())  # 현재 도메인 조례 텍스트(제안 근거)
     existing = {(f.get("type"), f.get("role_index")) for f in flags}
     for i, r in enumerate(pred.get("roles", [])):
         if r.get("role") != "hard_exclusion":
@@ -848,32 +889,13 @@ def enrich_hitl_flags(pred: dict, region: str = "",
         radius = r.get("배제반경_m")
         is_radius = r.get("exclusion_type", "radius") == "radius"
 
-        # 1) 캐시 히트(사람·조례로 이미 확정된 값) → 즉시 채움
-        if is_radius and radius is None and ftype and ftype in cache:
-            c = cache[ftype]
-            r.update(
-                배제반경_m=c["배제반경_m"],
-                source=c.get("출처"),
-                confirmed=True,
-                need_review=False,
-                from_cache=True,
-            )
-            continue
-
-        # 2) 조례 대조: radius 값 존재 + 시설유형·값이 조례에 실제로 있어야만 confirmed
+        # 조례 대조: radius 값 존재 + 시설유형·값이 조례에 실제로 있으면 **제안값**.
         ftype_in_ord = bool(ftype) and _norm(ftype) in ord_norm
         value_in_ord = radius is not None and str(radius) in ord_norm
-        if is_radius and radius is not None and ftype_in_ord and value_in_ord:
-            r["confirmed"] = True
-            r["need_review"] = False
-            save_to_exclusion_cache(
-                ftype, radius, r.get("source", "ordinance"), confirmed_by="ordinance"
-            )
-            continue
+        ord_backed = bool(is_radius and radius is not None and ftype_in_ord and value_in_ord)
 
-        # 3) 그 외 전부 → 미확정. LLM 자가확정(조례 근거 없는 confirmed)을 여기서 false 로 벗긴다.
-        #    (조례에 없음 / 값 null / polygon) → 검색·사람 확인 대상.
-        #    ※ source·rationale 은 지우지 않는다 — HITL 에서 사람이 판단 근거로 봐야 하므로.
+        # 배제는 전부 미확정으로 내려간다. LLM 자가확정도 여기서 벗긴다.
+        # ※ source·rationale·배제반경_m 은 지우지 않는다 — 사람이 판단 근거로 봐야 하므로.
         r["confirmed"] = False
         r["need_review"] = True
         key = ("exclusion_radius_missing", i)
@@ -884,9 +906,16 @@ def enrich_hitl_flags(pred: dict, region: str = "",
                 {
                     "type": "exclusion_radius_missing",
                     "role_index": i,
-                    "message": "배제 대상이나 조례에서 반경/근거 확인 안 됨(LLM 자가판정). 검색·사람 확인 필요.",
-                    "제안값": None,
-                    "출처": None,
+                    "message": (
+                        "조례에서 시설유형·반경 문구를 찾았습니다(제안값). 같은 시설 규정이 맞는지 확인하세요."
+                        if ord_backed
+                        else "배제 대상이나 조례에서 반경/근거 확인 안 됨(LLM 자가판정). 검색·사람 확인 필요."
+                    ),
+                    "제안값": radius if ord_backed else None,
+                    "출처": (r.get("source") or "ordinance") if ord_backed else None,
+                    # 조례 제안일 때만 의미가 있다. substring 대조라 True 여도
+                    # '그 시설의 규정'임을 보장하지 않는다 — 그래서 사람이 본다.
+                    "근거_시설_일치": ftype_in_ord if ord_backed else None,
                 }
             )
 
@@ -963,12 +992,15 @@ def search_exclusion_radius(
 def enrich_with_search(
     in_path: str | None = None,
     out_path: str | None = None,
-    region: str = "용산구",
+    region: str | None = None,
     ordinance_rag: str = "",
 ) -> str:
     """audit_result.json 의 exclusion_radius_missing flag 를, 조례가 인용한 상위법을
     법령 API 로 조회해 배제반경 후보로 채워 별도 저장. 원본 보존, confirmed=false(HITL 확인).
-    ordinance_rag: 업로드된 조례 본문(「」 인용 법령 파싱용). 없으면 조례 텍스트 파일 사용."""
+    ordinance_rag: 업로드된 조례 본문(「」 인용 법령 파싱용). 없으면 조례 텍스트 파일 사용.
+    region: 안 주면 감리 결과의 `facility_inference.region` 을 쓴다. 🔴 예전 기본값은
+      **"용산구"** 였다(2026-08-10 제거) — `search` 모드로 성동구를 돌리면 인자를 안 주므로
+      용산구로 web_search 했다. 시설명(`facility`)은 이미 그 파일에서 읽고 있었다."""
     import copy
     import os
     from app.services.gam2_ordinance_acquisition import (
@@ -1002,7 +1034,9 @@ def enrich_with_search(
             reason = "조례(또는 인용 상위법) 없음"
             stype = "ordinance_absent"
         else:
-            reason = f"조례에 이격거리·설치금지 규정 없음(전문 {len(rag):,}자 · 신호 0건)"
+            reason = (
+                f"조례에 이격거리·설치금지 규정 없음(전문 {len(rag):,}자 · 신호 0건)"
+            )
             stype = "ordinance_no_provision"
 
         n_missing = 0
@@ -1031,8 +1065,18 @@ def enrich_with_search(
         return out_path
     # ─────────────────────────────────────────────────────────────
 
-    # facility(폴백 web_search 프롬프트용) — 결과 JSON의 facility_inference에서
-    facility = (doc.get("facility_inference", {}) or {}).get("facility", "")
+    # facility·region(폴백 web_search 프롬프트용) — 결과 JSON의 facility_inference에서.
+    # 두 값의 출처를 같은 곳으로 맞춘다 — facility 만 파일에서 읽고 region 은 기본값을
+    # 쓰면 "성동구 재활용정거장" 이 아니라 "용산구 재활용정거장" 을 검색하게 된다.
+    _fi = doc.get("facility_inference", {}) or {}
+    facility = _fi.get("facility", "")
+    region = str(region or _fi.get("region") or "").strip()
+    if not region:
+        # 여기까지 왔다는 건 검색할 flag 가 실제로 있다는 뜻이다(위 스킵 경로 통과).
+        raise SystemExit(
+            f"🔴 {in_path} 에 facility_inference.region 이 없다. "
+            "지역을 추측하지 않는다 — region= 으로 넘기거나 감리를 다시 돌릴 것."
+        )
 
     n_filled = 0
     for r in enriched["results"]:
@@ -1171,13 +1215,25 @@ _ADM_CODE_CACHE: dict | None = None  # {체계: {코드접두: (시도명, 시�
 
 # 시도 표기 흔들림 흡수 — 크로스워크는 '서울특별시', 엑셀은 '서울', 사용자는 '서울시'.
 _SIDO_ALIAS = {
-    "서울": "서울특별시", "서울시": "서울특별시",
-    "부산": "부산광역시", "대구": "대구광역시", "인천": "인천광역시",
-    "광주": "광주광역시", "대전": "대전광역시", "울산": "울산광역시",
-    "세종": "세종특별자치시", "세종시": "세종특별자치시",
-    "경기": "경기도", "강원": "강원특별자치도", "충북": "충청북도",
-    "충남": "충청남도", "전북": "전북특별자치도", "전남": "전라남도",
-    "경북": "경상북도", "경남": "경상남도", "제주": "제주특별자치도",
+    "서울": "서울특별시",
+    "서울시": "서울특별시",
+    "부산": "부산광역시",
+    "대구": "대구광역시",
+    "인천": "인천광역시",
+    "광주": "광주광역시",
+    "대전": "대전광역시",
+    "울산": "울산광역시",
+    "세종": "세종특별자치시",
+    "세종시": "세종특별자치시",
+    "경기": "경기도",
+    "강원": "강원특별자치도",
+    "충북": "충청북도",
+    "충남": "충청남도",
+    "전북": "전북특별자치도",
+    "전남": "전라남도",
+    "경북": "경상북도",
+    "경남": "경상남도",
+    "제주": "제주특별자치도",
 }
 
 
@@ -1249,33 +1305,43 @@ def _load_admin_code_map() -> dict:
             #   된다 — 조용한 실패다. 실제 컬럼을 찍어 원인을 바로 보게 한다.
             n_gu = len({gu for t in _ADM_CODE_CACHE.values() for _, gu in t.values()})
             if n_gu == 0:
-                print(f"  🔴 크로스워크를 읽었으나 코드 0건 — 컬럼명 불일치.\n"
-                      f"    파일: {cw}\n"
-                      f"    실제 컬럼: {list(df.columns)}\n"
-                      f"    필요 컬럼: 시도명 · 시군구명 · "
-                      f"행정동코드 / 행정동코드8 / 행정구역코드")
+                print(
+                    f"  🔴 크로스워크를 읽었으나 코드 0건 — 컬럼명 불일치.\n"
+                    f"    파일: {cw}\n"
+                    f"    실제 컬럼: {list(df.columns)}\n"
+                    f"    필요 컬럼: 시도명 · 시군구명 · "
+                    f"행정동코드 / 행정동코드8 / 행정구역코드"
+                )
             else:
-                print(f"  [코드표] 크로스워크 {len(df):,}행 · 시군구 {n_gu}종 "
-                      f"— {os.path.basename(cw)}")
+                print(
+                    f"  [코드표] 크로스워크 {len(df):,}행 · 시군구 {n_gu}종 "
+                    f"— {os.path.basename(cw)}"
+                )
             return _ADM_CODE_CACHE
         except Exception as e:
-            print(f"  [경고] 크로스워크 로드 실패({e}) — 엑셀 폴백을 시도합니다\n"
-                  f"    파일: {cw}")
+            print(
+                f"  [경고] 크로스워크 로드 실패({e}) — 엑셀 폴백을 시도합니다\n"
+                f"    파일: {cw}"
+            )
 
     # 2) 엑셀 폴백 (서울 한정)
     path = str(getattr(config, "ADM_CODE_MAP", "") or "")
     if not path or not os.path.isfile(path):
         # 어느 경로를 봤는지 알려준다. 종전에는 경로를 담은 메시지가
         #   이 early return **뒤**에 있어서, 둘 다 없을 때 끝내 안 보였다.
-        print("  [경고] 행정동 코드표 없음 — 코드 검증 없이 HITL 확인만 수행\n"
-              f"    크로스워크 : {cw or '(config 에 ADMIN_CROSSWALK_PATH 없음)'}\n"
-              f"    엑셀 폴백  : {path or '(config 에 ADM_CODE_MAP 없음)'}\n"
-              "    → make_admin_crosswalk.py 로 행정동_크로스워크.csv 를 만드세요.")
+        print(
+            "  [경고] 행정동 코드표 없음 — 코드 검증 없이 HITL 확인만 수행\n"
+            f"    크로스워크 : {cw or '(config 에 ADMIN_CROSSWALK_PATH 없음)'}\n"
+            f"    엑셀 폴백  : {path or '(config 에 ADM_CODE_MAP 없음)'}\n"
+            "    → make_admin_crosswalk.py 로 행정동_크로스워크.csv 를 만드세요."
+        )
         return _ADM_CODE_CACHE
     # 폴백이 조용히 발동하면 '전국 3,555동'인 줄 알면서 실제로는 서울 424동만
     # 보게 된다. 서울 밖 도메인에서는 전부 unknown 이 되어 HITL 만 늘어난다.
-    print(f"  ⚠ 크로스워크 없음({cw or '경로 미설정'}) — 엑셀 폴백 사용(서울 한정).\n"
-          f"    전국 대응하려면 make_admin_crosswalk.py 로 크로스워크를 만드세요.")
+    print(
+        f"  ⚠ 크로스워크 없음({cw or '경로 미설정'}) — 엑셀 폴백 사용(서울 한정).\n"
+        f"    전국 대응하려면 make_admin_crosswalk.py 로 크로스워크를 만드세요."
+    )
     try:
         df = pd.read_excel(path, sheet_name=ADM_CODE_SHEET, dtype=str, skiprows=1)
         df.columns = [
@@ -1350,10 +1416,13 @@ def suggest_code_prefix(region: str, system: str = "행자부") -> str | None:
     want_sido, want_gu = split_region(region)
     if not want_gu:
         return None
-    cands = sorted({
-        c for c, (sido, gu) in m.items()
-        if len(c) == 5 and gu == want_gu and ((not want_sido) or sido == want_sido)
-    })
+    cands = sorted(
+        {
+            c
+            for c, (sido, gu) in m.items()
+            if len(c) == 5 and gu == want_gu and ((not want_sido) or sido == want_sido)
+        }
+    )
     return cands[0] if len(cands) == 1 else None
 
 
@@ -1379,8 +1448,9 @@ def region_is_unique(region: str) -> bool:
 _FIXTURE_CACHE: dict | None = None
 
 
-def _code_samples(dataset_id: str, col: str, n: int = 8,
-                  fixtures: dict | None = None) -> list:
+def _code_samples(
+    dataset_id: str, col: str, n: int = 8, fixtures: dict | None = None
+) -> list:
     """프로파일 sample_rows 에서 해당 컬럼의 값 표본을 꺼낸다. 실패하면 빈 리스트.
     감리 결과 JSON 에는 표본이 없으므로 fixture(profiles.json)를 읽는다.
     fixtures 를 직접 받으면(감리 중) 다시 로드하지 않는다."""
@@ -1388,8 +1458,11 @@ def _code_samples(dataset_id: str, col: str, n: int = 8,
     if fixtures is not None:
         _FIXTURE_CACHE = _FIXTURE_CACHE or fixtures
         f = fixtures.get(dataset_id) or {}
-        return [row.get(col) for row in (f.get("sample_rows") or [])
-                if row.get(col) not in (None, "")][:n]
+        return [
+            row.get(col)
+            for row in (f.get("sample_rows") or [])
+            if row.get(col) not in (None, "")
+        ][:n]
     if _FIXTURE_CACHE is None:
         try:
             _FIXTURE_CACHE = build_fixtures()
@@ -1444,10 +1517,16 @@ def resolve_code_prefix(prefix: str, region: str, samples=None) -> dict:
     uniq = region_is_unique(region)
     m = _load_admin_code_map()
     out = {
-        "status": "needs_review", "verdict": verdict, "prefix": pf,
-        "region": region, "region_unique": bool(uniq),
-        "system": None, "resolved": None, "detail": detail,
-        "suggestion": suggest_code_prefix(region), "reason": "",
+        "status": "needs_review",
+        "verdict": verdict,
+        "prefix": pf,
+        "region": region,
+        "region_unique": bool(uniq),
+        "system": None,
+        "resolved": None,
+        "detail": detail,
+        "suggestion": suggest_code_prefix(region),
+        "reason": "",
     }
     if not any(m.values()):
         out["reason"] = "행정동 코드표 없음 — 검증 불가"
@@ -1462,7 +1541,9 @@ def resolve_code_prefix(prefix: str, region: str, samples=None) -> dict:
             out["status"] = "auto_confirmed"
             out["reason"] = "코드표 대조 — 이 접두를 아는 모든 체계가 대상 지역"
         else:
-            out["reason"] = f"'{region}' 이 전국에서 유일하지 않음 (시도를 함께 적으면 자동 확정)"
+            out["reason"] = (
+                f"'{region}' 이 전국에서 유일하지 않음 (시도를 함께 적으면 자동 확정)"
+            )
         return out
 
     if verdict == "ambiguous":
@@ -1480,13 +1561,16 @@ def resolve_code_prefix(prefix: str, region: str, samples=None) -> dict:
             out["status"] = "auto_confirmed"
             out["reason"] = f"데이터 표본이 {sysname} 체계로 판정됨"
         elif same:
-            out["reason"] = f"'{region}' 이 전국에서 유일하지 않음 (시도를 함께 적으면 자동 확정)"
+            out["reason"] = (
+                f"'{region}' 이 전국에서 유일하지 않음 (시도를 함께 적으면 자동 확정)"
+            )
         else:
             out["reason"] = f"{sysname} 체계에서 이 접두는 대상 지역이 아님"
         return out
 
-    out["reason"] = ("대상 지역이 아님" if verdict == "mismatch"
-                     else "코드표에 없는 접두")
+    out["reason"] = (
+        "대상 지역이 아님" if verdict == "mismatch" else "코드표에 없는 접두"
+    )
     return out
 
 
@@ -1503,31 +1587,47 @@ def _enrich_code_prefix(pred: dict, region: str, fixtures: dict | None) -> dict:
             continue
         prm = op.setdefault("params", {})
         chk = resolve_code_prefix(
-            prm.get("prefix", ""), region,
-            _code_samples(did, prm.get("col"), fixtures=fixtures))
+            prm.get("prefix", ""),
+            region,
+            _code_samples(did, prm.get("col"), fixtures=fixtures),
+        )
         chk["col"] = prm.get("col")
         prm["prefix_check"] = chk
         if chk["status"] == "auto_confirmed":
             prm["prefix_confirmed"] = True
-            prm["prefix_confirmed_by"] = (
-                "code_table" + (f":{chk['system']}" if chk["system"] else ""))
+            prm["prefix_confirmed_by"] = "code_table" + (
+                f":{chk['system']}" if chk["system"] else ""
+            )
             continue
         prm.setdefault("prefix_confirmed", False)
-        if not any(f.get("type") == "code_prefix_unverified"
-                   and f.get("op_index") == i for f in flags):
-            flags.append({
-                "type": "code_prefix_unverified", "op_index": i,
-                "col": chk["col"], "prefix": chk["prefix"],
-                "verdict": chk["verdict"], "reason": chk["reason"],
-                "detail": chk["detail"], "suggestion": chk["suggestion"],
-                # message 는 요약 출력이 쓰는 공통 필드다(다른 flag 와 동일 규약).
-                "message": (f"'{chk['col']}' 접두 '{chk['prefix']}' — "
-                            f"{chk['reason']}"
-                            + (f" ({chk['detail']})" if chk.get("detail") else "")
-                            + (f" · 제안 '{chk['suggestion']}'"
-                               if chk.get("suggestion") else "")),
-                "confirmed": False,
-            })
+        if not any(
+            f.get("type") == "code_prefix_unverified" and f.get("op_index") == i
+            for f in flags
+        ):
+            flags.append(
+                {
+                    "type": "code_prefix_unverified",
+                    "op_index": i,
+                    "col": chk["col"],
+                    "prefix": chk["prefix"],
+                    "verdict": chk["verdict"],
+                    "reason": chk["reason"],
+                    "detail": chk["detail"],
+                    "suggestion": chk["suggestion"],
+                    # message 는 요약 출력이 쓰는 공통 필드다(다른 flag 와 동일 규약).
+                    "message": (
+                        f"'{chk['col']}' 접두 '{chk['prefix']}' — "
+                        f"{chk['reason']}"
+                        + (f" ({chk['detail']})" if chk.get("detail") else "")
+                        + (
+                            f" · 제안 '{chk['suggestion']}'"
+                            if chk.get("suggestion")
+                            else ""
+                        )
+                    ),
+                    "confirmed": False,
+                }
+            )
     return pred
 
 
@@ -1600,13 +1700,13 @@ def review_hitl(in_path: str | None = None, out_path: str | None = None) -> str:
 
         radius = _read_radius(default=제안)
         if radius == "skip":
-            print("  → 건너뜀 (미확정 유지 — 위치선정 전에 다시 확인 필요)")
+            print("  → 건너뜀 (미확정 유지 — 이 상태로는 STEP2 가 시작되지 않는다)")
             continue
         apply_radius_answer(r, f, radius)
         if radius is None:
             print("  → 반경 없음(면 배제 등)으로 확정")
         else:
-            print(f"  → {radius}m 확정 (캐시 저장 — 다음 실행부터 재사용)")
+            print(f"  → {radius}m 확정 (이 실행에만 적용 — 다음 실행에서 다시 묻는다)")
 
     # ── 2) 데이터 용도 확인 ─────────────────────────────────────────
     pending = [
@@ -1660,8 +1760,8 @@ def review_hitl(in_path: str | None = None, out_path: str | None = None) -> str:
             chk = prm.get("prefix_check")
             if not chk or chk.get("verdict") == "unknown":
                 chk = resolve_code_prefix(
-                    cur, region,
-                    _code_samples(r.get("dataset_id"), prm.get("col")))
+                    cur, region, _code_samples(r.get("dataset_id"), prm.get("col"))
+                )
                 prm["prefix_check"] = chk
             hint = chk.get("suggestion")
             print(f"\n[{r.get('dataset_id')}] {r.get('summary', '')[:60]}")
@@ -1669,8 +1769,9 @@ def review_hitl(in_path: str | None = None, out_path: str | None = None) -> str:
             print(f"  코드표: {chk.get('detail') or '(대조 불가)'}")
             if chk.get("status") == "auto_confirmed":
                 prm["prefix_confirmed"] = True
-                prm["prefix_confirmed_by"] = ("code_table"
-                    + (f":{chk['system']}" if chk.get("system") else ""))
+                prm["prefix_confirmed_by"] = "code_table" + (
+                    f":{chk['system']}" if chk.get("system") else ""
+                )
                 print(f"  ✅ {chk.get('resolved') or region} — {chk.get('reason')}")
                 print("     → 코드표로 확정 (사람 확인 생략)")
                 continue
@@ -1894,6 +1995,7 @@ def load_ordinance(source: str | None = None) -> str:
     #   추출은 부가 기능이라 의존 패키지가 없으면 건너뛰고 진행한다.
     try:
         from app.services.gam2_doc_extract import ensure_text_files
+
         ensure_text_files(folder)
     except Exception as e:
         print(f"  ⚠ 문서 텍스트 추출 생략({e})")
@@ -1951,9 +2053,24 @@ def build_fixtures(profiles_path: str | None = None) -> dict:
     return profiles
 
 
-# 테스트용 폴백 기본값. 실제 실행 시 resolve_facility 가 사용자 입력에서 facility·region 을
-# 추출해 이 값을 대체한다(도메인 무관). 사용자 입력이 비었을 때만 이 값이 쓰인다.
-DOMAIN = {"facility": "흡연부스", "region": "용산구"}
+def require_region(fac: dict) -> str:
+    """시설 확정 결과(`resolve_facility*`)에서 대상 지역을 꺼낸다. 없으면 멈춘다.
+
+    🔴 예전엔 `DOMAIN = {"facility": "흡연부스", "region": "용산구"}` 를 두고
+       `fac.get("region") or DOMAIN["region"]` 로 채웠다(2026-08-10 제거, 사람 승인).
+       주석엔 "테스트용 폴백"이라 적혀 있었지만 실제로는 **실행 경로 3곳**에서 쓰였다
+       (`gam2_run_pipeline.py:191`·이 파일 real/mock 진입점 2곳).
+       MVP 도메인 값이라 성동구 입력에서 지역이 안 잡히면 조용히 **용산구** 조례·상위법을
+       검색한다 — 안 터지고 근거만 틀린다. "엔진은 그대로, 데이터만 바꾼다"에도 어긋난다.
+    """
+    region = str(fac.get("region") or "").strip()
+    if not region:
+        raise SystemExit(
+            "🔴 대상 지역을 확정하지 못했다. 지역을 추측하지 않는다. "
+            "입력에 '<시군구>' 를 포함할 것 (예: \"용산구 흡연부스 부지 선정\"). "
+            f"입력: {fac.get('source_input', '')!r}"
+        )
+    return region
 
 
 if __name__ == "__main__":
@@ -2005,7 +2122,7 @@ if __name__ == "__main__":
         print("  ※ 확정 아님 — HITL에서 확인/수정 필요\n")
         domain = {
             "facility": fac["facility"],
-            "region": fac.get("region") or DOMAIN["region"],
+            "region": require_region(fac),
         }
         print(f"[감리 AI 검수 리포트] 모델: {AUDIT_LLM_MODEL}")
         print("※ 배제반경 미확정·애매 데이터는 아래 HITL 대기로 넘어갑니다.\n")
@@ -2022,7 +2139,7 @@ if __name__ == "__main__":
         print(f"[시설 확정(mock)] '{fac['facility']}'  (입력: {user_input})\n")
         domain = {
             "facility": fac["facility"],
-            "region": fac.get("region") or DOMAIN["region"],
+            "region": require_region(fac),
         }
         print("[MockLLM 검수 리포트] — 하네스 출력 형식 확인용\n")
         judgments, raw_preds = run_harness(MockLLM(), fixtures, domain)

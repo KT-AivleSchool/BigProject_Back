@@ -1,6 +1,12 @@
+import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
+
+# DB & Redis 커넥션 인프라 수거 객체
+from app.db.session import engine
+from app.api.deps import redis_pool
 
 # 라우터 Import (v1 하위 라우터 연동)
 #
@@ -15,6 +21,10 @@ from app.api.v1 import auth, audit, pipeline
 #    "구현이 아직 안 된" 게 아니라 **폐기된 것**이다. 되살릴 조건이
 #    "그 서비스를 만들어라"가 아니다 — 만들면 안 된다. 대체재가 이미 있다.
 #      gis_service  → geopandas 로 간다 (메모리 한계 때문. S5 결론 참조)
+#                     ※ 2026-08-06 에 "STEP5 가 쓴다"고 정정했다가, POI 문맥이
+#                       `app/services/poi_context.py` 로 교체되며 import 처가 0곳이
+#                       됐다 → **2026-08-11 파일 삭제**(사람 지시). 자세한 경위는
+#                       CLAUDE.md 「라우터 표면 확정」 절
 #      ahp_service  → STEP3 가중치 구조가 이미 그 일을 한다 (gam2_weight_model.py)
 #    lands.py · ahp.py 는 **삭제했다**(7f66fd9). 죽은 서비스 호출 아니면 하드코딩
 #    응답이었다 — `/lock` 은 입력과 무관하게 `is_locked: True`, `/upload` 는 항상
@@ -28,15 +38,22 @@ from app.api.v1 import auth, audit, pipeline
 #    2026-08-04 에 내가 폐기로 잘못 분류했다가 정정했다.
 #    막고 있던 `pdf_service` import(구 15행)는 **함수 안으로 옮겨 해소**했다.
 #    남은 차단 요인은 딱 하나 — 아래 `sim_ai/graph.py:57` 의 import 시점 접속이다.
-#    ※ 화면6(PDF)은 별건이다. `pdf_service.py`(9be3851) ·
-#      `report_template.html`(2bd69ef 에서 삭제) 복구 + weasyprint(GTK3) 가 필요하다.
-#      재작성이 아니라 **복구 + 환경**이며, 그 사정은 그 함수 주석에 적어뒀다.
-# from app.api.v1 import simulations
+#    ※ 화면6(PDF) — 🔴 **아래 옛 주석은 틀렸다. 지금은 된다**(2026-08-09 실측 정정).
+#      예전 주석: "`pdf_service.py`·`report_template.html` 복구 + weasyprint(GTK3) 필요".
+#      2026-08-04 에 두 파일이 잠깐 지워졌던 시점 기준으로 적었고, 복구된 뒤에도
+#      주석만 남았다. 실측: 두 파일 모두 **존재**하고 `pdf_service.py` 는 weasyprint 가
+#      아니라 **playwright(chromium headless)** 를 쓴다. weasyprint 는 코드 참조가
+#      **0회**다(import 하면 libgobject 로 실패하지만 아무도 안 부른다).
+#      실제 생성도 확인했다 — 33,335 bytes, 헤더 `%PDF-`.
+#      교훈: 안 고친 주석은 남이 요구사항으로 옮겨 적는다. 실제로 프런트 쪽에
+#      "weasyprint GTK 미설치로 화면6 막힘"으로 전달됐다(원칙 4·5).
+from app.api.v1 import simulations
+
 #
 # 🔴 upload 도 폐기가 아니다 — **앞으로 쓸 것**이다. 이슈 #203 대로
 #    gam2_doc_extract.py(문서→텍스트) + gam2_ordinance_select.py(조문 분할·규제 선별)를
 #    붙이는 업로드 경로가 여기로 들어온다.
-# from app.api.v1 import upload
+from app.api.v1 import upload
 #
 # ── ⏱ 둘의 공통 차단 요인 — import 가 **525.7초** 걸린다 (2026-08-04 실측) ────
 #    `upload.py:10` 과 `core/sim_ai/graph.py:57` 이 **모듈 최상단에서**
@@ -52,12 +69,77 @@ from app.api.v1 import auth, audit, pipeline
 #       우리가 고치지 않고 **이슈로 넘긴다** — 인계 문서:
 #       obsidian 10_OmniSite/04_이슈/2026-08-04_GH이슈_import시점_외부접속.md
 
+# ── 다인 토론(B) · HWPX 보고서 — PR #224 (민영님) ────────────────────────────
+#    `stakeholders` = 이해관계자 동적 생성 + 다인 토론 그래프(app/core/stakeholder_mode/)
+#    `report`       = 화면6 의 두 번째 출력 형식(HWPX). 기존 PDF 경로는 그대로 둔다.
+#    둘 다 import 시점 외부접속이 없다(확인함) — 위 upload·simulations 와 사정이 다르다.
+#
+# 🔴 PR #224 의 원본은 `auth, lands, ahp, …` 였고 pipeline·upload 를
+#    `try/except ImportError: None` 으로 감싸고 있었다. 둘 다 안 받았다:
+#      · `lands`·`ahp` 는 **삭제된 파일**이다(7f66fd9, 폐기 확정). import 하면 기동이 죽는다
+#      · try/except 는 라우터가 사라져도 서버가 뜨게 만든다 → 프런트엔 404 로만 보인다.
+#        "실패하면 건너뛰기"는 조용한 실패다(원칙 1). 못 붙일 이유가 있으면 위처럼 **적는다**
+from app.api.v1 import stakeholders, report
+
+# Uvicorn 콘솔 로거 인스턴스 획득 (터미널에 INFO 로그가 바로 노출되도록 설정)
+logger = logging.getLogger("uvicorn.error")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    [FastAPI Lifespan 생명주기 관리자]
+    서버 구동(Startup) 시 DB/Redis 커넥션 풀 웜업 및 상태 체크
+    서버 종료(Shutdown) 시 SQLAlchemy 엔진 및 Redis 풀의 비동기 커넥션을 안전하게 해제합니다.
+    """
+    logger.info("🚀 [Startup] OmniSite Backend Server starting up...")
+    logger.info(
+        f"🔗 [DB Engine] SQLAlchemy async engine initialized ({settings.PROJECT_NAME})"
+    )
+    logger.info("⚡ [Redis Pool] Redis connection pool initialized.")
+
+    # 🔴 이전 서버가 죽어 'running' 인 채 남은 run 을 여기서 **한 번만** 닫는다.
+    #    안 닫으면 프런트가 영원히 폴링한다(계약 4절). 예전엔 `read_status` 마다
+    #    돌아서 runs/ 전수 스캔이 초당 수 회 일어났고, 그 읽기가 `_write_status` 의
+    #    os.replace 와 부딪혀 WinError 5 로 run 이 조용히 죽었다(2026-08-08).
+    #    판정식이 `started_at < _SERVER_BOOT` 라 **답은 부팅 시점에 이미 고정**이다.
+    from app.services import pipeline_runner
+
+    pipeline_runner.reap_orphans()
+    logger.info("🧹 [Runs] 이전 서버의 중단된 run 정리 완료.")
+
+    # 🔴 반드시 `reap_orphans()` **뒤**다. 정리기는 `running`·`awaiting_hitl` 인 run 을
+    #    보호하는데, 이전 서버가 죽여놓고 간 run 은 닫히기 전까지 `running` 이다 —
+    #    먼저 돌리면 그 run 들이 영원히 보호되어 디스크가 안 준다.
+    #    실패해도 기동을 막지 않는다(안 지우면 디스크만 쓰지만, 기동이 막히면
+    #    프런트가 통째로 멈춘다). 대신 왜 못 했는지는 로그에 남는다.
+    from app.services import run_pruner
+
+    await run_pruner.prune_on_boot_hook()
+
+    yield
+
+    logger.info("🛑 [Shutdown] Server shutting down... Cleaning up connection pools.")
+    try:
+        await engine.dispose()
+        logger.info("✅ [DB Engine] SQLAlchemy async engine disposed successfully.")
+    except Exception as e:
+        logger.error(f"❌ [DB Engine Error] Engine dispose failed: {e}")
+
+    try:
+        await redis_pool.disconnect()
+        logger.info("✅ [Redis Pool] Redis connection pool disconnected successfully.")
+    except Exception as e:
+        logger.error(f"❌ [Redis Pool Error] Redis disconnect failed: {e}")
+
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     description="OmniSite 스마트시티 입지선정 및 공공갈등 예측 플랫폼 통합 백엔드 API",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # CORS 미들웨어 설정 (프론트엔드 Next.js 개발 서버 연동 허용)
@@ -73,34 +155,42 @@ app.add_middleware(
 app.include_router(
     auth.router, prefix=settings.API_V1_STR + "/auth", tags=["Authentication"]
 )
-# 🔴 아래 2개는 뺐다. **둘 다 폐기가 아니다** — 사유가 하나로 같다:
-#    `RagVectorStorage()` 를 모듈 최상단에서 만들어 import 가 525.7초 걸린다.
-#    등록하면 uvicorn 기동이 9분이 된다. 상세와 인계 이슈는 파일 상단 주석 참조.
-#    (/lands · /ahp 는 성격이 다르다 — 그건 폐기라서 라우터 파일째 삭제했다)
-#    /simulation 과 /simulations 두 prefix 로 **같은 라우터를 두 번** 등록하고 있었다 —
-#    되살릴 때 한쪽만 살리면 프런트 경로가 조용히 404 가 된다. 둘 다 같이 처리할 것.
-# app.include_router(
-#     simulations.router,
-#     prefix=settings.API_V1_STR + "/simulation",
-#     tags=["AI Simulation"],
-# )
-# app.include_router(
-#     simulations.router,
-#     prefix=settings.API_V1_STR + "/simulations",
-#     tags=["AI Simulation"],
-# )
+# 🔴 `/simulation` 과 `/simulations` 두 prefix 로 **같은 라우터를 두 번** 등록한다 —
+#    한쪽만 등록하면 프런트 경로가 조용히 404 가 된다. 둘 다 같이 처리할 것.
+#    (PR #224 병합에서 복수형이 빠져 있었다. 충돌 표시 없이 사라진 자리다)
+app.include_router(
+    simulations.router,
+    prefix=settings.API_V1_STR + "/simulation",
+    tags=["AI Simulation"],
+)
+app.include_router(
+    simulations.router,
+    prefix=settings.API_V1_STR + "/simulations",
+    tags=["AI Simulation"],
+)
 app.include_router(
     audit.router, prefix=settings.API_V1_STR + "/audit", tags=["Audit AI"]
 )
-# app.include_router(
-#     upload.router,
-#     prefix=settings.API_V1_STR + "/upload",
-#     tags=["Regulation & File Upload"],
-# )
+app.include_router(
+    upload.router,
+    prefix=settings.API_V1_STR + "/upload",
+    tags=["Regulation & File Upload"],
+)
 app.include_router(
     pipeline.router,
     prefix=settings.API_V1_STR + "/pipeline",
     tags=["Pipeline Run"],
+)
+# 다인 토론(B) · HWPX — PR #224
+app.include_router(
+    stakeholders.router,
+    prefix=settings.API_V1_STR + "/stakeholders",
+    tags=["Dynamic Stakeholders"],
+)
+app.include_router(
+    report.router,
+    prefix=settings.API_V1_STR + "/report",
+    tags=["Report Generation"],
 )
 
 

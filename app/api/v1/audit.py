@@ -45,12 +45,29 @@ async def verify_precedent_document(
         )
         sim_data = sim_result.scalar()
 
-        predicted_scenarios = []
-        if sim_data and sim_data.result_json:
-            predicted_scenarios = sim_data.result_json.get("scenarios", [])
+        # 🔴 2026-08-11. 예전엔 없는 `simulation_id` 여도 `predicted_scenarios = []`
+        #    로 넘어가 **200 + UNCLASSIFIED** 가 나갔다 — 호출자는 "대조했는데 안
+        #    맞았다" 로 읽는다. 실제로는 대조할 것을 못 찾은 것이다(원칙 1·4).
+        if sim_data is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"conflict_simulations 에 id={simulation_id} 가 없다.",
+            )
 
-        # 정규식 메타데이터 도출
-        parsed_metadata = pdf_parser.parse_document_metadata(extracted_text)
+        predicted_scenarios = (sim_data.result_json or {}).get("scenarios") or []
+
+        # 정규식 메타데이터 도출.
+        # 🔴 2026-08-11. 시설 어휘는 **이 시뮬레이션이 다루는 시설**에서 온다.
+        #    예전엔 파서 안에 `{"흡연구역": [...], "쓰레기통": [...], …}` 사전이
+        #    박혀 있었다 — MVP 도메인 넷만 알아보고 나머지는 영영 `None` 이다
+        #    (원칙 2). 여기서 넘기면 도메인이 늘어도 코드가 안 바뀐다.
+        #    `facility_type` 이 비어 있으면 어휘 없이 부른다 → `None` 이 나간다.
+        #    「이 공문이 그 시설 얘기인지」를 못 정한 것이고, 지어내지 않는다(원칙 1).
+        sim_facility = (sim_data.facility_type or "").strip()
+        parsed_metadata = pdf_parser.parse_document_metadata(
+            extracted_text,
+            facility_vocab={sim_facility: [sim_facility]} if sim_facility else None,
+        )
 
         # 실증 유사도 분류 판정 가동
         analysis = audit_classifier.classify_actual_scenario(
@@ -89,14 +106,36 @@ async def save_audit_feedback(
     """
     [장천명 풀스택] RAG 환류 오염 방지(Model Collapse)를 위해 실증 적용 결과를 VerifiedPrecedent 테이블에 격리 적재하는 API
     """
+    # 🔴 2026-08-11. `/verify` 는 판정을 못 하면 `matched_scenario: null` +
+    #    `UNCLASSIFIED`(안 겹침) 또는 `NO_PREDICTION`(대조할 시나리오 없음)을 준다.
+    #    그걸 그대로 넘기면 `actual_scenario` 가 NOT NULL 이라 500 이 나거나,
+    #    빈 문자열이 **실증 사례로 적재**된다. 이 테이블의 존재 이유가 RAG 환류
+    #    오염 방지인데 미분류를 넣으면 그 목적이 무너진다 — 여기서 막는다.
+    if classification_status in ("UNCLASSIFIED", "NO_PREDICTION") or not (
+        matched_scenario or ""
+    ).strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"미분류 결과는 적재하지 않는다 (matched_scenario={matched_scenario!r}, "
+                f"classification_status={classification_status!r}). "
+                "실증 사례 테이블은 실제로 일어난 결과만 쌓는다."
+            ),
+        )
+
     try:
+        # 🔴 2026-08-09 컬럼명 정정. 예전엔 `parcel_id=simulation_id` 였다 —
+        #    이름은 필지인데 값은 시뮬레이션 id 였고, 나머지 5개는 실 DB 에 아예
+        #    없는 컬럼이라 이 저장은 **항상 실패**했다(verified_precedents 0행).
+        #    `matched_scenario`→`actual_scenario`(예측이 아니라 실측이라 이 이름),
+        #    `extracted_text`→`document_ocr_text` 로 실 DB 컬럼에 흡수했다.
         new_precedent = VerifiedPrecedent(
-            parcel_id=simulation_id,
+            conflict_simulation_id=simulation_id,
             document_no=document_no,
-            matched_scenario=matched_scenario,
+            actual_scenario=matched_scenario,
             similarity_score=similarity_score,
             classification_status=classification_status,
-            extracted_text=extracted_text,
+            document_ocr_text=extracted_text,
         )
         db.add(new_precedent)
         await db.commit()

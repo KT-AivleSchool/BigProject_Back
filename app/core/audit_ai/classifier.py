@@ -2,6 +2,8 @@ import re
 import math
 from collections import Counter
 
+from app.core.sim_ai.scenario import scenario_code, scenario_compare_text
+
 
 class AuditClassifier:
     @staticmethod
@@ -26,18 +28,37 @@ class AuditClassifier:
     ) -> dict:
         """
         예측되었던 시나리오 리스트와 실제 OCR 텍스트를 비교하여 가장 높은 유사도를 가진 시나리오를 선정합니다.
+
+        🔴 2026-08-11 수정. 예전엔 `sc.get("scenario_type", "A")` 였다 —
+           실제 키는 `scenario` 이고(A 엔진 `reporter.txt:11`), 이 코드는 그 스키마가
+           정해지기 **11일 전**에 쓰였다. 그래서 기본값 `"A"` 가 그대로 나가
+           `matched_scenario` 가 **항상 `"A"`** 였다. 예외는 안 났다.
+           코드 추출은 `app/core/sim_ai/scenario.py` 한 곳에서만 한다.
         """
         best_scenario = None
         max_similarity = 0.0
+        # 「비교할 텍스트가 하나도 없다」와 「비교했는데 안 겹친다」는 다른 사실이다.
+        comparable = 0
 
         for sc in predicted_scenarios:
-            sc_type = sc.get("scenario_type", "A")
-            summary = sc.get("summary", "")
+            text = scenario_compare_text(sc)
+            if not text:
+                continue
+            comparable += 1
 
-            similarity = self._get_cosine_similarity(ocr_text, summary)
+            similarity = self._get_cosine_similarity(ocr_text, text)
             if similarity > max_similarity:
                 max_similarity = similarity
-                best_scenario = sc_type
+                # 🔴 못 뽑으면 `None` 이다. 여기서 "A" 를 넣으면 다시 같은 사고가 난다.
+                best_scenario = scenario_code(sc)
+
+        # 대조할 시나리오 텍스트가 아예 없었다 → 판정을 한 게 아니다(원칙 4).
+        if not comparable:
+            return {
+                "matched_scenario": None,
+                "similarity_score": 0.0,
+                "classification_status": "NO_PREDICTION",
+            }
 
         # 모든 시나리오와 공통 단어가 전혀 없는 경우 → 분류 불가 상태 명시
         # (기존 0.82 매직 넘버 하드코딩 Fallback 제거 — 리뷰 반영)

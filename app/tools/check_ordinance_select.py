@@ -12,6 +12,7 @@
   · 수수료·과태료·위원회에 O     → 과대 선별 (신호 조정 검토)
   · **배제 관련 조문이 '-'**     → 누락. 배제 판정 근거가 사라진다
 """
+
 from __future__ import annotations
 
 import argparse
@@ -24,7 +25,10 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from app.services.gam2_ordinance_select import (
-    split_articles, is_regulatory, select_articles, keywords_of)
+    split_articles,
+    is_regulatory,
+    select_articles,
+)
 from app.services.gam2_audit_judgment_test import load_ordinance, set_domain
 
 
@@ -44,7 +48,9 @@ def main() -> None:
     picked = select_articles(text, [], verbose=False)
 
     print("=" * 84)
-    print(f"[조례 조문 선별] {args.domain}  —  전문 {len(text):,}자 · 조문 {len(arts)}개")
+    print(
+        f"[조례 조문 선별] {args.domain}  —  전문 {len(text):,}자 · 조문 {len(arts)}개"
+    )
     print("=" * 84)
     print(f"{'조문':<11}{'제목':<30}{'길이':>7}  판정")
     print("-" * 84)
@@ -63,14 +69,20 @@ def main() -> None:
         print(f"{a['no']:<11}{a['title'][:28]:<30}{len(a['text']):>6}자  {mark}")
 
     print("-" * 84)
-    print(f"  선별 {n_keep}/{len(arts)}개 · {len(text):,}자 → {len(picked):,}자 "
-          f"({len(picked)/max(len(text),1):.0%})")
+    print(
+        f"  선별 {n_keep}/{len(arts)}개 · {len(text):,}자 → {len(picked):,}자 "
+        f"({len(picked) / max(len(text), 1):.0%})"
+    )
 
     # 누락 위험 진단 — 배제 관련 단어가 있는데 안 뽑힌 조문
     RISK = ("이격", "거리", "미터", "설치", "금지", "배제", "제한", "구역")
-    missed = [a for a in arts
-              if a["no"] and a["text"][:40] not in picked
-              and any(k in a["text"] for k in RISK)]
+    missed = [
+        a
+        for a in arts
+        if a["no"]
+        and a["text"][:40] not in picked
+        and any(k in a["text"] for k in RISK)
+    ]
     if missed:
         print(f"\n  ⚠ 규제 관련 단어가 있으나 제외된 조문 {len(missed)}개 — 확인 필요")
         for a in missed:

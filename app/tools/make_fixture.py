@@ -29,6 +29,7 @@
     reviewed.json · clean_report.json 과 일치하는지 자동 검사한다(불일치면 중단).
   · 기존 픽스처는 `기준값.json.bak` · `reviewed.json.bak` 으로 남긴다.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -45,9 +46,15 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 try:
-    from app.config import (STEP1_OUTPUT_DIR, STEP2_OUTPUT_DIR, STEP3_OUTPUT_DIR,
-                            STEP4_OUTPUT_DIR, DOMAIN_ROOT, domain_prefix)
-except Exception:                                   # 단독 실행 폴백
+    from app.config import (
+        STEP1_OUTPUT_DIR,
+        STEP2_OUTPUT_DIR,
+        STEP3_OUTPUT_DIR,
+        STEP4_OUTPUT_DIR,
+        DOMAIN_ROOT,
+        domain_prefix,
+    )
+except Exception:  # 단독 실행 폴백
     DOMAIN_ROOT = "data_임시"
     STEP1_OUTPUT_DIR = os.path.join(DOMAIN_ROOT, "step1_output")
     STEP2_OUTPUT_DIR = os.path.join(DOMAIN_ROOT, "step2_output")
@@ -119,8 +126,14 @@ def _backup(path: str) -> None:
         shutil.copyfile(path, path + ".bak")
 
 
-def build(pre: str, union: float | None, union_nsl: float | None,
-          spacing: int | None, cli: str | None, prev: dict | None) -> dict:
+def build(
+    pre: str,
+    union: float | None,
+    union_nsl: float | None,
+    spacing: int | None,
+    cli: str | None,
+    prev: dict | None,
+) -> dict:
     """현재 산출물 -> 기준값 dict. 없는 파일이 있으면 예외.
 
     union 은 이제 `report.json > spatial.exclusion_union_km2` 에 있다(2026-08-04).
@@ -138,7 +151,9 @@ def build(pre: str, union: float | None, union_nsl: float | None,
     p4 = os.path.join(str(STEP4_OUTPUT_DIR), f"{pre}_report.json")
     for p in (rev, p2, p3, p4):
         if not os.path.exists(p):
-            raise FileNotFoundError(f"산출물 없음: {p}\n  파이프라인을 완주한 뒤 실행하세요.")
+            raise FileNotFoundError(
+                f"산출물 없음: {p}\n  파이프라인을 완주한 뒤 실행하세요."
+            )
 
     ws = _load(p3)
     rp = _load(p4)
@@ -162,8 +177,8 @@ def build(pre: str, union: float | None, union_nsl: float | None,
     # ── 수기 입력값: 이월 금지 ────────────────────────────────────────
     #   이전 픽스처에 있던 항목을 인자 없이 넘기면 **낡은 수치가 기준으로 남는다.**
     #   조용히 이월하느니 멈추는 편이 낫다.
-    prev4 = ((prev or {}).get("STEP4") or {})
-    prevc = ((prev or {}).get("조건") or {})
+    prev4 = (prev or {}).get("STEP4") or {}
+    prevc = (prev or {}).get("조건") or {}
     need = []
     if union_nsl is None and "배제_union_km2_no_shape_lift" in prev4:
         need.append("--union-nsl <--no-shape-lift 로 재실행했을 때의 union 값>")
@@ -175,27 +190,40 @@ def build(pre: str, union: float | None, union_nsl: float | None,
         raise RuntimeError(
             "이전 픽스처에 있던 수기 측정값이 인자로 안 들어왔다.\n  "
             + "\n  ".join(need)
-            + "\n  (산출물에 없는 값이라 이월하면 낡은 수치가 기준에 남는다)")
+            + "\n  (산출물에 없는 값이라 이월하면 낡은 수치가 기준에 남는다)"
+        )
 
-    step2 = {r["dataset_id"]: {"rows_after": r["rows_after"],
-                              "n_flags": r["n_flags"],
-                              "status": r.get("status")}
-             for r in _load(p2)["results"]}
-    step3 = {i["id"]: {"w_human": i["w_human"], "w_critic": i.get("w_critic"),
-                       "w_final": i["w_final"], "radius_m": i["radius_m"]}
-             for i in ws["indicators"]}
+    step2 = {
+        r["dataset_id"]: {
+            "rows_after": r["rows_after"],
+            "n_flags": r["n_flags"],
+            "status": r.get("status"),
+        }
+        for r in _load(p2)["results"]
+    }
+    step3 = {
+        i["id"]: {
+            "w_human": i["w_human"],
+            "w_critic": i.get("w_critic"),
+            "w_final": i["w_final"],
+            "radius_m": i["radius_m"],
+        }
+        for i in ws["indicators"]
+    }
 
     sp = rp.get("spatial") or {}
     cv = rp.get("coverage") or {}
     if "exclusion_union_km2" not in sp:
         raise RuntimeError(
             "report.json 에 spatial.exclusion_union_km2 가 없다 — 계측 이전 산출물이다.\n"
-            "  gam4_site_select.py 를 다시 돌린 뒤 고정하세요.")
+            "  gam4_site_select.py 를 다시 돌린 뒤 고정하세요."
+        )
     got_union = sp["exclusion_union_km2"]
     if union is not None and abs(union - got_union) > 1e-9:
         raise RuntimeError(
             f"--union {union} 과 산출물 {got_union} 이 다르다.\n"
-            "  어느 쪽이 맞는지는 코드가 정할 일이 아니다. 확인 후 --union 을 빼거나 맞추세요.")
+            "  어느 쪽이 맞는지는 코드가 정할 일이 아니다. 확인 후 --union 을 빼거나 맞추세요."
+        )
 
     step4 = {
         "points": rp["counts"]["points"],
@@ -207,31 +235,45 @@ def build(pre: str, union: float | None, union_nsl: float | None,
         "배제_union_km2": got_union,
         "cover_pairs": cv.get("cover_pairs"),
         "n_demand": cv.get("n_demand"),
-        "width_m": {k: (sp.get("width_m") or {}).get(k)
-                    for k in ("n", "min", "p05", "median", "p95", "max",
-                              "sum", "pass_min_width")},
+        "width_m": {
+            k: (sp.get("width_m") or {}).get(k)
+            for k in (
+                "n",
+                "min",
+                "p05",
+                "median",
+                "p95",
+                "max",
+                "sum",
+                "pass_min_width",
+            )
+        },
     }
     if union_nsl is not None:
         step4["배제_union_km2_no_shape_lift"] = union_nsl
 
     return {
-        "_설명": ((prev or {}).get("_설명")
-                or "S12 회귀 픽스처 기준값. reviewed.json 을 고정한 상태에서 "
-                   "STEP2~4 를 돌렸을 때 나와야 하는 값. "
-                   "감리 입력이 같은데 값이 다르면 코드 변경의 결과다."),
+        "_설명": (
+            (prev or {}).get("_설명")
+            or "S12 회귀 픽스처 기준값. reviewed.json 을 고정한 상태에서 "
+            "STEP2~4 를 돌렸을 때 나와야 하는 값. "
+            "감리 입력이 같은데 값이 다르면 코드 변경의 결과다."
+        ),
         "고정일": date.today().isoformat(),
         "reviewed_sha256": _sha(rev),
         # 조건 — alpha·decay·scale·candidates 는 weight_set 에서 그대로 온다.
         #   spacing·cli 는 어느 산출물에도 없다. 추측해서 넣으면 재현 조건이
         #   조용히 틀어지므로 인자로만 받는다(위 need 검사 참조).
-        "조건": _drop_none({
-            "alpha": ws.get("alpha"),
-            "decay": ws.get("decay"),
-            "scale": ws.get("scale"),
-            "candidates": ws.get("candidate_source", {}).get("file"),
-            "spacing": spacing,
-            "cli": cli,
-        }),
+        "조건": _drop_none(
+            {
+                "alpha": ws.get("alpha"),
+                "decay": ws.get("decay"),
+                "scale": ws.get("scale"),
+                "candidates": ws.get("candidate_source", {}).get("file"),
+                "spacing": spacing,
+                "cli": cli,
+            }
+        ),
         "STEP2_정제": step2,
         "STEP3_후보": {"parcels": rp["counts"]["parcels"]},
         "STEP3_가중치": step3,
@@ -258,15 +300,26 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="회귀 픽스처 갱신 (기본은 dry-run)")
     ap.add_argument("domain")
     ap.add_argument("--write", action="store_true", help="실제로 고정한다")
-    ap.add_argument("--union", type=float, default=None,
-                    help="배제 union km2. 이제 산출물에서 자동으로 읽으므로 "
-                         "**줄 필요가 없다**. 주면 산출물과 대조하고 다르면 멈춘다")
-    ap.add_argument("--union-nsl", type=float, default=None,
-                    help="--no-shape-lift 로 재실행했을 때의 union km2")
-    ap.add_argument("--spacing", type=int, default=None,
-                    help="gam4_site_select.py 에 준 --spacing (산출물에 없어 수기 입력)")
-    ap.add_argument("--cli", default=None,
-                    help="이번 실행에 쓴 명령. 재현용 기록")
+    ap.add_argument(
+        "--union",
+        type=float,
+        default=None,
+        help="배제 union km2. 이제 산출물에서 자동으로 읽으므로 "
+        "**줄 필요가 없다**. 주면 산출물과 대조하고 다르면 멈춘다",
+    )
+    ap.add_argument(
+        "--union-nsl",
+        type=float,
+        default=None,
+        help="--no-shape-lift 로 재실행했을 때의 union km2",
+    )
+    ap.add_argument(
+        "--spacing",
+        type=int,
+        default=None,
+        help="gam4_site_select.py 에 준 --spacing (산출물에 없어 수기 입력)",
+    )
+    ap.add_argument("--cli", default=None, help="이번 실행에 쓴 명령. 재현용 기록")
     a = ap.parse_args()
 
     pre = domain_prefix(a.domain)
@@ -276,7 +329,9 @@ def main() -> int:
     live_rev = os.path.join(str(STEP1_OUTPUT_DIR), f"{pre}_audit_result_reviewed.json")
 
     print("=" * 88)
-    print(f"[픽스처 갱신] {a.domain}   {'실행' if a.write else 'dry-run (--write 로 실제 고정)'}")
+    print(
+        f"[픽스처 갱신] {a.domain}   {'실행' if a.write else 'dry-run (--write 로 실제 고정)'}"
+    )
     print(f"  대상 : {fix_dir}")
     print("=" * 88)
 
@@ -310,11 +365,15 @@ def main() -> int:
             print(f"    {path}\n        이전 {sa}\n        이후 {sb}")
         if any(p.startswith("reviewed_sha256") for p, _, _ in changes):
             print("\n  ⚠ 감리 입력(reviewed)이 바뀐다 — LLM 판정이 달라졌다는 뜻이다.")
-            print("    아래 값 변화가 '코드 개선' 인지 'LLM 흔들림' 인지 확인하고 고정하라.")
+            print(
+                "    아래 값 변화가 '코드 개선' 인지 'LLM 흔들림' 인지 확인하고 고정하라."
+            )
     else:
         print("  기존 고정본 없음 — 새로 만든다")
-        print(f"    STEP2 {len(new['STEP2_정제'])}개 · STEP3 {len(new['STEP3_가중치'])}지표"
-              f" · survive {new['STEP4']['survive']:,}")
+        print(
+            f"    STEP2 {len(new['STEP2_정제'])}개 · STEP3 {len(new['STEP3_가중치'])}지표"
+            f" · survive {new['STEP4']['survive']:,}"
+        )
 
     if stale:
         print(f"\n  산출물 사본 {len(stale)}건 교체")
@@ -328,7 +387,9 @@ def main() -> int:
 
     if not a.write:
         print("-" * 88)
-        print(f"  dry-run 이다. 고정하려면: python app/tools/make_fixture.py {a.domain} --write")
+        print(
+            f"  dry-run 이다. 고정하려면: python app/tools/make_fixture.py {a.domain} --write"
+        )
         print("=" * 88)
         return 0
 
@@ -352,7 +413,7 @@ def main() -> int:
     print(f"     {fix_rev}")
     print(f"     {base_path}")
     print(f"     {os.path.join(fix_dir, '산출물')}  ({len(pairs)}종)")
-    print(f"     (교체된 것만 *.bak 로 남겼다)")
+    print("     (교체된 것만 *.bak 로 남겼다)")
     print(f"\n  확인: python app/tools/check_fixture.py {a.domain}")
     print("=" * 88)
     return 0

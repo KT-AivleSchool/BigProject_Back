@@ -12,13 +12,21 @@ class RedisPubSubManager:
         self.redis = redis_client
 
     async def publish_debate_message(
-        self, session_id: str, sender: str, text: str, is_finished: bool = False
+        self,
+        session_id: str,
+        sender: str,
+        text: str,
+        is_finished: bool = False,
+        metrics: dict = None,
     ):
         """
         AI 토론 대사 한 묶음을 특정 세션 ID 채널로 발행(Publish)합니다.
         """
         channel = f"debate:{session_id}"
         payload = {"sender": sender, "text": text, "is_finished": is_finished}
+        if metrics:
+            payload["metrics"] = metrics
+
         # JSON 문자열로 발행
         await self.redis.publish(channel, json.dumps(payload, ensure_ascii=False))
 

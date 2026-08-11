@@ -27,7 +27,9 @@ import traceback
 # 프로젝트 루트를 sys.path 에 추가 → `python app\services\...` 로 직접 실행해도
 #   `app.xxx` 절대 임포트가 된다. (`python -m app.services.…` 는 원래 되지만
 #   실행 방식마다 다르게 동작하면 매번 걸린다 — STEP3·4 스크립트와 동일한 보정)
-import os as _os, sys as _sys
+import os as _os
+import sys as _sys
+
 _ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(__file__), "..", ".."))
 if _ROOT not in _sys.path:
     _sys.path.insert(0, _ROOT)
@@ -154,12 +156,16 @@ def run(
     if _miss:
         print("\n[참조 데이터 점검]")
         for _label, _path, _req in _miss:
-            print(f"  {'🔴 필수' if _req else 'ⓘ 선택'} 없음  {_label} : "
-                  f"{_path or '(경로 미설정)'}")
+            print(
+                f"  {'🔴 필수' if _req else 'ⓘ 선택'} 없음  {_label} : "
+                f"{_path or '(경로 미설정)'}"
+            )
         if any(r for _, _, r in _miss):
-            print("  ⚠ 필수 참조 데이터가 없습니다. 관련 검증이 꺼진 채 진행됩니다.\n"
-                  "    행정동 크로스워크가 없으면 지역코드 검증(11440 마포구 사건 방어)이\n"
-                  "    동작하지 않습니다 — 계속하려면 그대로 두고, 멈추려면 Ctrl+C.")
+            print(
+                "  ⚠ 필수 참조 데이터가 없습니다. 관련 검증이 꺼진 채 진행됩니다.\n"
+                "    행정동 크로스워크가 없으면 지역코드 검증(11440 마포구 사건 방어)이\n"
+                "    동작하지 않습니다 — 계속하려면 그대로 두고, 멈추려면 Ctrl+C."
+            )
     else:
         print("\n[참조 데이터 점검] 이상 없음")
 
@@ -182,7 +188,9 @@ def run(
 
     domain = {
         "facility": fac["facility"],
-        "region": fac.get("region") or A.DOMAIN["region"],
+        # 🔴 예전엔 `or A.DOMAIN["region"]`(="용산구") 였다. 지역이 안 잡히면
+        #    성동구 실행이 조용히 용산 조례를 검색했다 — 없으면 멈춘다(2026-08-10).
+        "region": A.require_region(fac),
     }
 
     # ── STEP 1. 감리 판정 (gpt-4o)

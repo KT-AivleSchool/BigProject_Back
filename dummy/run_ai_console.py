@@ -1,6 +1,11 @@
 import asyncio
 import json
+import sys
+from pathlib import Path
 from unittest.mock import MagicMock
+
+# 🔴 `dummy/` 안에 있으므로 저장소 루트는 **두 단계 위**다(2026-08-10 이동).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # --- [중요] DB 의존성 완벽 차단 (Mocking) ---
 # graph.py 모듈이 로드되면서 vector_db(PGVector)를 무조건 초기화하려 시도합니다.

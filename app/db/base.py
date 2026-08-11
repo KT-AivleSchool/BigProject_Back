@@ -3,18 +3,17 @@
 
 from app.db.session import Base
 from app.db.models.user import User
-from app.db.models.simulation import Parcel, ConflictSimulation
+from app.db.models.simulation import Parcel, ConflictSimulation, DebateLog
 from app.db.models.precedent import VerifiedPrecedent
+from app.db.models.audit import AuditRule
 from app.db.models.spatial import (
-    District,
-    DongBoundary,
-    RestrictedZone,
-    ChildcareCenter,
-    TransitStation,
-    CommercialShop,
-    CadastralLand,
-    TrashBin,
-    IllegalDumpingZone,
+    BusStop,
+    SubwayStation,
+    StreetTrashBin,
+    Park,
+    CigaretteLitterHotspot,
+    FireWaterFacility,
+    SmokingArea,
 )
 from app.db.models.stats import (
     TransitPassenger,
@@ -22,24 +21,26 @@ from app.db.models.stats import (
     CivilComplaint,
     AgeDemographics,
 )
+from app.db.models.rag_feedback import RagFeedbackLog
 
 __all__ = [
     "Base",
     "User",
     "Parcel",
     "ConflictSimulation",
+    "DebateLog",
     "VerifiedPrecedent",
-    "District",
-    "DongBoundary",
-    "RestrictedZone",
-    "ChildcareCenter",
-    "TransitStation",
-    "CommercialShop",
-    "CadastralLand",
-    "TrashBin",
-    "IllegalDumpingZone",
+    "AuditRule",
+    "BusStop",
+    "SubwayStation",
+    "StreetTrashBin",
+    "Park",
+    "CigaretteLitterHotspot",
+    "FireWaterFacility",
+    "SmokingArea",
     "TransitPassenger",
     "PopulationStat",
     "CivilComplaint",
     "AgeDemographics",
+    "RagFeedbackLog",
 ]

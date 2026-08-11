@@ -1,13 +1,25 @@
 from pydantic import BaseModel, Field
-from typing import Dict, Optional, Any
+from typing import Dict, Optional
 
 
 class StreamRequest(BaseModel):
+    """화면5 A 대립 토론 시작 요청.
+
+    🔴 `audit_data`(프런트가 감리 결과 JSON 을 실어 보내던 칸)를 **뺐다**
+       (2026-08-11, 프런트 합의). 핸들러가 한 번도 읽지 않았고, 감리 근거는
+       `parcel_id` → `booth_candidates` 행의 `(domain, run_id, facility_type)` 로
+       백엔드가 조달한다(`candidate_context`). 요청으로 받으면 **후보지와 근거가
+       어긋날 수 있다** — 요청 본문에서 도메인을 안 받는 이유와 같다.
+       제거 순서는 **백엔드가 먼저**다: pydantic 은 모르는 키를 무시하므로
+       프런트가 아직 `audit_data: {}` 를 보내도 통과한다. 반대로 하면 422 다.
+
+    ⚠ 이 클래스는 파일 **맨 아래에 같은 이름으로 한 번 더** 선언돼 있었다.
+      나중 선언이 이겨서 여기 `Field(description=…)` 은 전부 죽은 값이었다 —
+      `/docs` 스키마에 설명이 안 나오던 이유다. 아래 것을 지웠다.
+    """
+
     parcel_id: int = Field(..., description="시뮬레이션할 적격 후보지 필지 ID")
     facility_type: str = Field(..., description="건립할 시설의 종류 (예: 흡연부스)")
-    audit_data: Optional[Dict[str, Any]] = Field(
-        None, description="프론트엔드 AI 감리 결과 JSON"
-    )
 
 
 class SimulationRunRequest(BaseModel):

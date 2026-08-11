@@ -16,6 +16,7 @@
 출력
   geometry(Point, EPSG:5186) · PNU · JIBUN · 지목 · 면적 · 내접폭 · 법정동코드 · 경도 · 위도
 """
+
 from __future__ import annotations
 
 import argparse
@@ -33,17 +34,27 @@ import geopandas as gpd
 import pandas as pd
 
 try:
-    from app.config import (REGION_DATA_DIR, STEP1_OUTPUT_DIR,
-                            STEP3_OUTPUT_DIR, CANDIDATE_GPKG_NAME,
-                            candidate_gpkg_path,
-                            NATIONAL_PROPERTY_CSV, domain_prefix)
+    from app.config import (
+        REGION_DATA_DIR,
+        STEP1_OUTPUT_DIR,
+        STEP3_OUTPUT_DIR,
+        CANDIDATE_GPKG_NAME,
+        candidate_gpkg_path,
+        NATIONAL_PROPERTY_CSV,
+        domain_prefix,
+    )
 except Exception:
     REGION_DATA_DIR = STEP1_OUTPUT_DIR = STEP3_OUTPUT_DIR = "."
     CANDIDATE_GPKG_NAME = "후보_지적도필지.gpkg"
+
     def candidate_gpkg_path(d):
         return os.path.join(STEP3_OUTPUT_DIR, f"{d}_{CANDIDATE_GPKG_NAME}")
+
     NATIONAL_PROPERTY_CSV = "국유부동산_위경도_v2.csv"
-    def domain_prefix(d): return d
+
+    def domain_prefix(d):
+        return d
+
 
 try:
     from app.services import gam4_spatial_ops as S, gam4_jimok as J
@@ -68,8 +79,9 @@ def _region_of(domain: str, override: str | None = None) -> str:
     """대상 지역명. reviewed.json 의 감리 확정값을 쓴다(지적도·국유지 경로 해석에 사용)."""
     if override:
         return override
-    p = os.path.join(STEP1_OUTPUT_DIR,
-                     f"{domain_prefix(domain)}_audit_result_reviewed.json")
+    p = os.path.join(
+        STEP1_OUTPUT_DIR, f"{domain_prefix(domain)}_audit_result_reviewed.json"
+    )
     if os.path.isfile(p):
         try:
             d = json.load(open(p, encoding="utf-8"))
@@ -91,24 +103,31 @@ def _find_cadastral(path: str | None, region: str = "") -> str:
         return path
     try:
         from app.services.gam2_weight_model import find_region_file
+
         return find_region_file("LSMD_CONT_LDREG_*.shp", region)
     except ImportError:
         pass
-    hits = sorted(glob.glob(os.path.join(REGION_DATA_DIR, "**",
-                                         "LSMD_CONT_LDREG_*.shp"), recursive=True))
+    hits = sorted(
+        glob.glob(
+            os.path.join(REGION_DATA_DIR, "**", "LSMD_CONT_LDREG_*.shp"), recursive=True
+        )
+    )
     if len(hits) == 1:
         return hits[0]
     raise FileNotFoundError(
         f"연속지적도 SHP 를 확정할 수 없습니다(후보 {len(hits)}개).\n  "
-        + "\n  ".join(hits) + f"\n  --cadastral 로 지정하세요.")
+        + "\n  ".join(hits)
+        + "\n  --cadastral 로 지정하세요."
+    )
 
 
 def _facility_of(domain: str, override: str | None) -> str:
     """시설명 — 지목 판정의 캐시 키. reviewed.json 의 감리 확정값을 쓴다."""
     if override:
         return override
-    p = os.path.join(STEP1_OUTPUT_DIR,
-                     f"{domain_prefix(domain)}_audit_result_reviewed.json")
+    p = os.path.join(
+        STEP1_OUTPUT_DIR, f"{domain_prefix(domain)}_audit_result_reviewed.json"
+    )
     if os.path.isfile(p):
         try:
             d = json.load(open(p, encoding="utf-8"))
@@ -117,13 +136,16 @@ def _facility_of(domain: str, override: str | None) -> str:
                 return f
         except Exception as e:
             print(f"  ⚠ reviewed.json 읽기 실패({e})")
-    print(f"  ⚠ 시설명을 못 찾아 도메인명 '{domain}' 을 사용합니다 "
-          f"(--facility 로 지정 가능)")
+    print(
+        f"  ⚠ 시설명을 못 찾아 도메인명 '{domain}' 을 사용합니다 "
+        f"(--facility 로 지정 가능)"
+    )
     return domain
 
 
-def attach_ownership(parcels: gpd.GeoDataFrame, csv_path: str,
-                    verbose: bool = True) -> gpd.GeoDataFrame:
+def attach_ownership(
+    parcels: gpd.GeoDataFrame, csv_path: str, verbose: bool = True
+) -> gpd.GeoDataFrame:
     """국유부동산 좌표를 필지에 공간조인해 '국유 지분' 정보를 붙인다.
 
     ⚠ 국유부동산은 '필지'가 아니라 '지분'이다 (실측으로 확인).
@@ -148,25 +170,27 @@ def attach_ownership(parcels: gpd.GeoDataFrame, csv_path: str,
 
     for enc in ("utf-8", "utf-8-sig", "cp949"):
         try:
-            d = pd.read_csv(csv_path, encoding=enc); break
+            d = pd.read_csv(csv_path, encoding=enc)
+            break
         except UnicodeDecodeError:
             continue
     else:
-        print(f"  ⚠ 국유부동산 CSV 인코딩 실패 — 지분 태그 생략")
+        print("  ⚠ 국유부동산 CSV 인코딩 실패 — 지분 태그 생략")
         return parcels
 
     lon = next((c for c in d.columns if "경도" in c), None)
     lat = next((c for c in d.columns if "위도" in c), None)
-    ar  = next((c for c in d.columns if "면적" in c), None)
+    ar = next((c for c in d.columns if "면적" in c), None)
     addr = next((c for c in d.columns if "소재지" in c), None)
     if not (lon and lat):
         print("  ⚠ 국유부동산 CSV 에 경위도 없음 — 지분 태그 생략")
         return parcels
 
-    own = gpd.GeoDataFrame(d, geometry=gpd.points_from_xy(d[lon], d[lat]),
-                           crs=4326).to_crs(parcels.crs)
+    own = gpd.GeoDataFrame(
+        d, geometry=gpd.points_from_xy(d[lon], d[lat]), crs=4326
+    ).to_crs(parcels.crs)
     own = own[~own.geometry.is_empty & own.geometry.notna()]
-    if addr:                                   # "…용산구 용문동 5-100" -> "5-100"
+    if addr:  # "…용산구 용문동 5-100" -> "5-100"
         own["_지번"] = own[addr].astype(str).str.extract(r"구\s+\S+\s+(\S+)")[0]
 
     p = parcels.reset_index(drop=True)
@@ -178,48 +202,74 @@ def attach_ownership(parcels: gpd.GeoDataFrame, csv_path: str,
 
     grp = j.groupby("index_right")
     p["국유_건수"] = grp.size().reindex(p.index).fillna(0).astype(int)
-    p["국유_지분면적"] = (grp[ar].sum().reindex(p.index).fillna(0.0)
-                        if ar else 0.0)
-    p["국유_지분율"] = (p["국유_지분면적"] / p["면적"]).replace([float("inf")], 0).fillna(0)
+    p["국유_지분면적"] = grp[ar].sum().reindex(p.index).fillna(0.0) if ar else 0.0
+    p["국유_지분율"] = (
+        (p["국유_지분면적"] / p["면적"]).replace([float("inf")], 0).fillna(0)
+    )
 
     if addr and "지번" not in p.columns:
-        pj = p["JIBUN"].astype(str).str.replace(r"\s*[가-힣]+$", "", regex=True).str.strip()
+        pj = (
+            p["JIBUN"]
+            .astype(str)
+            .str.replace(r"\s*[가-힣]+$", "", regex=True)
+            .str.strip()
+        )
         first = grp["_지번"].first().reindex(p.index)
-        p["국유_지번일치"] = (first.notna() & (first.values == pj.values))
+        p["국유_지번일치"] = first.notna() & (first.values == pj.values)
     else:
         p["국유_지번일치"] = False
 
     if verbose:
         has = p["국유_건수"] > 0
-        print(f"[국유지분] {len(j):,}건 조인 → {has.sum():,}필지에 지분 존재 "
-              f"({has.mean()*100:.1f}%)")
+        print(
+            f"[국유지분] {len(j):,}건 조인 → {has.sum():,}필지에 지분 존재 "
+            f"({has.mean() * 100:.1f}%)"
+        )
         if has.any():
             r = p.loc[has, "국유_지분율"]
-            print(f"           지분율 중앙 {r.median()*100:.1f}%  "
-                  f"90%이상 {(r >= 0.9).sum():,}필지  10%미만 {(r < 0.1).sum():,}필지")
-            print(f"           지번일치 {p.loc[has,'국유_지번일치'].mean()*100:.1f}% "
-                  f"(조인 신뢰도)")
+            print(
+                f"           지분율 중앙 {r.median() * 100:.1f}%  "
+                f"90%이상 {(r >= 0.9).sum():,}필지  10%미만 {(r < 0.1).sum():,}필지"
+            )
+            print(
+                f"           지번일치 {p.loc[has, '국유_지번일치'].mean() * 100:.1f}% "
+                f"(조인 신뢰도)"
+            )
     return p
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("domain", help="도메인 폴더명 (예: 흡연)")
-    ap.add_argument("--facility", default=None, help="시설명 override (지목 판정 캐시 키)")
+    ap.add_argument(
+        "--facility", default=None, help="시설명 override (지목 판정 캐시 키)"
+    )
     ap.add_argument("--cadastral", default=None, help="연속지적도 SHP")
     ap.add_argument("--out", default=None, help="출력 gpkg")
-    ap.add_argument("--jimok", default=None,
-                    help="지목 직접 지정(쉼표구분). LLM 판정을 건너뛴다")
+    ap.add_argument(
+        "--jimok", default=None, help="지목 직접 지정(쉼표구분). LLM 판정을 건너뛴다"
+    )
     ap.add_argument("--force-jimok", action="store_true", help="캐시 무시하고 재판정")
-    ap.add_argument("--model", default=JIMOK_MODEL_DEFAULT,
-                    help=f"지목 판정 모델 (기본 {JIMOK_MODEL_DEFAULT}). "
-                         f"mini 는 주유소용지를 candidate 로 오판한 이력이 있다")
-    ap.add_argument("--no-width", action="store_true", help="내접폭 계산 생략(6~7초 절약)")
-    ap.add_argument("--national", default=None,
-                    help="국유부동산 CSV (기본: config.NATIONAL_PROPERTY_CSV)")
+    ap.add_argument(
+        "--model",
+        default=JIMOK_MODEL_DEFAULT,
+        help=f"지목 판정 모델 (기본 {JIMOK_MODEL_DEFAULT}). "
+        f"mini 는 주유소용지를 candidate 로 오판한 이력이 있다",
+    )
+    ap.add_argument(
+        "--no-width", action="store_true", help="내접폭 계산 생략(6~7초 절약)"
+    )
+    ap.add_argument(
+        "--national",
+        default=None,
+        help="국유부동산 CSV (기본: config.NATIONAL_PROPERTY_CSV)",
+    )
     ap.add_argument("--no-national", action="store_true", help="국유지분 태그 생략")
-    ap.add_argument("--region", default=None,
-                    help="대상 지역명(예 '서울특별시 성동구'). 미지정 시 reviewed.json 에서 읽는다")
+    ap.add_argument(
+        "--region",
+        default=None,
+        help="대상 지역명(예 '서울특별시 성동구'). 미지정 시 reviewed.json 에서 읽는다",
+    )
     args = ap.parse_args()
 
     T0 = time.perf_counter()
@@ -228,7 +278,7 @@ def main():
     print(f"[입력] {path}" + (f"   지역: {region}" if region else ""))
     _t = time.perf_counter()
     g = S.load_parcels(path)
-    print(f"         로드 {time.perf_counter()-_t:.1f}s")
+    print(f"         로드 {time.perf_counter() - _t:.1f}s")
     stats = J.jimok_stats(g)
 
     # 지역 경계 — STEP4 수요 격자가 쓴다.
@@ -241,21 +291,27 @@ def main():
     full = g.geometry.union_all()
     land = g[~g["지목"].isin(WATER_JIMOK)]
     boundary = land.geometry.union_all() if len(land) < len(g) else full
-    print(f"[경계]   {boundary.area/1e6:.2f}km²  "
-          f"(전체 {full.area/1e6:.2f} − 수면 {(full.area-boundary.area)/1e6:.2f})  "
-          f"[{time.perf_counter()-_t:.1f}s]")
+    print(
+        f"[경계]   {boundary.area / 1e6:.2f}km²  "
+        f"(전체 {full.area / 1e6:.2f} − 수면 {(full.area - boundary.area) / 1e6:.2f})  "
+        f"[{time.perf_counter() - _t:.1f}s]"
+    )
 
     # ── 지목 판정 ──────────────────────────────────────────
     if args.jimok:
         want = [x.strip() for x in args.jimok.split(",") if x.strip()]
         bad = [x for x in want if x not in S.STD_JIMOK]
         if bad:
-            raise ValueError(f"표준 지목 부호가 아님: {bad}\n"
-                             f"  사용 가능: {''.join(sorted(S.STD_JIMOK))}")
+            raise ValueError(
+                f"표준 지목 부호가 아님: {bad}\n"
+                f"  사용 가능: {''.join(sorted(S.STD_JIMOK))}"
+            )
         print(f"  ⚠ --jimok 수동 지정 — LLM 판정을 건너뜁니다: {want}")
-        rec = {"facility": "(수동)",
-               "roles": {k: {"role": "candidate", "이유": "수동 지정"} for k in want},
-               "flags": ["수동 지정"]}
+        rec = {
+            "facility": "(수동)",
+            "roles": {k: {"role": "candidate", "이유": "수동 지정"} for k in want},
+            "flags": ["수동 지정"],
+        }
     else:
         facility = _facility_of(args.domain, args.facility)
         rec = J.judge(facility, stats, model=args.model, force=args.force_jimok)
@@ -266,8 +322,10 @@ def main():
 
     before = len(g)
     g = g[g["지목"].isin(want)].copy()
-    print(f"\n[지목필터] {len(g):,} / {before:,} ({len(g)/before*100:.1f}%)  "
-          f"제외 {before-len(g):,}필지")
+    print(
+        f"\n[지목필터] {len(g):,} / {before:,} ({len(g) / before * 100:.1f}%)  "
+        f"제외 {before - len(g):,}필지"
+    )
     if g.empty:
         raise SystemExit("[중단] 남은 필지 0")
 
@@ -277,9 +335,11 @@ def main():
         print("[내접폭] 계산 중...")
         _t = time.perf_counter()
         g["내접폭"] = S.inscribed_width(g)
-        print(f"         중앙 {g['내접폭'].median():.2f}m  "
-              f"2m이상 {(g['내접폭'] >= 2).sum():,}필지 "
-              f"({(g['내접폭'] >= 2).mean()*100:.0f}%)  [{time.perf_counter()-_t:.1f}s]")
+        print(
+            f"         중앙 {g['내접폭'].median():.2f}m  "
+            f"2m이상 {(g['내접폭'] >= 2).sum():,}필지 "
+            f"({(g['내접폭'] >= 2).mean() * 100:.0f}%)  [{time.perf_counter() - _t:.1f}s]"
+        )
 
     # ── 국유지분 태그 ──────────────────────────────────────
     #   점수축이 아니라 '실행축'이다. 가중합에 섞지 않는다(설계 확정 Q-feas).
@@ -289,8 +349,10 @@ def main():
             # 국유부동산도 지자체별 파일이다. 지역 폴더에서 찾고, 없으면 config 기본값.
             try:
                 from app.services.gam2_weight_model import find_region_file
-                nat = (find_region_file("국유부동산*.csv", region, must=False)
-                       or find_region_file("국유부동산*.xls*", region, must=False))
+
+                nat = find_region_file(
+                    "국유부동산*.csv", region, must=False
+                ) or find_region_file("국유부동산*.xls*", region, must=False)
             except ImportError:
                 nat = None
             nat = nat or NATIONAL_PROPERTY_CSV
@@ -300,20 +362,36 @@ def main():
     #   centroid 는 오목한 필지(ㄱ자·굽은 도로)에서 밖으로 나간다.
     rep = g.geometry.representative_point()
     inside = rep.within(g.geometry)
-    print(f"[대표점] {len(rep):,}개  필지 내부 보장 "
-          f"{'✅' if inside.all() else '❌ ' + str((~inside).sum())}")
+    print(
+        f"[대표점] {len(rep):,}개  필지 내부 보장 "
+        f"{'✅' if inside.all() else '❌ ' + str((~inside).sum())}"
+    )
 
-    cols = [c for c in ("PNU", "JIBUN", "지목", "면적", "내접폭",
-                        "국유_건수", "국유_지분면적", "국유_지분율", "국유_지번일치")
-            if c in g.columns]
+    cols = [
+        c
+        for c in (
+            "PNU",
+            "JIBUN",
+            "지목",
+            "면적",
+            "내접폭",
+            "국유_건수",
+            "국유_지분면적",
+            "국유_지분율",
+            "국유_지번일치",
+        )
+        if c in g.columns
+    ]
     out = gpd.GeoDataFrame(g[cols].copy(), geometry=rep.values, crs=g.crs)
 
     # 층화 진단용 법정동 코드 — PNU 앞 10자리(시도2+시군구3+읍면동3+리2)
     if "PNU" in out.columns:
         out["법정동코드"] = out["PNU"].astype(str).str[:10]
         vc = out["법정동코드"].value_counts()
-        print(f"[법정동] {len(vc)}개  최다 {vc.iloc[0]/len(out)*100:.1f}%  "
-              f"상위5 {vc.head(5).sum()/len(out)*100:.1f}%")
+        print(
+            f"[법정동] {len(vc)}개  최다 {vc.iloc[0] / len(out) * 100:.1f}%  "
+            f"상위5 {vc.head(5).sum() / len(out) * 100:.1f}%"
+        )
 
     wgs = out.to_crs(4326)
     out["경도"] = wgs.geometry.x
@@ -336,9 +414,11 @@ def main():
     attr = [c for c in out.columns if c != "geometry"]
     out = out[attr + ["geometry"]]
 
-    poly = gpd.GeoDataFrame(pd.DataFrame(out[attr]).reset_index(drop=True),
-                            geometry=g.geometry.reset_index(drop=True).values,
-                            crs=g.crs)
+    poly = gpd.GeoDataFrame(
+        pd.DataFrame(out[attr]).reset_index(drop=True),
+        geometry=g.geometry.reset_index(drop=True).values,
+        crs=g.crs,
+    )
 
     # 임시 파일에 쓴 뒤 원자적으로 교체한다.
     #   · 기존 파일에 mode="a" 로 덧쓰면 **옛 레이어 스키마**에 맞추려 하므로
@@ -346,26 +426,31 @@ def main():
     #   · 그렇다고 먼저 지우면, 쓰기가 중간에 실패했을 때 원본까지 잃는다.
     #   os.replace 는 같은 볼륨에서 원자적이라 실패해도 원본이 남는다.
     tmp = dst + ".tmp"
-    for f in (tmp, tmp + "-wal", tmp + "-shm"):     # SQLite 잔여물 정리
+    for f in (tmp, tmp + "-wal", tmp + "-shm"):  # SQLite 잔여물 정리
         if os.path.exists(f):
             os.remove(f)
     try:
         out.to_file(tmp, driver="GPKG", layer="candidates")
         poly.to_file(tmp, driver="GPKG", layer="parcels", mode="a")
-        gpd.GeoDataFrame({"name": ["region"]}, geometry=[boundary], crs=g.crs
-                         ).to_file(tmp, driver="GPKG", layer="boundary", mode="a")
-        os.replace(tmp, dst)                        # 성공했을 때만 교체
+        gpd.GeoDataFrame({"name": ["region"]}, geometry=[boundary], crs=g.crs).to_file(
+            tmp, driver="GPKG", layer="boundary", mode="a"
+        )
+        os.replace(tmp, dst)  # 성공했을 때만 교체
     except Exception:
         if os.path.exists(tmp):
             os.remove(tmp)
         raise
 
-    print(f"\n[저장] {dst}  (EPSG:{out.crs.to_epsg()})  "
-          f"[전체 {time.perf_counter()-T0:.1f}s]")
+    print(
+        f"\n[저장] {dst}  (EPSG:{out.crs.to_epsg()})  "
+        f"[전체 {time.perf_counter() - T0:.1f}s]"
+    )
     print(f"       layer 'candidates'  Point   {len(out):,}  <- STEP3 가중치용")
     print(f"       layer 'parcels'     Polygon {len(poly):,}  <- STEP4 위치선정용")
-    print(f"       layer 'boundary'    Polygon 1       <- 수요격자 경계 "
-          f"({boundary.area/1e6:.2f}km², 수면 제외)")
+    print(
+        f"       layer 'boundary'    Polygon 1       <- 수요격자 경계 "
+        f"({boundary.area / 1e6:.2f}km², 수면 제외)"
+    )
     print(f"       컬럼: {list(out.columns)}")
 
 

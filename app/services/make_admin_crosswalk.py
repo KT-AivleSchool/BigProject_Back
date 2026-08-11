@@ -25,6 +25,7 @@
   · 분기별 스냅샷이 누적돼 있고, 과거분에는 7자리 행정구역코드가 섞여 있다.
   → **최신 개정일자만** 사용하면 둘 다 해결된다.
 """
+
 from __future__ import annotations
 
 import os
@@ -51,8 +52,10 @@ def build(src: str, out_dir: str | None = None) -> str:
         raise ValueError(f"원본 컬럼 없음: {miss}\n  실제: {df.columns.tolist()}")
     print(f"[원본] {len(df):,}행  {os.path.basename(src)}")
     if len(df) >= 1_048_575:
-        print("  ⚠ 엑셀 행 한계에서 잘린 파일 — 과거 스냅샷 일부가 없습니다"
-              " (최신분만 쓰므로 결과엔 영향 없음)")
+        print(
+            "  ⚠ 엑셀 행 한계에서 잘린 파일 — 과거 스냅샷 일부가 없습니다"
+            " (최신분만 쓰므로 결과엔 영향 없음)"
+        )
 
     # ① 최신 스냅샷만 — 자릿수 혼재·이력 중복이 여기서 사라진다
     latest = df["개정일자"].max()
@@ -63,10 +66,20 @@ def build(src: str, out_dir: str | None = None) -> str:
     d = d[d["행정구역코드"].str.len() == 8]
     d["행정동코드8"] = d["행정동코드"].str.slice(0, 8)
 
-    cw = (d[["행정구역코드", "행정동코드", "행정동코드8",
-             "행정동명", "시도명", "시군구명"]]
-          .drop_duplicates()
-          .sort_values("행정구역코드"))
+    cw = (
+        d[
+            [
+                "행정구역코드",
+                "행정동코드",
+                "행정동코드8",
+                "행정동명",
+                "시도명",
+                "시군구명",
+            ]
+        ]
+        .drop_duplicates()
+        .sort_values("행정구역코드")
+    )
     print(f"[동 단위] {len(cw):,}행")
 
     # ③ 1:N 은 조회표로 못 쓴다 — 분리해 남기고 본표에서 뺀다
@@ -77,22 +90,28 @@ def build(src: str, out_dir: str | None = None) -> str:
     cw["기준일자"] = latest
     out = os.path.join(out_dir, OUT_NAME)
     cw.to_csv(out, index=False, encoding="utf-8-sig")
-    print(f"[저장] {out}  ({len(cw):,}행, {os.path.getsize(out)/1024:.0f} KB)")
+    print(f"[저장] {out}  ({len(cw):,}행, {os.path.getsize(out) / 1024:.0f} KB)")
 
     if len(conflict):
         cpath = os.path.join(out_dir, CONFLICT_NAME)
         conflict.to_csv(cpath, index=False, encoding="utf-8-sig")
-        print(f"\n  ⚠ 1:N 충돌 {conflict['행정구역코드'].nunique()}개 코드"
-              f" — 본표에서 제외하고 별도 저장: {cpath}")
+        print(
+            f"\n  ⚠ 1:N 충돌 {conflict['행정구역코드'].nunique()}개 코드"
+            f" — 본표에서 제외하고 별도 저장: {cpath}"
+        )
         for code, grp in conflict.groupby("행정구역코드"):
             names = " / ".join(grp["행정동코드8"])
-            print(f"     {code}  {grp['행정동명'].iloc[0]}"
-                  f"({grp['시군구명'].iloc[0]})  ->  {names}")
+            print(
+                f"     {code}  {grp['행정동명'].iloc[0]}"
+                f"({grp['시군구명'].iloc[0]})  ->  {names}"
+            )
         print("     해당 지역을 분석할 때 미매칭으로 중단되므로 그때 드러납니다.")
 
     # ④ 요약
-    print(f"\n[요약] 시도 {cw['시도명'].nunique()}  "
-          f"시군구 {cw['시군구명'].nunique()}  행정동 {len(cw):,}")
+    print(
+        f"\n[요약] 시도 {cw['시도명'].nunique()}  "
+        f"시군구 {cw['시군구명'].nunique()}  행정동 {len(cw):,}"
+    )
     return out
 
 
