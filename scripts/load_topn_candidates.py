@@ -18,6 +18,14 @@
 PNU 컬럼이 없어 코드 조인이 불가능하다. 매칭이 안 되면 NULL 로 두고 **몇 건이
 안 붙었는지 출력**한다 — 조용히 0으로 채우면 다른 필지를 가리킨다.
 
+🔴 그 공간조인에 **시군구 조건**을 같이 건다(2026-08-11, 사람 결정 「칼럼으로 가르자」).
+   `ST_Contains` 는 **가장 먼저 걸리는 필지**를 집으므로, 2계층에 다른 구 필지가
+   섞이면 경계에 붙은 남의 구 필지를 집어도 **안 터지고 값만 틀린다.**
+   조건 값은 상수가 아니라 **그 산출물의 PNU 앞 5자리**(행자부 시군구코드)에서 온다 —
+   여기에 `11170` 을 박으면 도메인 값 하드코딩이다(원칙 2).
+   PNU 가 없는 도메인이면 걸 근거가 없어 **조건을 안 건다.** 그때는 「안 걸렀다」를
+   출력한다 — 안 적으면 걸린 줄 알고 읽는다(원칙 4).
+
 `facility_type` 은 감리 확정본(`<도메인>_audit_result_reviewed.json`)의
 `facility_inference.facility` 에서 읽는다. 화면5 가 `audit_rules.target_facility`
 로 규칙을 고르므로 **같은 어휘**여야 한다. 없으면 멈춘다(추측하지 않는다).
@@ -156,6 +164,14 @@ def build_rows(doc: dict, domain: str, run_id: str, facility: str) -> list[dict]
         cnt = props.get("국유_건수")
         row["is_national"] = (int(cnt) > 0) if cnt is not None else None
 
+        # 공간조인을 좁힐 시군구코드. **산출물에서 온다** — 상수가 아니다.
+        # PNU 는 법정동코드 10자리로 시작하고 앞 5자리가 행자부 시군구코드다
+        # (`candidate_lands.sigungu_cd` 와 같은 체계 · 통계청 코드가 아니다).
+        # 없으면 None 이고 그러면 조건을 안 건다 — 추측해서 채우지 않는다.
+        pnu = row.get("pnu")
+        sgg = str(pnu)[:5] if pnu else ""
+        row["sgg"] = sgg if len(sgg) == 5 and sgg.isdigit() else None
+
         if row.get("rank") is None:
             raise SystemExit(f"🔴 features[{i}] 에 '순위' 가 없다. 정렬 근거가 사라진다.")
         rows.append(row)
@@ -252,6 +268,12 @@ VALUES
      ST_SetSRID(ST_MakePoint(%(lon)s, %(lat)s), 4326),
      (SELECT cl.id FROM candidate_lands cl
        WHERE ST_Contains(cl.geom, ST_SetSRID(ST_MakePoint(%(lon)s, %(lat)s), 4326))
+         -- 🔴 `%(sgg)s IS NULL` 은 「거르지 않는다」다(PNU 가 없는 도메인).
+         --    `cl.sigungu_cd IS NULL` 은 「지적도로 못 맞춘 필지」이고 그건 **거른다** —
+         --    못 맞춘 것을 통과시키면 컬럼을 만든 이유가 없어진다.
+         -- ⚠ `::varchar` 는 장식이 아니다. `%(sgg)s IS NULL` 만으로는 타입을 못 정해
+         --    `AmbiguousParameter: could not determine data type` 로 터진다.
+         AND (%(sgg)s::varchar IS NULL OR cl.sigungu_cd = %(sgg)s)
        LIMIT 1))
 RETURNING id, rank, land_id
 """
@@ -291,6 +313,18 @@ def main() -> int:
     if missing:
         print(f"[비어있음] topN 에 없어 NULL 로 두는 컬럼: {missing}")
     print(f"[비어있음] 도메인 지표(topN 밖): {list(UNFILLED)}")
+
+    # 🔴 「시군구로 갈랐다」와 「못 갈랐다」를 **둘 다** 말한다.
+    #    안 적으면 조건이 걸린 줄 알고 읽는다(원칙 4).
+    sggs = sorted({r["sgg"] for r in rows if r["sgg"]})
+    n_nosgg = sum(1 for r in rows if not r["sgg"])
+    if sggs:
+        print(f"[시군구] 공간조인을 {sggs} 로 한정한다 (출처: 산출물 PNU 앞 5자리)")
+    if n_nosgg:
+        print(
+            f"[시군구] {n_nosgg}행은 PNU 가 없어 **한정하지 않는다** — "
+            "경계에 붙은 다른 구 필지가 land_id 로 붙을 수 있다"
+        )
 
     if not args.yes:
         for r in rows[:5]:

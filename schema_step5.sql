@@ -52,8 +52,35 @@ END $$;
 CREATE INDEX IF NOT EXISTS idx_conflict_simulations_parcel
     ON conflict_simulations(parcel_id);
 
+-- 🔴 parcel_id 를 NOT NULL 로 조인다 (2026-08-11, 사람 승인).
+--
+--   이 테이블에는 `run_id` 컬럼이 **없다.** run 에 닿는 경로는
+--     parcel_id → booth_candidates.id → booth_candidates.run_id
+--   조인 **하나뿐**이다. parcel_id 가 NULL 이면 「어느 실행의 어느 입지를
+--   토론했나」를 알 방법이 아예 없어진다.
+--
+--   왜 run_id 컬럼을 대신 넣지 않았나 — 값이 이미 두 곳에 있다:
+--     ⓐ 위 조인 (= 이 후보점이 지금 속한 run)
+--     ⓑ result_json->'basis'->>'run_id' (= 토론할 때 근거로 삼은 run)
+--   컬럼은 **세 번째 사본**이 되고, ⓐ·ⓑ 는 원래 다른 문장이라 어느 쪽을
+--   담을지 정할 수 없다(함정: 필드 하나로 두 의미). FK 가 ON DELETE CASCADE 라
+--   ⓐ 는 dangling 이 구조적으로 불가능한데, 컬럼에는 그 보증이 없다.
+--
+--   ⚠ 옛 행 중 result_json->'basis' 가 없는 것이 있다(basis_snapshot 은
+--     2026-08-11 신설). 그 행들에게는 ⓐ 조인이 **유일한** 경로다.
+--
+--   ⚠ 이 구문은 멱등이다(이미 NOT NULL 이면 no-op). NULL 이 하나라도 있으면
+--     **일부러 터진다** — 조용히 건너뛰면 조일 이유가 사라진다(원칙 1).
+--     그때는 먼저 그 행의 대상 후보점을 찾아 채우거나 지운 뒤 다시 친다.
+--
+--   ⚠ 새 DB 는 이 파일이 아니라 ORM(`app/db/models/simulation.py`)의
+--     `nullable=False` 로 만들어진다 — 이 테이블은 어느 .sql 에도
+--     CREATE TABLE 이 없고 `create_missing_tables.py` 가 만든다. **양쪽을 같이 고칠 것.**
+ALTER TABLE conflict_simulations ALTER COLUMN parcel_id SET NOT NULL;
+
 COMMENT ON COLUMN conflict_simulations.parcel_id IS
-    '토론 대상 후보점. booth_candidates.id (런타임 값). candidate_land_id 와 id 공간이 다르다';
+    '토론 대상 후보점. booth_candidates.id (런타임 값). candidate_land_id 와 id 공간이 다르다. '
+    'NOT NULL — 이 테이블엔 run_id 컬럼이 없어 run 에 닿는 경로가 이 조인 하나뿐이다';
 COMMENT ON COLUMN conflict_simulations.candidate_land_id IS
     '위 후보점이 놓인 필지. booth_candidates.land_id 에서 유도해 채운다';
 COMMENT ON COLUMN conflict_simulations.result_json IS

@@ -72,10 +72,16 @@ class ConflictSimulation(Base):
     id = Column(Integer, primary_key=True, index=True)
 
     # ── 대상 ────────────────────────────────────────────────────────────
+    # 🔴 NOT NULL 이다(2026-08-11, 사람 승인). 이 테이블에는 `run_id` 컬럼이 없어
+    #    run 에 닿는 경로가 `parcel_id → booth_candidates.run_id` **조인 하나뿐**이다.
+    #    NULL 이면 어느 실행의 어느 입지를 토론했는지 알 방법이 사라진다.
+    #    쓰기 경로는 `resolve_candidate`(실패 시 CandidateNotFound)를 통과해야만
+    #    저장하므로 실제로 NULL 이 될 수 없었지만, 그건 코드의 약속이지 DB 의
+    #    보증이 아니었다 — 손입력·다른 도구로 들어오면 막을 게 없다.
     parcel_id = Column(
         Integer,
         ForeignKey("booth_candidates.id", ondelete="CASCADE"),
-        nullable=True,
+        nullable=False,
         index=True,
     )
     # 위 후보점이 놓인 필지. booth_candidates.land_id 에서 유도해 채운다.

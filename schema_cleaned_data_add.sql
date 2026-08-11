@@ -83,56 +83,27 @@ ALTER TABLE candidate_lands
 --       → 거리·교차 연산은 전부 geom_5186 사용. 수초로 단축.
 -- =============================================================================
 
+-- 🔴 2026-08-11 — **14줄을 들어냈다.** 여기 있던 `ALTER TABLE` 대상 중 흡연 도메인
+--    데이터셋 14개(bus_stop_passenger_stats · street_trash_bins · parks ·
+--    cigarette_litter_hotspots · smoking_areas · commercial_shops · cctv_locations ·
+--    public_wifi_locations · public_toilets · fire_water_facilities ·
+--    cultural_event_locations · public_parking_lots · smoking_area_polygons)는
+--    DB 에서 제거됐다(경위는 `schema_cleaned_data.sql` 머리말). 프리셋 원본은 디스크에 둔다.
+--    🔴 `ADD COLUMN IF NOT EXISTS` 는 **컬럼**에만 걸리는 조건이다 — 테이블이 없으면
+--    그냥 에러다. 그대로 뒀으면 이 파일이 **첫 줄에서 죽는다.**
+--    지운 것은 「없어도 되는 줄」이 아니라 **없는 테이블을 가리키던 줄**이다.
+
 -- 점 데이터
-ALTER TABLE bus_stop_passenger_stats  ADD COLUMN IF NOT EXISTS geom_5186 GEOMETRY(Point, 5186)
-  GENERATED ALWAYS AS (ST_Transform(geom, 5186)) STORED;
-ALTER TABLE street_trash_bins         ADD COLUMN IF NOT EXISTS geom_5186 GEOMETRY(Point, 5186)
-  GENERATED ALWAYS AS (ST_Transform(geom, 5186)) STORED;
-ALTER TABLE parks                     ADD COLUMN IF NOT EXISTS geom_5186 GEOMETRY(Point, 5186)
-  GENERATED ALWAYS AS (ST_Transform(geom, 5186)) STORED;
-ALTER TABLE cigarette_litter_hotspots ADD COLUMN IF NOT EXISTS geom_5186 GEOMETRY(Point, 5186)
-  GENERATED ALWAYS AS (ST_Transform(geom, 5186)) STORED;
-ALTER TABLE smoking_areas             ADD COLUMN IF NOT EXISTS geom_5186 GEOMETRY(Point, 5186)
-  GENERATED ALWAYS AS (ST_Transform(geom, 5186)) STORED;
-ALTER TABLE commercial_shops          ADD COLUMN IF NOT EXISTS geom_5186 GEOMETRY(Point, 5186)
-  GENERATED ALWAYS AS (ST_Transform(geom, 5186)) STORED;
-ALTER TABLE cctv_locations            ADD COLUMN IF NOT EXISTS geom_5186 GEOMETRY(Point, 5186)
-  GENERATED ALWAYS AS (ST_Transform(geom, 5186)) STORED;
-ALTER TABLE public_wifi_locations     ADD COLUMN IF NOT EXISTS geom_5186 GEOMETRY(Point, 5186)
-  GENERATED ALWAYS AS (ST_Transform(geom, 5186)) STORED;
-ALTER TABLE public_toilets            ADD COLUMN IF NOT EXISTS geom_5186 GEOMETRY(Point, 5186)
-  GENERATED ALWAYS AS (ST_Transform(geom, 5186)) STORED;
-ALTER TABLE fire_water_facilities     ADD COLUMN IF NOT EXISTS geom_5186 GEOMETRY(Point, 5186)
-  GENERATED ALWAYS AS (ST_Transform(geom, 5186)) STORED;
-ALTER TABLE cultural_event_locations  ADD COLUMN IF NOT EXISTS geom_5186 GEOMETRY(Point, 5186)
-  GENERATED ALWAYS AS (ST_Transform(geom, 5186)) STORED;
-ALTER TABLE public_parking_lots       ADD COLUMN IF NOT EXISTS geom_5186 GEOMETRY(Point, 5186)
-  GENERATED ALWAYS AS (ST_Transform(geom, 5186)) STORED;
 ALTER TABLE national_properties       ADD COLUMN IF NOT EXISTS geom_5186 GEOMETRY(Point, 5186)
   GENERATED ALWAYS AS (ST_Transform(geom, 5186)) STORED;
 
 -- 폴리곤 데이터
 ALTER TABLE candidate_lands       ADD COLUMN IF NOT EXISTS geom_5186 GEOMETRY(MultiPolygon, 5186)
   GENERATED ALWAYS AS (ST_Transform(geom, 5186)) STORED;
-ALTER TABLE smoking_area_polygons ADD COLUMN IF NOT EXISTS geom_5186 GEOMETRY(Polygon, 5186)
-  GENERATED ALWAYS AS (ST_Transform(geom, 5186)) STORED;
 
 -- 5186 인덱스 (실제 공간 연산이 타는 인덱스)
-CREATE INDEX IF NOT EXISTS idx_bus_stop_5186    ON bus_stop_passenger_stats  USING GIST (geom_5186);
-CREATE INDEX IF NOT EXISTS idx_trash_5186       ON street_trash_bins         USING GIST (geom_5186);
-CREATE INDEX IF NOT EXISTS idx_parks_5186       ON parks                     USING GIST (geom_5186);
-CREATE INDEX IF NOT EXISTS idx_litter_5186      ON cigarette_litter_hotspots USING GIST (geom_5186);
-CREATE INDEX IF NOT EXISTS idx_smoking_5186     ON smoking_areas             USING GIST (geom_5186);
-CREATE INDEX IF NOT EXISTS idx_shops_5186       ON commercial_shops          USING GIST (geom_5186);
-CREATE INDEX IF NOT EXISTS idx_cctv_5186        ON cctv_locations            USING GIST (geom_5186);
-CREATE INDEX IF NOT EXISTS idx_wifi_5186        ON public_wifi_locations     USING GIST (geom_5186);
-CREATE INDEX IF NOT EXISTS idx_toilet_5186      ON public_toilets            USING GIST (geom_5186);
-CREATE INDEX IF NOT EXISTS idx_fire_5186        ON fire_water_facilities     USING GIST (geom_5186);
-CREATE INDEX IF NOT EXISTS idx_culture_5186     ON cultural_event_locations  USING GIST (geom_5186);
-CREATE INDEX IF NOT EXISTS idx_parking_5186     ON public_parking_lots       USING GIST (geom_5186);
 CREATE INDEX IF NOT EXISTS idx_national_5186    ON national_properties       USING GIST (geom_5186);
 CREATE INDEX IF NOT EXISTS idx_candidate_5186   ON candidate_lands           USING GIST (geom_5186);
-CREATE INDEX IF NOT EXISTS idx_gate_5186        ON smoking_area_polygons     USING GIST (geom_5186);
 
 
 -- =============================================================================
@@ -179,29 +150,41 @@ COMMENT ON COLUMN candidate_lands.width_m IS
 
 
 -- =============================================================================
--- [보완 4] 금지구역 캐시 (휘발성 레이어)
--- 조례 개정 시 REFRESH MATERIALIZED VIEW mv_restricted_zones; 한 줄로 갱신
+-- [보완 4] 금지구역 캐시 (휘발성 레이어) — 🔴 2026-08-11 제거
+--
+-- 여기 있던 `mv_restricted_zones` 매터리얼라이즈드 뷰(소스 `smoking_area_polygons`)는
+-- 지웠다. **0행 · 소스도 0행 · 코드 참조 0회**였다.
+--
+-- 발견 경위를 남긴다: 흡연 도메인 테이블을 `CASCADE` 없이 지우다
+-- `DependentObjectsStillExist: materialized view mv_restricted_zones depends on
+-- table smoking_area_polygons` 로 **멈춰서** 알았다. 아무도 이 뷰의 존재를 몰랐다 —
+-- `CASCADE` 를 붙였으면 조용히 같이 쓸려 나가고 **지웠다는 사실조차 안 남았을 것**이다.
+-- 파괴적 DDL 에서 `CASCADE` 는 편의가 아니라 **탐지기를 끄는 스위치**다(원칙 1).
+--
+-- 배제구역은 이제 DB 뷰가 아니라 STEP1 감리 산출물(`audit_rules` 의 `hard_exclusion`)과
+-- STEP2 정제본 파일에서 온다. 조례가 바뀌면 `REFRESH` 가 아니라 **파이프라인을 다시 돈다.**
 -- =============================================================================
-
-DROP MATERIALIZED VIEW IF EXISTS mv_restricted_zones CASCADE;
-
-CREATE MATERIALIZED VIEW mv_restricted_zones AS
-SELECT id, facility_type, restriction_standard, geom_5186 AS geom
-FROM smoking_area_polygons
-WHERE geom_5186 IS NOT NULL;
-
-CREATE INDEX idx_mv_restricted_zones_geom
-ON mv_restricted_zones USING GIST (geom);
 
 
 -- =============================================================================
 -- [보완 5] 후보지 산출물 테이블 (AHP·멀티에이전트가 읽어감)
 -- 지표를 한 번 계산해 캐싱 → 가중치만 바꿔 score를 UPDATE
+--
+-- 🔴 2026-08-11 — 여기 있던 `DROP TABLE IF EXISTS booth_candidates CASCADE;` 를 지웠다.
+--    `schema_cleaned_data.sql` 의 `candidate_lands` DROP 과 **같은 종류의 줄**이다:
+--    지금 이 테이블엔 80행이 들어 있고 `conflict_simulations.parcel_id` 가
+--    `ON DELETE CASCADE` 로 매달려 있으며 `debate_logs` 가 다시 그걸 따른다
+--    → 실측 **공청회 3건 · 발화 42행**이 같이 사라진다. 후보점은 `topN.geojson` 에서
+--    다시 만들어지지만 **LLM 토론은 재구성이 안 된다**(발화는 Redis TTL 600초뿐).
+--    적재기(`load_topn_candidates.py`)는 같은 손실을 `--force` 없이 **거부**하는데,
+--    이 파일을 돌리면 그 방어를 **우회해서** 같은 일이 난다.
+--
+-- ⚠ `IF NOT EXISTS` 라서 이미 있으면 아래 정의는 **무시된다.** 실 DB 의 이 테이블은
+--    `schema_step4_topn.sql` 이 얹은 컬럼(`domain`·`run_id`·`facility_type`·
+--    `pnu`·`jibun`·`props_json`)을 더 갖고 있다 — 그쪽이 가산분의 정본이다.
 -- =============================================================================
 
-DROP TABLE IF EXISTS booth_candidates CASCADE;
-
-CREATE TABLE booth_candidates (
+CREATE TABLE IF NOT EXISTS booth_candidates (
     id SERIAL PRIMARY KEY,
     land_id INTEGER REFERENCES candidate_lands(id),
     area_m2 DOUBLE PRECISION,
@@ -219,5 +202,96 @@ CREATE TABLE booth_candidates (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_booth_candidates_geom  ON booth_candidates USING GIST (geom_5186);
-CREATE INDEX idx_booth_candidates_score ON booth_candidates (score DESC);
+CREATE INDEX IF NOT EXISTS idx_booth_candidates_geom  ON booth_candidates USING GIST (geom_5186);
+CREATE INDEX IF NOT EXISTS idx_booth_candidates_score ON booth_candidates (score DESC);
+
+
+-- =============================================================================
+-- [보완 6] 2계층(지역단위) 데이터의 시군구 구분  ★2026-08-11 신설
+--
+-- 문제: `candidate_lands`(6,524) · `national_properties`(2,486) 는 **용산 전용**인데
+--       그렇다고 말하는 자리가 없다. 성동구를 넣는 순간 두 지역이 한 테이블에
+--       섞이고, 공간조인(`load_topn_candidates.py` 의 `ST_Contains`)은 **가장 먼저
+--       걸리는 필지**를 집는다 — 경계에 붙은 남의 구 필지를 집어도 안 터진다.
+--
+-- 🔴 테이블 이름에 `yongsan_` 을 붙이는 안은 **버렸다**(사람 결정 2026-08-11).
+--    이름이 지역이 되면 그건 도메인 값 하드코딩이고(원칙 2), 지자체가 늘 때마다
+--    테이블·DDL·로더·FK 가 같이 늘어난다. `cadastral_lands` 가 이미
+--    **`sigungu_cd` 컬럼으로** 가르고 있었다(로더의 멱등 가드도 그 컬럼을 본다) —
+--    나머지 둘을 그 관례에 맞춘다. 어긋난 짝은 **기존 관례 쪽**으로 맞춘다.
+--
+-- 값의 출처: **코드 리터럴을 쓰지 않는다.** 지적도(`cadastral_lands`)와 공간으로
+--       맞춰 그 필지의 `sigungu_cd` 를 가져온다. 못 맞추면 **NULL 로 남긴다** —
+--       「하나뿐이니 그거겠지」로 채우면 없는 정보를 지어내는 것이다(원칙 1·5).
+--
+-- ⚠ `sigungu_cd` 는 **행자부 코드**다(용산 11170). 1계층 경계 3종의 `SIGUNGU_CD`
+--    는 **통계청 코드**라 값이 다르다(11170 = 통계청 기준 구로) — 직접 조인 금지,
+--    `admin_crosswalk` 경유.
+-- =============================================================================
+
+ALTER TABLE candidate_lands      ADD COLUMN IF NOT EXISTS sigungu_cd VARCHAR(5);
+ALTER TABLE national_properties  ADD COLUMN IF NOT EXISTS sigungu_cd VARCHAR(5);
+
+-- ① 포함 — 중심점(면) / 점 그대로가 지적 필지 안에 있으면 그 필지의 코드
+UPDATE candidate_lands cl
+SET sigungu_cd = s.sgg
+FROM (
+    SELECT c.id,
+           (SELECT ca.sigungu_cd FROM cadastral_lands ca
+             WHERE ST_Intersects(ca.geom_5186, ST_Centroid(c.geom_5186))
+             LIMIT 1) AS sgg
+    FROM candidate_lands c
+    WHERE c.sigungu_cd IS NULL AND c.geom_5186 IS NOT NULL
+) s
+WHERE cl.id = s.id AND s.sgg IS NOT NULL;
+
+UPDATE national_properties np
+SET sigungu_cd = s.sgg
+FROM (
+    SELECT n.id,
+           (SELECT ca.sigungu_cd FROM cadastral_lands ca
+             WHERE ST_Intersects(ca.geom_5186, n.geom_5186)
+             LIMIT 1) AS sgg
+    FROM national_properties n
+    WHERE n.sigungu_cd IS NULL AND n.geom_5186 IS NOT NULL
+) s
+WHERE np.id = s.id AND s.sgg IS NOT NULL;
+
+-- ② 최근접 — 도로·필지 틈에 떨어진 것만. **50m 상한**을 둔다.
+--    상한이 없으면 아무리 먼 것도 붙어 「가장 가까운 구」가 곧 답이 된다.
+--    실측: `candidate_lands` 6,524 중 ① 로 6,522 · ② 로 2(중심점이 필지 밖 0.2m·6.9m).
+UPDATE candidate_lands cl
+SET sigungu_cd = s.sgg
+FROM (
+    SELECT c.id,
+           (SELECT ca.sigungu_cd FROM cadastral_lands ca
+             WHERE ST_DWithin(ca.geom_5186, ST_Centroid(c.geom_5186), 50)
+             ORDER BY ca.geom_5186 <-> ST_Centroid(c.geom_5186) LIMIT 1) AS sgg
+    FROM candidate_lands c
+    WHERE c.sigungu_cd IS NULL AND c.geom_5186 IS NOT NULL
+) s
+WHERE cl.id = s.id AND s.sgg IS NOT NULL;
+
+UPDATE national_properties np
+SET sigungu_cd = s.sgg
+FROM (
+    SELECT n.id,
+           (SELECT ca.sigungu_cd FROM cadastral_lands ca
+             WHERE ST_DWithin(ca.geom_5186, n.geom_5186, 50)
+             ORDER BY ca.geom_5186 <-> n.geom_5186 LIMIT 1) AS sgg
+    FROM national_properties n
+    WHERE n.sigungu_cd IS NULL AND n.geom_5186 IS NOT NULL
+) s
+WHERE np.id = s.id AND s.sgg IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_candidate_lands_sgg     ON candidate_lands (sigungu_cd);
+CREATE INDEX IF NOT EXISTS idx_national_properties_sgg ON national_properties (sigungu_cd);
+
+COMMENT ON COLUMN candidate_lands.sigungu_cd IS
+  '행자부 시군구코드. 지적도(cadastral_lands) 공간매칭으로 유도 — 못 맞추면 NULL(추측 안 함)';
+COMMENT ON COLUMN national_properties.sigungu_cd IS
+  '행자부 시군구코드. 지적도(cadastral_lands) 공간매칭으로 유도 — 못 맞추면 NULL(추측 안 함)';
+
+-- 검증: NULL 이 남았으면 그 행은 지적도 50m 안에 짝이 없다는 뜻이다.
+-- SELECT sigungu_cd, count(*) FROM candidate_lands     GROUP BY 1;
+-- SELECT sigungu_cd, count(*) FROM national_properties GROUP BY 1;
