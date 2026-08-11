@@ -87,6 +87,7 @@ MVP: 용산구 흡연부스 / 2차: 성동구 재활용정거장.
 | 🔴 **근거는 갈아끼워지는데 결론만 남는다** | `runs/` 정리를 설계하다 옆에서 나온 것. `load_audit_data.py` 는 `(domain, run_id)` 의 `audit_rules` 를 **교체**하는데 `conflict_simulations` 에서 그리로 가는 **FK 가 없다** → 같은 도메인·같은 run 을 재적재하면 **토론은 그대로 남고 근거만 바뀐다.** `booth_candidates` 쪽은 CASCADE 라 이 사고가 안 나는데(공청회가 같이 지워져 눈에 띈다), **짝이 한쪽만 맞아 있었다.** 조례 청크도 같다 — 재업로드 시 `delete_statute_chunks()` 로 지워지므로 `doc_id` 만 적어두면 나중에 **그 문서가 없다** | 결과에 **결론만** 남기면 근거는 언젠가 딴 게 된다. 「무엇을 근거로 했나」를 결과 안에 **박아둔다**(`result_json.basis`). 참조(id)가 아니라 **본문**이다 — 참조는 대상이 사라지면 같이 죽는다. 실측 크기는 감리 918자 · POI 113자 · 조례 2,473자로 통째로 담아도 3.5KB 남짓이다. **✅ 2026-08-11** — `candidate_context.basis_snapshot()` 하나를 **A·B 두 엔진이 같이 쓴다**(모양이 다르면 두 결과를 나란히 못 놓는다). ⚠ POI 는 감리 문맥에 **덧붙여진 뒤** 프롬프트로 가므로, 스냅샷은 **붙이기 전 값**과 POI 를 따로 받는다 |
 | 🔴 **주변 문맥이 파이프라인 산출물을 한 건도 안 봤다** | 화면5 토론의 「📍 주변 인프라 요인」(`gis_service.get_poi_context_from_db`)은 **별도로 적재된 테이블 6개**를 봤다 — `parks` 44행 · `street_trash_bins` 280 · `smoking_areas` 8 · `bus_stop_passenger_stats` 304 · `cigarette_litter_hotspots` **0행** · `fire_water_facilities` **0행**. 셋이 겹쳐 있었다: ⓐ 테이블 6개도 붙는 말머리(`📍 기존흡연구역`·`소방/안전`)도 **흡연 전용**이라 성동구 재활용정거장에선 엉뚱한 문맥이 나가거나 통째로 빈다(원칙 2) ⓑ 그 테이블엔 `domain`·`run_id` 가 **없다**(적재 2026-07-14·08-03 — 파이프라인을 돌리기 전이다) → **어떤 run 의 후보점을 물어도 같은 답**이다. 업로드한 데이터로 뽑은 후보지를 **남의 데이터로** 설명한다 ⓒ STEP2 정제 11개 중 대응이 있는 건 2개뿐이고 그나마 행 수가 다르다(07 버스정류소 314↔304 · 08 가로휴지통 281↔280). 2개는 0행이라 **영원히 안 나오는데 매 토론마다 조회한다.** 게다가 예외를 `print` 하고 **`""` 를 돌려줘서** POI 가 통째로 빠진 채 5분짜리 토론이 완주했다 | 토론에 들어가는 값은 **그 run 이 낸 산출물**에서 온다. 경로는 요청이 아니라 `booth_candidates` 행(`run_id`·`domain`)에서 뽑는다 — 파라미터로 받으면 흡연 후보점에 재활용 문맥을 넘길 수 있다. **✅ 2026-08-11 교체** — `app/services/poi_context.py` 하나를 **A·B 두 엔진이 같이 쓴다**. `db` 가 아니라 **`resolve_candidate` 의 결과**를 넘긴다(여기서 다시 조회하면 같은 후보점을 두 번 읽는 자리가 생긴다). 이름표는 **만들지 않는다** — STEP2 가 감리 `roles[].facility_type` 을 `clean_report.label` 로 **옮겨 적고**(LLM 호출 0회 유지) POI 는 읽기만 한다. 없으면 `reviewed.json` → 파일명 순이고 `label_source` 에 어디서 왔는지 적는다. 🔴 못 센 것(`format=parquet` 좌표없음 · `gis_input=false` · prune 됨)은 **줄글에도 「세지 못한 데이터」로 나간다** — 안 적으면 「그 시설이 주변에 없다」로 읽힌다. 파일을 읽으므로 `asyncio.to_thread` 로 뺀다(0.5~1.3초). `check_poi_context.py` 34/34. ⚠ **버린 것이 있다**: `parks`(44행)·`smoking_areas`(8행 = 기존 흡연구역)는 STEP2 대응이 **없다** — 남기려면 흡연 하드코딩을 남겨야 해서 뺐다 |
 | 🔴 **부팅 정리의 순서가 보호를 영구화한다** | `runs/` 자동 정리를 lifespan 에 넣을 때, `reap_orphans()` **앞**에 두면 이전 서버가 죽여놓고 간 run 이 아직 `status: running` 이라 「진행 중이니 보호」로 판정된다 → **영원히 안 줄어든다.** 안 터지고 디스크만 안 준다. 곁가지로 폴더를 **통째로** 지우면 `status.json` 이 사라져 프런트 폴링이 404 가 되고 계약 3절이 옛 run 에 대해 거짓이 된다 | 정리기가 **다른 정리기의 결과에 의존하면** 순서가 곧 정책이다. 그 의존을 코드 옆 주석에 적는다. 그리고 지울 땐 **용량을 세고 나서** 범위를 정한다 — 실측하니 `.gpkg`+`.parquet` 가 96.8% 라 **폴더를 지킬 이유가 충분했다**(남는 전부가 3.2%·9.9MB). 보호 목록(`booth_candidates.run_id`)을 **못 얻으면 아무것도 안 지운다**: 보호 목록 없이 지우는 건 보호가 없는 것과 같다 |
+| 🔴 **대조기가 설정값을 자기 자신과 비교했다** | 실 DB 로 `/auth/*` 를 치다 나왔다. 「access 토큰이 `ACCESS_TOKEN_EXPIRE_MINUTES` 대로 발급되는가」는 **`.env` 에 뭘 적어도 통과**한다 — 재는 자와 재어지는 자가 같은 값이다. 실제로 `.env:94` 가 **`ACCESS_TOKEN_EXPIRE_MINUTES=10080`**(7일)이었다. `app/config.py:423` 기본값도 `.env.example:111` 도 PR #221 제목도 전부 **15분**인데 `.env` 만 옛 단일토큰 시절 값이 남아 있었다(`.env` 는 gitignore 라 PR 로 안 따라온다). 결과: **access 와 refresh 수명이 604800초로 같다** → 짧은 access + 회전 refresh 라는 구조가 통째로 없어진다. RTR·Family Revocation 은 멀쩡히 도는데 **탈취된 access 하나가 7일을 산다**(블랙리스트는 로그아웃을 해야 걸린다). 예외도 경고도 없다 | 설정값 대조는 **두 겹**으로 짠다: ⓐ 구현 정합(토큰 수명 == 설정값) ⓑ **설정 정합**(설정값 == 설계값, 그리고 `access < refresh` 라는 **구조 불변식**). ⓐ만 있으면 대조기가 아니라 항등식이다(「대조기가 없는 키를 읽음」의 사촌 — 가짜 초록불). 🔴 **`.env` 는 리포에 없으므로 PR 이 기본값을 바꿔도 안 따라온다** — 기능을 추가한 PR 이 기존 키의 **의미**를 바꾸면(단일→듀얼) `.env.example` 만 고치는 걸로는 안 끝난다. `check_auth_real_db.py` 가 이 두 항목을 들고 있다. **✅ 2026-08-11 해소**(사람 결정) — `.env`·`.env.example`·`app/config.py` 기본값·대조기 설계값 **네 곳을 60분으로** 맞췄다(55/55). 🔴 **15분이 아니라 60분인 이유는 파이프라인 길이가 아니다.** `get_current_user` 참조처를 세면 **`/auth/logout` 하나뿐**이라 파이프라인·업로드·토론·PDF 는 토큰을 아예 안 본다 — 9분짜리 full run 도 access 만료와 무관하다. 올린 사유는 **프런트에 `/auth/refresh` 재발급 로직이 있는지 확인이 안 돼서**다(프런트 저장소는 접근 금지). 없으면 access 만료가 곧 로그아웃이라, 그 미지수 아래서 15분은 도박이다. 확인되면 15로 되돌린다. ⚠ 설계값은 대조기에 **손으로 적힌 상수**(`_DESIGN_ACCESS_MIN`)다 — `settings` 를 쓰면 다시 항등식이 된다. 바꿀 땐 네 곳을 같이 바꾼다: 대조기만 고치면 사라진 설계값을 계속 요구하고, 설정만 고치면 대조기가 영원히 빨간불이라 아무도 안 본다. ⚠ **살아 있는 서버에는 재시작 전까지 안 먹는다**(설정은 import 시점에 읽는다) |
 
 ---
 
@@ -168,7 +169,12 @@ python app\tools\check_hearings.py                   :: 화면5 — /simulations
                                                      ::    STATUS_UNREADABLE 은 깨진 status.json 을
                                                      ::    실제로 만들어 보고 지운다
 python app\tools\check_stakeholders.py               :: 화면5 B — /stakeholders/* 어댑터 60항목
-                                                     :: (🔴 거절 경로 + SSE 정규화 + 근거 스냅샷. 정상 경로는 5분 토론이다)
+                                                     :: (🔴 거절 경로 + SSE 정규화 + 근거 스냅샷. LLM 0회)
+python app\tools\check_stakeholders_e2e.py           :: 화면5 B **정상 경로** 관통 36항목
+                                                     :: 🔴 LLM 다회·유료 (3명 실측 106초 · 45 events)
+                                                     ::    [--parcel 2] [--personas 3] [--cleanup]
+                                                     :: 🔴 `hearing_results_b` 에 한 행이 **남는다**(그게 정상 —
+                                                     ::    프런트가 `?engine=B` 를 확인할 실물이 된다)
 python app\tools\check_cascade_report.py             :: 적재기 [CASCADED] → status.loaded.cascaded 13항목
                                                      :: (DB·포트 안 씀. 가짜 자식이 그 줄만 찍는다)
 python app\tools\check_prune_runs.py                 :: runs/ 정리 39항목 (DB·uvicorn·진짜 runs/ 안 씀)
@@ -183,7 +189,15 @@ python app\tools\check_postgis_parity.py <도메인>    :: S5 — geopandas ↔ 
 python app\tools\bench_postgis.py <도메인>           :: S5 — 같은 술어 **속도** 대조
                                                      :: (둘 다 도커 필요. PGIS_DSN 으로 접속지 지정)
 python app\tools\check_auth_dual_token.py            :: 듀얼 토큰 — 발급·refresh(RTR)·로그아웃
-                                                     :: (PR #221. 검증이 InMemoryDB 목이라 실 DB 확인은 별도)
+                                                     :: (PR #221. 검증이 InMemoryDB 목이다 — 아래를 같이 쓸 것)
+python app\tools\check_auth_real_db.py               :: /auth/* 4개를 **실 DB·실 Redis** 로 55항목
+                                                     :: 🔴 `users` 에 한 행을 넣고 Redis 키를 만든다 — 끝에 지우고
+                                                     ::    **지워졌는지까지** 본다(기존 행은 안 건드린다)
+                                                     :: 🔴 목이 못 보던 자리: TTL 실재(목의 `expire` 는 `pass` 다) ·
+                                                     ::    `keys()` 패턴 · bcrypt DB 왕복 · UNIQUE 는 DB 제약
+                                                     :: 🔴 설정 정합 3항목은 **손으로 적은 설계값**과 댄다
+                                                     ::    (`_DESIGN_ACCESS_MIN`=60 · `_DESIGN_REFRESH_DAYS`=7).
+                                                     ::    `settings` 를 쓰면 항등식이 되어 `.env` 사고를 못 잡는다
 
 :: 운영 도구 (PR #220 통합 — 전부 수동. 자동으로 안 돈다)
 python app\tools\get_cache.py {geocode|jimok|list} [질의]   :: Redis 캐시 조회(읽기 전용)
@@ -655,10 +669,27 @@ D:\obsidian_claude\10_OmniSite\
           🔴 **35개 중 「돌려본 것」은 그보다 적다**(2026-08-10 로그 실측). 구현됐다고
           실행 근거가 생기는 게 아니다. `pipeline` 5 · `upload` 7 · `simulations`(복수) 7 ·
           `report/hwpx` 1 = **실행 확인됨**. `simulation`(단수) 7 은 안 쳤지만
-          **같은 라우터 객체**라(`main.py:148·153`) 핸들러가 동일하다. `auth` 4 는
-          통과했으나 **InMemoryDB 목**이다. `stakeholders` 2 는 2026-08-11 에
-          **거절 경로만** 쳤다(`app/tools/check_stakeholders.py` 59/59) — 정상 경로는
-          5분짜리 다인 토론이라 안 쳤다.
+          **같은 라우터 객체**라(`main.py:148·153`) 핸들러가 동일하다.
+          ✅ **`auth` 4 · `stakeholders` 2 도 2026-08-11 에 쳤다**(사람 지시 「2번 경로
+          한번 api 써서 해봐」). 여기 「목이다」·「거절 경로만 쳤다」고 적어둔 두 자리가
+          마지막 남은 미실행분이었다.
+          · `auth` — `check_auth_real_db.py` **실 DB·실 Redis 로 54항목 중 52 통과** →
+            설정을 고친 뒤 **55/55**. 실패 2건은 라우터가 아니라 **`.env` 설정**이었고
+            (함정표 「대조기가 설정값을 자기 자신과 비교했다」), 같은 날 access 수명을
+            **60분**으로 네 곳(`.env`·`.env.example`·`config.py` 기본값·대조기 설계값)
+            에 맞춰 해소했다. 🔴 **살아 있는 서버에는 재시작 전까지 안 먹는다.**
+            목이 못 보던 것 4가지가 전부 통과했다: Redis TTL 이 실제로
+            붙는가(목의 `expire` 는 `pass` 다) · `keys()` 패턴이 같은 집합을 주는가 ·
+            bcrypt 해시가 DB 왕복 후에도 검증되는가 · 중복 이메일 400 이 **DB UNIQUE
+            제약**으로 나는가. Family Revocation 은 세션 **2개**를 만들어 놓고 쳤다 —
+            목의 `startswith` 로는 「전부 지웠다」를 확인할 수 없다.
+          · `stakeholders` — `check_stakeholders_e2e.py` **36/36.** `/generate`(8명,
+            50.4초) → 상위 3명으로 `/dynamic/discuss/stream` → **45 events · 55.7초** →
+            `hearing_results_b` id=9 → `?engine=B` 목록에 노출. 확인한 것은 개수가
+            아니라 **접두 형식이 살아 있는가**다(`"{display_name} ({persona_id}): "`) —
+            어긋나면 `_split_speaker` 가 못 잘라 발화자가 전부 `unknown` 이 되는데
+            **예외가 안 나고 이름만 사라진다.** 실측 40 발화 중 persona 17 · moderator 23,
+            고른 3명이 전부 실제로 말했다.
           ✅ **`audit` 2 도 2026-08-11 에 쳤다**(`check_audit.py` **57/57**). 그전까지
           **한 번도 안 친 유일한 자리**였는데, 치자마자 위 표의 「정해지기 전의 이름」
           함정이 나왔다 — `matched_scenario` 가 항상 `"A"` 였고 없는 `simulation_id`

@@ -420,7 +420,20 @@ class Settings(BaseSettings):
     #    생성: python -c "import secrets; print(secrets.token_urlsafe(48))"
     SECRET_KEY: str = _require_env("SECRET_KEY")
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))  # 15분
+    # 🔴 **access 수명은 「작업 유지 시간」이 아니다.** 작업 유지는 refresh(7일)가
+    #    정하고, access 가 만료되면 프런트가 `/auth/refresh` 로 조용히 갈아끼운다.
+    #    access 수명이 정하는 건 **새어나간 토큰이 사는 시간**이다(서버가 취소할
+    #    방법이 없다 — 명시 로그아웃 때만 블랙리스트에 오른다).
+    #    PR #221 값은 15분이었으나 **60분으로 올린다**(2026-08-11, 사람 결정).
+    #    이유는 파이프라인 길이가 아니다 — 파이프라인·업로드·토론 엔드포인트는
+    #    토큰을 아예 안 본다(`get_current_user` 참조처는 `/auth/logout` 하나뿐).
+    #    프런트에 refresh 재발급 로직이 있는지 **확인되지 않아서**다: 없으면
+    #    access 만료가 곧 로그아웃이다. 확인되면 15분으로 되돌릴 수 있다.
+    #    ⚠ 이 값을 바꾸면 `.env`·`.env.example`·`check_auth_real_db.py` 의 설계값을
+    #      **같이** 바꾼다. 한 곳만 다르면 대조기가 그 사실을 실패로 들고 있는다
+    #      (실제로 `.env` 만 10080 이었다 — 그러면 access·refresh 수명이 같아져
+    #      듀얼 토큰 구조가 통째로 없어진다).
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))  # 60분
     REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))  # 7일
 
     # pydantic_settings v2 규격 설정
