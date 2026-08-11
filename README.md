@@ -62,8 +62,33 @@ docker exec -i omnisite-postgres-db psql -U postgres -d omnisite < schema.sql
 > 팀 seed(`omnisite_seed.sql.gz`)로 복원하면 1~5 는 건너뛸 수 있습니다(경계 3종 제외).
 *   **로컬 DB 접속 정보**: 포트 `5432` / 사용자 `postgres` / 비밀번호 `postgres` / DB명 `omnisite`
     *   컨테이너명은 `omnisite-postgres-db` 입니다(Redis 는 `omnisite-redis-cache`).
-    *   `app/config.py` 의 `DATABASE_URL` 기본값이 이 값과 같으므로, 로컬에서는 `.env` 없이도 붙습니다.
+    *   🔴 **`DATABASE_URL`·`REDIS_URL`·`SECRET_KEY` 는 기본값이 없습니다**
+        (2026-08-07 침해 대응 · `app/config.py:36-44` `_require_env`).
+        로컬이라도 **`.env` 가 반드시 있어야 기동됩니다** — `.env.example` 을 복사해
+        위 접속 정보를 채우세요.
+        없으면 「DB 접속 실패」가 아니라 **import 시점 `RuntimeError`** 로 죽습니다.
+        docker 를 헤매지 마세요 — 그 예외 문구가 `.env.example` 을 복사하라고 정확히
+        말해줍니다.
 *   *주의*: pgvector 확장 제어 선언은 `CREATE EXTENSION vector;` 문법을 사용해야 합니다.
+
+> 🔴 **`:65` 는 2026-08-12 에 정정된 것입니다** (프런트 세션 지적).
+> 그전까지 이 자리에는 「`app/config.py` 의 `DATABASE_URL` 기본값이 이 값과 같으므로
+> 로컬에서는 `.env` 없이도 붙습니다」라고 적혀 있었습니다. **그 기본값은
+> 2026-08-09 보안 조치로 일부러 없앤 것**입니다(`_require_env` 를 넣은 그 커밋).
+> **코드가 옳고 README 만 그때 같이 안 고쳐졌습니다.**
+>
+> 증상이 헷갈리는 방향으로 납니다. 처음 받은 사람은 README 를 믿고 `.env` 없이
+> `uvicorn` 을 치는데, 나오는 건 「DB 접속 실패」가 아니라 **import 시점
+> `RuntimeError`** 입니다 → 「DB 를 안 띄웠나」로 읽고 docker 쪽을 헤맵니다.
+> `RuntimeError` 문구는 `.env.example` 을 복사하라고 정확히 말해주는데,
+> **그 앞의 README 문장이 반대로 안내하고 있었습니다.**
+>
+> ⚠ **`:63` 의 접속 정보 자체는 지금도 맞습니다**(`docker-compose.yml` 과 일치).
+> 틀린 건 「그래서 `.env` 가 없어도 된다」는 **뒷문장 하나**였습니다 —
+> 앞줄까지 같이 고치면 멀쩡한 값이 사라집니다.
+>
+> 이건 CLAUDE.md 함정표 「**안 고친 주석이 남의 요구사항이 된다**」와 같은 모양입니다.
+> 없앤 것을 있다고 말하는 문서는 **다음 사람의 계획이 됩니다.**
 
 > 🔴 **위 접속 정보는 2026-08-05 에 정정된 것입니다.**
 > 그전까지 이 자리에는 컨테이너 `omnisite-db` / 사용자 `admin` / 비밀번호 `admin1234` /
