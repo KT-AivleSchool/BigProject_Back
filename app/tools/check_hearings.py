@@ -89,10 +89,102 @@ with TestClient(app) as c:
     chk("없는 도메인 404", r3.status_code == 404, f"-> {r3.status_code}")
 
     print("--- 3) 없는 run / 잘못된 인자")
-    chk(
-        "없는 run 404",
-        c.get(BASE, params={"run_id": "r_없음_999"}).status_code == 404,
-    )
+    r4 = c.get(BASE, params={"run_id": "r_없음_999"})
+    chk("없는 run 404", r4.status_code == 404, f"-> {r4.status_code}")
+
+    # ── 404 의 `detail` 은 **객체**다 (2026-08-11, 프런트 합의) ──────────────────
+    # 🔴 확인하는 건 "404 가 났다"가 아니라 **왜 없는지를 갈라서 말하는가**다.
+    #    같은 404 라도 「run 이 없다」·「적재한 적 없다」·「적재했는데 지금 없다」·
+    #    「domain 이 틀렸다」·「물어볼 수가 없다」는 서로 다른 사실이고, 접으면
+    #    화면이 없는 말을 한다(원칙 4).
+    #    `message` 는 **전 갈래에서 비면 안 된다** — 프런트는 모르는 `code` 를 만나면
+    #    분기하지 않고 `message` 를 그대로 띄운다. 비면 화면에 코드값만 뜬다.
+    print("--- 3-1) 404 detail 의 code 갈래")
+
+    def detail_of(resp):
+        try:
+            d = resp.json().get("detail")
+        except Exception:
+            return None
+        return d if isinstance(d, dict) else None
+
+    def chk_detail(label, resp, code):
+        d = detail_of(resp)
+        chk(f"{label} — detail 이 객체", d is not None, f"-> {type(d).__name__}")
+        if d is None:
+            return
+        chk(f"{label} — code={code}", d.get("code") == code, f"-> {d.get('code')}")
+        chk(
+            f"{label} — message 채워짐",
+            isinstance(d.get("message"), str) and len(d["message"]) > 10,
+            f"-> {str(d.get('message'))[:40]}…",
+        )
+        for k in ("run_id", "domain", "loaded", "current"):
+            chk(f"{label} — {k} 키 존재", k in d)
+
+    chk_detail("없는 run", r4, "UNKNOWN_RUN")
+    # run 은 있는데 domain 만 안 맞는 자리. 다른 갈래로 답하면 "행이 없다"고
+    # 말하는데 사실은 **있다** — 그래서 code 가 따로 있다.
+    chk_detail("domain 불일치", r3, "DOMAIN_MISMATCH")
+    d3 = detail_of(r3)
+    if d3:
+        chk(
+            "domain 불일치 — 다른 domain 행 수를 같이 준다",
+            (d3.get("current") or {}).get("booth_candidates_any_domain", 0) > 0,
+            f"-> {(d3.get('current') or {}).get('booth_candidates_any_domain')}",
+        )
+
+    # 🔴 아래 둘은 **디스크의 `runs/` 상태에 의존한다.** 폴더가 정리되면 갈래가
+    #    바뀌므로 없으면 건너뛴다(대조기가 남의 정리 결과로 실패하면 안 된다).
+    import json as _json
+    from app.services import pipeline_runner as _runner  # noqa: E402
+
+    _seen: set[str] = set()
+    for _rid in sorted(p.name for p in _runner.RUNS_ROOT.glob("r_*") if p.is_dir()):
+        try:
+            _doc = _json.loads((_runner.run_dir(_rid) / "status.json").read_text("utf-8"))
+        except Exception:
+            continue
+        _ld = _doc.get("loaded")
+        _want = (
+            "LOADED_BUT_MISSING"
+            if isinstance(_ld, dict) and (_ld.get("booth_candidates") or 0) > 0
+            else "NEVER_LOADED"
+        )
+        if _want in _seen:
+            continue
+        _r = c.get(BASE, params={"run_id": _rid})
+        if _r.status_code != 404:
+            continue  # 아직 DB 에 후보점이 남아 있는 run — 갈래 대상이 아니다
+        _seen.add(_want)
+        chk_detail(f"{_rid}({_want})", _r, _want)
+    for _want in ("LOADED_BUT_MISSING", "NEVER_LOADED"):
+        if _want not in _seen:
+            print(f"  [--] {_want} — 해당하는 run 이 runs/ 에 없어 건너뜀")
+
+    # 폴더는 있는데 `status.json` 을 못 읽는 자리. 「없다」가 아니라 **「물을 수 없다」**다.
+    # 프런트가 명시로 물어온 갈래라 실제로 만들어서 확인한다(만들고 반드시 지운다).
+    _bad = _runner.RUNS_ROOT / "r_대조_unreadable"
+    try:
+        _bad.mkdir(parents=True, exist_ok=True)
+        (_bad / "status.json").write_text("{깨진 JSON", encoding="utf-8")
+        rU = c.get(BASE, params={"run_id": _bad.name})
+        chk("status.json 깨짐 → 404", rU.status_code == 404, f"-> {rU.status_code}")
+        chk_detail("status 못 읽음", rU, "STATUS_UNREADABLE")
+        dU = detail_of(rU)
+        if dU:
+            chk(
+                "status 못 읽음 — 사유가 message 에 들어간다",
+                "JSONDecodeError" in dU.get("message", "")
+                or "status.json" in dU.get("message", ""),
+                f"-> {dU.get('message', '')[:50]}…",
+            )
+    finally:
+        for _f in _bad.glob("*"):
+            _f.unlink()
+        _bad.rmdir()
+    chk("대조용 폴더 정리됨", not _bad.exists())
+
     chk("run_id 누락 422", c.get(BASE).status_code == 422)
     chk(
         "engine=C 400",

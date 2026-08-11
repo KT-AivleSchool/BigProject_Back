@@ -285,6 +285,42 @@ URL 이 트레이스백에 실릴 수 있고, **하필 그때가 로그를 제�
   산출물 키와 달리 디스크를 보고 사실을 복원할 수 없기 때문이다(행 수를 아는 건
   그때 돌았던 적재기뿐이다). 구분이 필요하면 **`steps` 의 `적재-감리`·`적재-후보`
   칸 상태**를 본다 — 그게 그 run 의 사실이다.
+- 🔴 **`loaded` 는 과거의 기록이고, 나중에 고쳐 쓰지 않는다**(2026-08-11 확정).
+  「그때 20행을 넣었다」는 그 뒤에 무슨 일이 있어도 **여전히 참**이다 — 지금 DB 에
+  없다고 이 값을 지우거나 `invalidated_by` 같은 표시를 되쓰면 한 필드가 「넣었다」와
+  「지금 있다」 **두 의미**를 겸하게 된다(원칙 4 · 함정표 「필드 하나로 두 의미」).
+  게다가 그런 표시는 **적재기만** 쓸 수 있어서 손수 `DELETE` · 정리 도구 · DB 재생성은
+  기록될 자리가 없다. 두 사실은 **묻는 시점에 대조**한다 —
+  `pipeline_runner.loaded_record(run_id)`(그때의 기록, 읽기 전용)와 DB 조회(지금).
+  `GET /api/v1/simulations/hearings` 의 404 `detail` 이 그 대조 결과다(아래).
+
+#### `loaded` ↔ 지금 DB — `/hearings` 404 의 `detail` (2026-08-11 신설, 프런트 합의)
+
+`GET /api/v1/simulations/hearings?run_id=…` 는 후보점이 0행이면 404 인데, `detail` 이
+**문자열이 아니라 객체**다. 같은 404 라도 사유가 다섯 갈래이고, 접으면 화면이 없는
+말을 한다(원칙 4).
+
+```json
+{"code": "LOADED_BUT_MISSING", "message": "…", "run_id": "r_20260810_006",
+ "domain": null, "loaded": {"run_id": "…", "booth_candidates": 20},
+ "current": {"booth_candidates": 0}}
+```
+
+| `code` | 판정 | 뜻 |
+|---|---|---|
+| `UNKNOWN_RUN` | `runs/<id>` 폴더가 없다 | run_id 가 틀렸거나 이 서버의 run 이 아니다 |
+| `STATUS_UNREADABLE` | 폴더는 있는데 `status.json` 을 못 읽는다 | **「적재된 적 없다」가 아니다** — 확인하지 못한 것이다. 사유가 `message` 에 들어간다 |
+| `LOADED_BUT_MISSING` | `loaded.booth_candidates > 0` 인데 DB 0행 | 적재 후 지워졌다(재적재 · 수동 삭제 · DB 재생성). 그 run 의 공청회·발화도 CASCADE 로 함께 사라졌다 |
+| `NEVER_LOADED` | 기록도 없고 행도 없다 | 적재 칸이 없는 모드이거나 적재 전에 멈춘 run |
+| `DOMAIN_MISMATCH` | run 에는 행이 있는데 그 `domain` 만 0행 | `current.booth_candidates_any_domain` 에 실제 행 수를 같이 준다 |
+
+- 🔴 **`message` 는 전 갈래에서 항상 채운다.** 프런트는 모르는 `code` 를 만나면
+  분기하지 않고 `message` 를 **그대로 띄운다** — 코드를 늘려도 프런트 배포를 안
+  기다리는 대신, 비면 화면에 코드값만 뜬다.
+- 🔴 `UNKNOWN_RUN` 과 `STATUS_UNREADABLE` 을 **같은 코드로 접지 않는다.**
+  「없다」와 「물을 수 없다」는 다른 사실이다.
+- 대조: `python app\tools\check_hearings.py` (다섯 갈래 전부. `STATUS_UNREADABLE` 은
+  깨진 `status.json` 을 실제로 만들어 보고 지운다)
 
 #### `cascaded` — 적재하면서 **지워진 것** (2026-08-11 신설)
 

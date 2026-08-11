@@ -273,6 +273,45 @@ def read_status(run_id: str) -> dict | None:
     return doc
 
 
+def loaded_record(run_id: str) -> dict:
+    """이 run 이 **DB 에 무엇을 넣었다고 기록했는지**. 지금 DB 에 있는지는 안 본다.
+
+    두 사실을 대조하려고 만들었다 — 「그때 넣었다」(여기)와 「지금 있다」(DB 조회).
+    둘 다 참이고 **다른 질문**이라 한 필드에 접으면 안 된다. 적재기가 지운 것만
+    기록할 수 있는 `invalidated_by` 같은 표시를 `status.json` 에 되쓰지 않는 이유가
+    이것이다: 손으로 지운 것·정리 도구·DB 재생성은 코드 밖이라 쓸 자리가 없고,
+    「20행을 적재했다」는 그 뒤에 무슨 일이 있어도 **여전히 참**이다(원칙 4).
+
+    `state` 는 셋이다. 🔴 **「폴더가 없다」와 「물을 수 없다」를 같은 값으로 접지 않는다** —
+    접으면 호출자가 "그런 run 은 없다"고 말하는데 사실은 "확인하지 못했다"가 된다.
+
+      ``unknown_run``        `runs/<id>` 폴더 자체가 없다
+      ``status_unreadable``  폴더는 있는데 `status.json` 을 못 읽는다
+                             (파일 없음 · JSON 깨짐 · 권한). `reason` 에 사유가 있다
+      ``known``              읽었다. `loaded` 는 그 run 의 기록(적재 칸이 없으면 `None`)
+
+    읽기 전용이다. `read_status` 와 같은 이유로 부작용을 두지 않는다.
+    """
+    d = run_dir(run_id)
+    if not d.is_dir():
+        return {"state": "unknown_run", "loaded": None, "reason": None}
+    try:
+        doc = read_status(run_id)
+    except Exception as ex:  # noqa: BLE001 — 종류를 안 가린다는 것 자체가 요점이다
+        return {
+            "state": "status_unreadable",
+            "loaded": None,
+            "reason": f"{type(ex).__name__}: {ex}",
+        }
+    if doc is None:
+        return {
+            "state": "status_unreadable",
+            "loaded": None,
+            "reason": "status.json 이 없다",
+        }
+    return {"state": "known", "loaded": doc.get("loaded"), "reason": None}
+
+
 def reap_orphans() -> None:
     """서버가 죽어 중단된 run 을 failed 로 닫는다. **부팅 때 한 번만 부른다.**
 

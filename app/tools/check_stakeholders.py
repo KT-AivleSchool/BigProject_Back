@@ -59,9 +59,18 @@ chk("stakeholder_type 보존", m["stakeholder_type"] == "지역상인", m["stake
 chk("relationship 보존", m["relationship_to_topic"].startswith("점포 앞"))
 chk("interests = keywords", m["interests"] == ["매출", "보행"])
 
+chk("등급 없으면 '미상' — C 로 채우지 않는다", _map_persona(0, {
+    "display_name": "ㄱ", "stakeholder_type": "ㄴ"})["importance_grade"] == "미상")
+
+# 🔴 옛 키(name/role/description)는 **2026-08-11 에 제거**했다(프런트 배포 652aa99 확인 후).
+#    여기서 「통과한다」를 확인하던 자리다 — 별칭을 뺐으면 대조기도 같이 뒤집는다.
+#    안 뒤집으면 대조기가 없어진 동작을 계속 요구해 회귀로 잡힌다.
 old_shape = {"name": "주민대표", "role": "주민", "description": "인근 거주"}
-m2 = _map_persona(1, old_shape)
-chk("옛 키(name/role)도 통과", m2["display_name"] == "주민대표" and m2["stakeholder_type"] == "주민")
+try:
+    _map_persona(1, old_shape)
+    chk("옛 키(name/role)는 이제 거절", False, "예외가 안 났다")
+except Exception as e:
+    chk("옛 키(name/role)는 이제 거절", "400" in repr(e), type(e).__name__)
 
 try:
     _map_persona(2, {"foo": 1})
@@ -185,7 +194,11 @@ FAKE_EVENTS = [
     {"type": "raw", "seq": 3, "delta": {"무시": 1}},
     {"type": "report", "seq": 4, "final_scenarios": {"p1": "조건부"}, "is_finished": True},
 ]
-FAKE_PERSONAS = [{"name": "주민", "role": "인근 거주자"}, {"name": "상인", "role": "상가"}]
+# 정본 어휘로 적는다 — 실제로 저장되는 건 `_map_persona` 를 거친 dict 다.
+FAKE_PERSONAS = [
+    {"display_name": "주민", "stakeholder_type": "인근 거주자"},
+    {"display_name": "상인", "stakeholder_type": "상가"},
+]
 
 
 # 🔴 `basis` 는 **필수 인자**다. 기본값을 두면 빠뜨렸을 때 근거 없는 결과가 조용히

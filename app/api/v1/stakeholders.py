@@ -183,23 +183,39 @@ class DynamicDiscussionRequest(BaseModel):
 def _map_persona(idx: int, p: Dict[str, Any]) -> Dict[str, Any]:
     """`/generate` 응답 → 그래프의 `PersonaConfig`.
 
-    🔴 두 벌의 키를 다 받는다. `/generate` 는 `display_name`·`stakeholder_type`·
-       `relationship_to_topic` 을 주는데 여기는 `name`·`role`·`description` 만 읽고
-       있었다 → **응답을 그대로 넘기면** 예외 없이 통과하고 페르소나가 전부
-       `"페르소나 0" / "unknown" / "관계 없음"` 이 됐다. 안 터지고 값만 틀린다.
-       프런트가 손으로 이름을 갈아 끼워 우회하게 두면 그 변환이 화면마다 생긴다.
+    어휘는 `/generate` 가 내는 것과 **같다** — `display_name`·`stakeholder_type`·
+    `relationship_to_topic`. 두 스키마
+    (`schemas/dynamic_stakeholder.py:9` = 실경로 · `schemas/stakeholder.py:26`)가
+    이 셋에서는 이미 일치하므로 고를 것이 없었다.
+
+    🔴 예전엔 여기가 `name`·`role`·`description` **만** 읽었다(어느 스키마에도 없는
+       사설 어휘였다) → `/generate` 응답을 그대로 넘기면 예외 없이 통과하고 페르소나가
+       전부 `"페르소나 0" / "unknown" / "관계 없음"` 이 됐다. 안 터지고 값만 틀린다.
+       2026-08-11 에 두 벌을 다 받는 별칭을 두고, 프런트 배포(`652aa99`) 확인 뒤
+       **별칭을 뺐다.** 별칭 제거를 프런트 배포와 같은 날 하지 않는다 —
+       그 사이 요청이 갈 곳을 잃는다.
+
+    🔴 `importance_grade` 를 **`"C"` 로 채우지 않는다.** 채우면 「서버가 등급을 못 냈다」와
+       「진짜 C등급」이 구분되지 않는다(프런트도 `|| 'C'` 로 한 겹 더 있었고 같은 날
+       `'미상'` 으로 바꿨다). `None` 을 넘기지 **못하는** 이유는 하류
+       `PersonaConfig.importance_grade` 가 `str` 이라서다(`schemas/persona.py:21`,
+       기본값이 또 `"C"` 다) — 거기까지 고치면 `persona_system.j2` 가 프롬프트에
+       `None` 을 찍는다. 그래서 등급이 아닌 값 **`"미상"`** 을 쓴다. A/B/C 중 하나가
+       아니므로 등급으로 오독되지 않고, 프롬프트에도 그대로 읽힌다(원칙 4).
     """
-    name = p.get("display_name") or p.get("name")
-    role = p.get("stakeholder_type") or p.get("role")
-    rel = p.get("relationship_to_topic") or p.get("description")
+    _GRADE_UNKNOWN = "미상"
+    name = p.get("display_name")
+    role = p.get("stakeholder_type")
+    rel = p.get("relationship_to_topic")
     if not name or not role:
         # 여기서 기본값을 넣으면 "이름 없는 페르소나"가 조용히 토론에 들어간다.
         raise HTTPException(
             status_code=400,
             detail=(
                 f"personas[{idx}] 에 이름/유형이 없다. "
-                "`/stakeholders/generate` 응답을 그대로 넘기거나 "
-                "(display_name|name)·(stakeholder_type|role) 을 채울 것. "
+                "`/stakeholders/generate` 응답을 **개명 없이 그대로** 넘길 것 "
+                "(display_name·stakeholder_type). "
+                "name·role·description 별칭은 2026-08-11 에 제거됐다. "
                 f"받은 키: {sorted(p.keys())}"
             ),
         )
@@ -208,9 +224,9 @@ def _map_persona(idx: int, p: Dict[str, Any]) -> Dict[str, Any]:
         "display_name": name,
         "stakeholder_type": role,
         "relationship_to_topic": rel or "관계 없음",
-        "importance_grade": p.get("importance_grade", "C"),
+        "importance_grade": p.get("importance_grade") or _GRADE_UNKNOWN,
         "initial_position": "conditional_support",
-        "interests": p.get("keywords") or p.get("interests") or [],
+        "interests": p.get("keywords") or [],
     }
 
 

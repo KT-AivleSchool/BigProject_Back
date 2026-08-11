@@ -41,6 +41,10 @@ from app.services.candidate_context import (  # noqa: F401
     site_jibun,
 )
 from app.db.session import AsyncSessionLocal
+
+# `/hearings` 404 의 사유를 가르는 데만 쓴다 — 「지금 DB 에 있나」(위 모델)와
+# 「그때 넣었다는 기록이 있나」(러너의 status.json)는 다른 질문이다.
+from app.services import pipeline_runner
 from app.utils.redis_pubsub import RedisPubSubManager
 from app.core.security_limiter import rate_limiter
 from app.core.sim_ai.scenario import scenario_code
@@ -700,6 +704,93 @@ async def list_booth_candidates(
     }
 
 
+async def _missing_run_detail(run_id: str, domain: str | None) -> dict:
+    """후보점이 0행일 때 **왜 없는지**를 객체로 만든다 (프런트 회신 2026-08-11).
+
+    🔴 「적재된 적 없다」와 「적재됐는데 지금 없다」는 다른 사실인데 예전엔 둘 다
+       같은 404 문자열이었다 → 화면에는 「서버에 기록이 없다」로 보이는데 실제로는
+       「있었는데 덮어써졌다」였다(원칙 4). 실제로 밟았다: `r_20260810_002`·`006` 은
+       `status.json` 에 `loaded.booth_candidates = 20` 이 있는데 DB 엔 0행이다 —
+       E2E 테스트 도메인을 손으로 지우면서 `ON DELETE CASCADE` 로 딸려 나갔다.
+
+    답을 **기록에 되쓰지 않고 요청 시점에 두 기록을 대조해서** 만든다:
+      ① 지금 DB 에 있는 것   `booth_candidates`
+      ② 그때 넣었다는 기록   `runs/<run_id>/status.json` 의 `loaded`
+    둘 다 참이고, 사유는 그 **차이**다. 어느 쪽도 고쳐 쓰지 않는다.
+
+    `detail` 은 문자열이 아니라 객체다(프런트 `client.ts:readDetail()` 이 객체를
+    처리한다). 🔴 **`message` 는 어느 갈래에서도 반드시 채운다** — 프런트는 모르는
+    `code` 를 만나면 분기하지 않고 `message` 를 그대로 띄운다. 비면 화면에 코드값만
+    뜬다. 그래서 코드 집합이 늘어도 프런트 배포를 기다릴 필요가 없다.
+    """
+    rec = await asyncio.to_thread(pipeline_runner.loaded_record, run_id)
+    loaded = rec["loaded"] if isinstance(rec.get("loaded"), dict) else None
+    where = f"run_id={run_id!r}" + (f" domain={domain!r}" if domain else "")
+
+    if rec["state"] == "unknown_run":
+        code = "UNKNOWN_RUN"
+        msg = (
+            f"{where} 의 후보점이 없다. runs/{run_id} 폴더 자체가 없다 — "
+            "run_id 가 틀렸거나 이 서버에서 실행한 run 이 아니다."
+        )
+    elif rec["state"] == "status_unreadable":
+        # 「없다」가 아니라 「물을 수 없다」다. 같은 코드로 접으면 화면이 없는 말을 한다.
+        code = "STATUS_UNREADABLE"
+        msg = (
+            f"{where} 의 후보점이 없다. runs/{run_id} 폴더는 있는데 status.json 을 "
+            f"읽지 못해 적재 이력을 확인할 수 없다 ({rec['reason']}). "
+            "「적재된 적 없다」는 뜻이 **아니다**."
+        )
+    elif loaded and (loaded.get("booth_candidates") or 0) > 0:
+        code = "LOADED_BUT_MISSING"
+        msg = (
+            f"{where} 는 booth_candidates {loaded['booth_candidates']}행을 "
+            "적재했다고 기록돼 있으나 지금 DB 에 없다. 적재 후 삭제되거나 "
+            "덮어써졌다(같은 (domain, run_id) 재적재 · 수동 삭제 · DB 재생성). "
+            "그 run 의 공청회·발화도 ON DELETE CASCADE 로 함께 지워졌다 — "
+            "후보점은 topN.geojson 에서 다시 만들 수 있지만 토론은 재구성되지 않는다."
+        )
+    else:
+        code = "NEVER_LOADED"
+        msg = (
+            f"{where} 의 후보점이 없고, 적재 기록도 없다. "
+            "적재 칸이 없는 모드(fixture·hitl)이거나, full 이어도 적재 단계 전에 "
+            "멈춘 run 이다. status.json 의 steps 에서 '적재-후보' 칸을 확인할 것."
+        )
+
+    detail = {
+        "code": code,
+        "message": msg,
+        "run_id": run_id,
+        "domain": domain,
+        "loaded": rec["loaded"],
+        "current": {"booth_candidates": 0},
+    }
+
+    # domain 을 걸어서 0행이면 **run 이 아니라 domain 이 틀렸을 수** 있다.
+    # 그때 위 갈래는 전부 거짓말이 된다 — 행은 있는데 "없다"고 말하게 된다.
+    if domain is not None:
+        n_all = await _count_parcels(run_id)
+        if n_all > 0:
+            detail["current"]["booth_candidates_any_domain"] = n_all
+            detail["code"] = "DOMAIN_MISMATCH"
+            detail["message"] = (
+                f"run_id={run_id!r} 에는 후보점 {n_all}행이 있으나 "
+                f"domain={domain!r} 인 것은 없다. domain 을 빼고 다시 묻거나 "
+                "status.json 의 domain 을 확인할 것."
+            )
+    return detail
+
+
+async def _count_parcels(run_id: str) -> int:
+    """`_missing_run_detail` 전용. 같은 세션을 다시 쓰지 않고 새로 연다 —
+    호출 지점이 `raise HTTPException` 인자 안이라 요청 세션의 수명이 애매하다."""
+    async with AsyncSessionLocal() as s:
+        return await s.scalar(
+            select(func.count(Parcel.id)).where(Parcel.run_id == run_id)
+        ) or 0
+
+
 @router.get("/hearings")
 async def list_hearings(
     run_id: str,
@@ -719,6 +810,13 @@ async def list_hearings(
     - 정렬은 후보 `rank` 오름차순, 같은 후보 안에서는 `simulation_id` 오름차순.
     - 후보점은 있는데 토론이 없으면 **빈 배열 + 200** 이다(참인 진술). 후보점 자체가
       없으면 404 — 둘은 다른 상태다.
+      🔴 404 의 `detail` 은 **문자열이 아니라 객체**다(2026-08-11, 프런트 합의).
+      `{code, message, run_id, domain, loaded, current}` 이고 `code` 는 다섯이다:
+      `UNKNOWN_RUN` · `STATUS_UNREADABLE` · `LOADED_BUT_MISSING` · `NEVER_LOADED` ·
+      `DOMAIN_MISMATCH`. 사유를 어떻게 가르는지는 `_missing_run_detail` 참조.
+      **`message` 는 항상 채운다** — 프런트는 모르는 `code` 를 만나면 분기하지 않고
+      `message` 를 그대로 띄운다. 코드를 늘려도 프런트 배포를 안 기다리는 대신,
+      비면 화면에 코드값만 뜬다.
 
     🔴 **`result_url` 이 항상 채워지지는 않는다.** `/results/{parcel_id}` 는 그 필지의
        **가장 최근 1건**만 돌려주므로(`ORDER BY id DESC`), 같은 필지를 여러 번 토론했다면
@@ -741,15 +839,7 @@ async def list_hearings(
     if domain is not None:
         cand_stmt = cand_stmt.where(Parcel.domain == domain)
     if await db.scalar(cand_stmt) == 0:
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                f"run_id={run_id!r}"
-                + (f" domain={domain!r}" if domain else "")
-                + " 의 후보점이 booth_candidates 에 없다. "
-                "적재되지 않은 run 이거나 run_id 가 틀렸다."
-            ),
-        )
+        raise HTTPException(status_code=404, detail=await _missing_run_detail(run_id, domain))
 
     hearings: list[dict] = []
 

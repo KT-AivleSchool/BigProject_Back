@@ -162,9 +162,12 @@ python app\tools\check_hitl_gate.py <도메인>         :: A2 — HITL 게이트
 python app\tools\check_hitl_e2e.py <도메인>          :: A2 — fixture ↔ hitl 완주 대조 (🔴 LLM 1회)
 python app\tools\check_upload_api.py                 :: 업로드 API 25항목 (in-process TestClient)
                                                      :: [--no-ingest] 벡터 적재·검색 제외 → 16항목·LLM 0회
-python app\tools\check_hearings.py                   :: 화면5 — /simulations/hearings 15항목
+python app\tools\check_hearings.py                   :: 화면5 — /simulations/hearings 60항목
                                                      :: (실 DB 읽기. 행 수가 아니라 관계를 본다)
-python app\tools\check_stakeholders.py               :: 화면5 B — /stakeholders/* 어댑터 59항목
+                                                     :: 🔴 404 `detail` 의 **다섯 갈래**를 같이 본다.
+                                                     ::    STATUS_UNREADABLE 은 깨진 status.json 을
+                                                     ::    실제로 만들어 보고 지운다
+python app\tools\check_stakeholders.py               :: 화면5 B — /stakeholders/* 어댑터 60항목
                                                      :: (🔴 거절 경로 + SSE 정규화 + 근거 스냅샷. 정상 경로는 5분 토론이다)
 python app\tools\check_cascade_report.py             :: 적재기 [CASCADED] → status.loaded.cascaded 13항목
                                                      :: (DB·포트 안 씀. 가짜 자식이 그 줄만 찍는다)
@@ -690,9 +693,17 @@ D:\obsidian_claude\10_OmniSite\
           🔴 **B 는 프런트가 `/generate` 응답을 그대로 넘기면 값이 전부 틀렸다.**
           `/generate` 는 `display_name`·`stakeholder_type`·`relationship_to_topic` 을
           주는데 그래프 어댑터는 `name`·`role`·`description` 만 읽어 **예외 없이 통과**하고
-          페르소나가 전부 `"페르소나 0" / "unknown" / "관계 없음"` 이 됐다. 이제 두 벌의
-          키를 다 받고, 둘 다 없으면 **400**(기본값을 넣으면 이름 없는 페르소나가 조용히
-          토론에 들어간다). 검증·매핑은 SSE 제너레이터 **밖**에서 한다 — 안에서 하면
+          페르소나가 전부 `"페르소나 0" / "unknown" / "관계 없음"` 이 됐다. 이제 정본
+          어휘만 받고, 없으면 **400**(기본값을 넣으면 이름 없는 페르소나가 조용히
+          토론에 들어간다). ✅ **별칭은 2026-08-11 에 제거했다**(프런트 배포 `652aa99`
+          확인 후 · 3단계 중 ③). 옛 키(`name`·`role`·`description`)를 한동안 같이 받은
+          것은 **배포 순서를 맞추기 위한 다리**였지 계약이 아니었다 — 다리를 안 걷으면
+          어느 어휘가 정본인지 영원히 안 정해진다. 대조기도 같이 뒤집었다
+          (`check_stakeholders.py` — 「옛 키는 이제 거절」. 안 뒤집으면 대조기가 없어진
+          동작을 계속 요구한다). ⚠ `importance_grade` 가 비면 **`"미상"`** 이다 — `"C"` 로
+          채우면 없는 등급을 지어내고(원칙 4), `None` 은 하류 `PersonaConfig.importance_grade`
+          가 `str` 이라 못 넘긴다(`Optional` 로 바꾸면 프롬프트에 `None` 이 찍힌다).
+          검증·매핑은 SSE 제너레이터 **밖**에서 한다 — 안에서 하면
           잘못된 요청도 `200 + data: {"error": …}` 로 나가 프런트가 "토론 시작"으로 읽는다.
           `/generate` 가 파싱 실패로 `[]` 를 돌려주던 것도 **502** 로 드러낸다
           (`stakeholder_generator.py:66` 이 예외를 print 로 삼킨다 — 그건 B 담당자 몫이라
@@ -729,6 +740,20 @@ D:\obsidian_claude\10_OmniSite\
           돌려주므로, 최신이 아닌 건은 `result_url` 을 **`null`** 로 주고
           `is_latest_for_parcel` 을 같이 준다 — URL 을 채우면 **다른 토론**을 가리킨다.
           run 자체가 적재 안 됐으면 404, 적재됐는데 토론이 없으면 **200 + 빈 배열**이다.
+          🔴 **그 404 의 `detail` 은 문자열이 아니라 객체다**(2026-08-11, 프런트 합의 ·
+          계약 §3-1). 같은 404 라도 사유가 다섯이고 접으면 화면이 없는 말을 한다:
+          `UNKNOWN_RUN`(폴더 없음) · **`STATUS_UNREADABLE`**(폴더는 있는데 `status.json`
+          을 못 읽음 — 「없다」가 아니라 **「물을 수 없다」**다) · `LOADED_BUT_MISSING`
+          (`loaded` 엔 20행인데 DB 0행 = 적재 후 지워졌다) · `NEVER_LOADED` ·
+          `DOMAIN_MISMATCH`(run 엔 행이 있는데 그 domain 만 없다).
+          **`message` 는 전 갈래에서 항상 채운다** — 프런트는 모르는 `code` 를 만나면
+          분기하지 않고 `message` 를 그대로 띄운다(코드를 늘려도 프런트 배포를 안 기다린다).
+          🔴 사유는 **묻는 시점에 두 기록을 대조해서** 만든다(`_missing_run_detail`):
+          `pipeline_runner.loaded_record()`(그때 넣었다는 기록)와 DB 조회(지금 있다).
+          `status.json` 에 `invalidated_by` 같은 표시를 **되쓰지 않는다** — ⓐ 「20행을
+          적재했다」는 그 뒤에 무슨 일이 있어도 여전히 참이고(원칙 4), ⓑ 그런 표시는
+          적재기만 쓸 수 있어 **손수 DELETE·정리 도구·DB 재생성은 기록될 자리가 없다**
+          (실제 사건이 그것이었다 — 커밋 `99b9121` 이 E2E 도메인 2개를 지웠다).
           화면6 도 둘이다: 기존 **PDF**(`pdf_service.py`, playwright) · 신규 **HWPX**
           (`/report/download/hwpx`).
           ✅ **QR 조용한 실패 제거**(2026-08-10, 사람 지시). `generate_qr_png_bytes` 는
