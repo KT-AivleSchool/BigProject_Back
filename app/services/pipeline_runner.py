@@ -726,6 +726,32 @@ def _run_one(run_id: str, doc: dict, proc: _Proc, log) -> None:
     _refresh_artifacts(doc)
     _write_status(run_id, doc)
 
+    # 🟢 DB & Redis Exporter 트리거
+    try:
+        import asyncio
+        from app.services.pipeline_db_exporter import (
+            export_step1_to_db, export_step2_to_db, export_step3_to_db, export_step4_to_db
+        )
+        def _trigger_exporter():
+            async def _exp():
+                domain = doc.get("domain", "흡연")
+                await export_step1_to_db(run_id, domain)
+                await export_step2_to_db(run_id, domain)
+                await export_step3_to_db(run_id, domain)
+                await export_step4_to_db(run_id, domain)
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(_exp())
+                else:
+                    asyncio.run(_exp())
+            except Exception as exp_err:
+                print(f"[pipeline_runner] DB Exporter 이식 경고: {exp_err}")
+        _trigger_exporter()
+    except Exception as exp_e:
+        print(f"[pipeline_runner] Exporter 로딩 경고: {exp_e}")
+
+
 
 # ══════════════════════════════════════════════════════════════════
 # 8b. HITL 게이트 (계약 7절)
