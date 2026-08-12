@@ -13,9 +13,12 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 
-from app.api.deps import get_current_user_optional
+from app.api.deps import get_current_user_optional, get_current_user, get_db
 from app.db.base import User
+from app.db.models.run_record import RunRecord
 from app.services import pipeline_runner as runner
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 router = APIRouter()
 
@@ -82,6 +85,34 @@ def create_run(
     except runner.RunConflict as e:
         raise HTTPException(status_code=409, detail=str(e))
     return {"run_id": run_id}
+
+
+@router.get("/runs")
+async def list_runs(
+    mine: bool = True,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """내 실행 내역 조회"""
+    stmt = select(RunRecord).where(
+        (RunRecord.user_id == current_user.id) | (RunRecord.user_id.is_(None))
+    )
+    result = await db.execute(stmt)
+    records = result.scalars().all()
+    
+    runs = []
+    for r in records:
+        runs.append({
+            "run_id": r.run_id,
+            "domain": r.domain,
+            "mode": r.mode,
+            "status": r.last_known_status,
+            "started_at": r.started_at.isoformat() if r.started_at else None,
+            "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+            "is_mine": r.user_id == current_user.id
+        })
+    
+    return {"runs": runs}
 
 
 @router.get("/runs/{run_id}")
