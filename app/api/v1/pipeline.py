@@ -12,9 +12,12 @@
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
+from sqlalchemy import func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user_optional
-from app.db.base import User
+from app.api.deps import get_current_user, get_current_user_optional
+from app.db.base import RunRecord, User
+from app.db.session import get_db
 from app.services import pipeline_runner as runner
 
 router = APIRouter()
@@ -82,6 +85,73 @@ def create_run(
     except runner.RunConflict as e:
         raise HTTPException(status_code=409, detail=str(e))
     return {"run_id": run_id}
+
+
+@router.get("/runs")
+async def list_runs(
+    mine: str = Query(..., description="지금은 `true` 하나만 정의돼 있다"),
+    limit: int = Query(100, ge=1, le=500),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """마이페이지 run 이력 — **내 것 + 익명**을 최신순으로(계약 3-3).
+
+    🔴 **`mine=true` 인데 익명 행도 돌려준다.** 이름과 내용이 어긋나 보이지만 의도다 —
+       프런트가 한 번 불러 `is_mine` 으로 「내 분석 내역」/「로그인 없이 실행된 분석
+       내역」 두 구획으로 가른다. `WHERE user_id = :me` 로 거르면 **아래 구획이 영원히
+       비는데 에러가 안 난다**(원칙 4). 이름이 아니라 계약 §3-3 의 문장을 따른다.
+       ⚠ **남의 행은 안 준다.** 「내 것 + 익명」이지 「전부」가 아니다 — 남의 run 이
+       섞이면 프런트에는 갈 구획이 없어 「로그인 없이 실행된」 쪽에 얹히고, 그건
+       화면이 사실이 아닌 말을 하는 것이다.
+
+    🔴 **인증은 필수다**(`POST /runs` 는 선택). 「내 것」이 뜻을 가지려면 내가 누구인지
+       알아야 한다. 토큰이 없거나 죽었으면 401 — 익명으로 떨어뜨리면 모든 행이
+       `is_mine: false` 가 되어 **로그인했는데 내 기록이 없는 화면**이 된다.
+
+    🔴 `status` 는 `run_records.last_known_status` **그대로**다. 값이 `queued`·
+       `succeeded`·`failed` 셋뿐인 것 자체가 정보다 — `running`·`awaiting_hitl` 을
+       여기서 지어내면 정본(`status.json`)이 둘이 된다(계약 3-3).
+
+    시각은 `.isoformat()` 그대로 내보낸다. `astimezone()` 같은 걸 태우지 않는다 —
+    컬럼이 TIMESTAMPTZ 라 이미 tz 가 붙어 있고, 한 번 더 돌리면 값이 아니라
+    **표기**만 바뀌어 읽는 쪽이 시차로 오해한다.
+
+    상한: 기본 100건(`?limit=`, 최대 500). 프런트에 페이지네이션이 없어 무한히 쌓이는
+    것을 그대로 부으면 화면이 죽는다. 🔴 자른 사실은 **응답에 적는다**(`total`·
+    `truncated`) — 안 적으면 사용자는 옛 run 이 **지워진 줄 안다**(원칙 4).
+    """
+    if mine != "true":
+        # 조용히 같은 응답을 주면 나중에 「거르는 줄 알았다」가 된다(원칙 1).
+        raise HTTPException(
+            status_code=400,
+            detail=f"mine 은 'true' 만 정의돼 있습니다: {mine!r}",
+        )
+
+    scope = or_(RunRecord.user_id == user.id, RunRecord.user_id.is_(None))
+    total = (await db.execute(select(func.count()).select_from(RunRecord).where(scope))).scalar_one()
+    rows = (
+        await db.execute(
+            select(RunRecord).where(scope).order_by(RunRecord.started_at.desc()).limit(limit)
+        )
+    ).scalars().all()
+
+    return {
+        "runs": [
+            {
+                "run_id": r.run_id,
+                "domain": r.domain,
+                "mode": r.mode,
+                "status": r.last_known_status,
+                "started_at": r.started_at.isoformat() if r.started_at else None,
+                "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+                "is_mine": r.user_id == user.id,
+            }
+            for r in rows
+        ],
+        "total": total,
+        "limit": limit,
+        "truncated": total > len(rows),
+    }
 
 
 @router.get("/runs/{run_id}")
