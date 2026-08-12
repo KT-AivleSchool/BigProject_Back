@@ -1065,11 +1065,6 @@ async def stream_ai_discussion(
     headers = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Credentials": "true",
-        # 🔴 nginx 는 프록시 응답을 기본으로 **버퍼링**한다. 그러면 이벤트가 모였다가
-        #    토론이 끝날 때 한꺼번에 나가서, 프런트에는 「몇 분 동안 아무것도 안 오다가
-        #    갑자기 전부」로 보인다 — SSE 가 SSE 가 아니게 된다. 로컬 직결에서는
-        #    증상이 안 나므로 **프록시 뒤에 놓고 나서야** 드러난다.
-        "X-Accel-Buffering": "no",
     }
     return EventSourceResponse(event_generator(), headers=headers)
 
