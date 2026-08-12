@@ -67,6 +67,11 @@ jobs:
             # 3. Build and restart containers (runs detached)
             # 이전 컨테이너가 남아있으면 구버전 docker-compose에서 ContainerConfig 에러가 발생하므로 먼저 down 시킵니다.
             docker-compose down || true
+            
+            # 구버전 docker-compose의 이미지 태그 충돌(AlreadyExists) 버그를 방지하기 위해 기존 이미지를 삭제합니다.
+            docker rmi bigproject_back_api:latest || true
+            docker rmi bigproject_back_db:latest || true
+            
             docker-compose up -d --build
             
             # 4. DB 스키마 동기화 (run_records 등 신규 추가된 테이블 자동 생성)
