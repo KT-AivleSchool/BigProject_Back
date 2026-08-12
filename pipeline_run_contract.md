@@ -584,8 +584,8 @@ Authorization: Bearer <access>          ← **필수**
 {
   "runs": [
     {"run_id": "r_20260812_007", "domain": "흡연", "mode": "full",
-     "status": "succeeded", "started_at": "2026-08-12T01:12:03+09:00",
-     "finished_at": "2026-08-12T01:13:20+09:00", "is_mine": true}
+     "status": "succeeded", "started_at": "2026-08-11T16:12:03+00:00",
+     "finished_at": "2026-08-11T16:13:20+00:00", "is_mine": true}
   ],
   "total": 21, "limit": 100, "truncated": false
 }
@@ -607,6 +607,17 @@ Authorization: Bearer <access>          ← **필수**
 - 시각은 **`.isoformat()` 그대로**. `astimezone()` 을 태우지 않는다 — 컬럼이
   TIMESTAMPTZ 라 이미 tz 가 붙어 있고, 한 번 더 돌리면 값이 아니라 **표기**만 바뀌어
   읽는 쪽이 시차로 오해한다.
+  🔴 **그 tz 는 `+09:00` 이 아니라 `+00:00` 이다**(2026-08-12 실서버 실측. 위 예시도
+  그때까지 `+09:00` 으로 적혀 있었다 — 고쳤다). 러너는 **naive 로컬**을 넣고
+  `run_records._ts()` 가 오프셋을 붙여 저장하므로 **값(순간)은 옳다.** 다만 DB 세션
+  TZ 가 `Etc/UTC` 라 asyncpg 가 UTC 로 돌려주고 `.isoformat()` 이 그대로 나간다:
+  19:59:32(KST)에 시작한 run 은 **`10:59:32+00:00`** 으로 실린다.
+  🔴 **그래서 읽는 쪽이 오프셋을 반드시 해석해야 한다.** 프런트 회신에 적힌
+  `datetime()` 이 `replace("T"," ").slice(0,19)` 라면 오프셋이 잘려 나가고 화면엔
+  **UTC 벽시계**가 뜬다 — 9시간 이른 시각인데 **에러가 안 난다**(원칙 4).
+  ⚠ 서버에서 `+09:00` 으로 바꿔 내보내지 **않는다**: 그러면 표기가 **서버 TZ 에**
+  묶이고, 「값은 참인데 표기를 손봐 준다」가 되어 다음에 서버를 옮기면 조용히 갈린다.
+  고칠 자리는 표시하는 쪽이다(`new Date(s)` 로 파싱).
 - 🔴 **상한이 있고, 자른 사실을 응답에 적는다**(우리가 정한 갈림길). 기본 100건 ·
   `?limit=`(1~500). 프런트에 페이지네이션이 없어 무한히 쌓이는 것을 그대로 부으면
   화면이 죽는다. 그래서 `total`(조건에 맞는 전체 수) · `limit` · `truncated` 를 같이
@@ -630,8 +641,22 @@ Authorization: Bearer <access>          ← **필수**
   거기가 빠져도 200 이 나오고 화면은 조용히 반만 찬다. 인증은 **목으로 갈아끼우지
   않는다**(401 갈래 4개가 이 엔드포인트의 절반이다). 행은 정본 함수
   `run_records.record_run_start` 로 넣는다 — 손 INSERT 하면 시각 경로를 건너뛴다.
-  ⚠ in-process(ASGITransport) 검증이라 **살아 있는 uvicorn 에는 재시작 전까지 안
-  먹는다**(CLAUDE.md 함정표 「27/27 은 배포됐다가 아니다」).
+  ⚠ in-process(ASGITransport) 검증이라 그 48/48 만으로는 **살아 있는 uvicorn 이
+  새 코드인지 알 수 없다**(CLAUDE.md 함정표 「27/27 은 배포됐다가 아니다」).
+- ✅ **2026-08-12 재시작 후 살아 있는 서버로 확인**(사람 승인 ·
+  `python app\tools\check_mypage_runs_live.py` **27/27**).
+  근거는 대조기가 아니라 **프로세스 기동 시각 ↔ 파일 mtime** 이다: 옛 PID 3896 기동
+  **18:16:41** ↔ `pipeline.py` mtime **19:35:16**(`--reload` 없음) → 그 프로세스는
+  이 엔드포인트를 **모르는 코드**였다. `Stop-Process -Force` 후 새 PID **45960** 기동
+  **19:55:27** > mtime.
+  ⚠ 재시작 **전에** `runs/*/status.json` 을 **직접 읽어** 활성 run 을 셌다
+  (32폴더 · 활성 **0**) — 러너 함수를 부르면 그게 남의 run 을 `failed` 로 닫는다.
+  실측된 것 — 401 **네 갈래**(헤더 없음 · 만료 · 위조 · refresh를access자리) ·
+  `mine=false` **400** · 유효 토큰 **200**(키 7개 · `total` 20 · **익명 19행이 응답에
+  들어 있다** · 내 행 `is_mine:true` · `started_at` 내림차순) ·
+  `?limit=1` → 1행 + `truncated:true` 인데 **`total` 은 20 그대로** ·
+  `?limit=501` **422** · `mine` 생략 **422**.
+  넣은 계정·행은 지웠고 `users` 2→2 · `run_records` 20→20 으로 **전후 대조**했다.
 
 ---
 
