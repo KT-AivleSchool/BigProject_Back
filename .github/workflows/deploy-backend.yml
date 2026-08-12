@@ -40,7 +40,18 @@ jobs:
             # 브랜치가 없으면 만들고, 있으면 해당 리모트 브랜치로 강제 초기화
             git checkout -B ${{ github.ref_name }} origin/${{ github.ref_name }}
             
-            # 2. Add Swap Memory to prevent OOM (Out Of Memory) during docker build
+            # 2. Add SECRET_KEY to .env if missing (Fix for 502 Bad Gateway)
+            if [ -f .env ]; then
+              if ! grep -q "^SECRET_KEY=" .env; then
+                echo "SECRET_KEY=$(openssl rand -hex 32)" >> .env
+                echo "🔑 Auto-generated SECRET_KEY in .env"
+              fi
+            else
+              echo "SECRET_KEY=$(openssl rand -hex 32)" > .env
+              echo "🔑 Created .env with auto-generated SECRET_KEY"
+            fi
+            
+            # 3. Add Swap Memory to prevent OOM (Out Of Memory) during docker build
             if [ ! -f /swapfile ]; then
               echo "Creating 2GB swap file to prevent OOM..."
               sudo fallocate -l 2G /swapfile
