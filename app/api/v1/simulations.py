@@ -1065,6 +1065,7 @@ async def stream_ai_discussion(
     headers = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Credentials": "true",
+        "X-Accel-Buffering": "no",
     }
     return EventSourceResponse(event_generator(), headers=headers)
 
