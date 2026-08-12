@@ -1,0 +1,34 @@
+.git
+.github
+.env
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Test directories
+tests/
+.pytest_cache/
+
+# Large seed/data files that should be mounted, not baked in
+omnisite_seed.sql.gz
+datasets/
+runs/
+search_cache/
+
+# Docs and scripts not needed at runtime
+CLAUDE.md
+MULTI_STAKEHOLDER_ARCHITECTURE.md
+RAG_업그레이드_잔여작업_가이드.md
+README.md
+docs/
+scripts/
+dummy/
+메모장/

@@ -68,6 +68,28 @@ services:
       - omnisite_redis_data:/data
     restart: always
 
+  api:
+    container_name: omnisite-fastapi
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      # 로컬 루프백에만 바인딩 (보안 강화)
+      - "127.0.0.1:8000:8000"
+    environment:
+      # api 컨테이너는 도커 네트워크 내에서 'db'와 'redis' 호스트명으로 접근
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/omnisite
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+    env_file:
+      - .env
+    volumes:
+      - ./datasets:/code/datasets
+      - ./runs:/code/runs
+    depends_on:
+      - db
+      - redis
+    restart: always
+
 volumes:
   omnisite_postgres_data:
     driver: local
