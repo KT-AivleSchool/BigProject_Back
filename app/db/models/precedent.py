@@ -34,7 +34,7 @@ class VerifiedPrecedent(Base):
     # 예측을 낸 시뮬레이션. 시뮬레이션이 지워져도 사례 자체는 남긴다(SET NULL).
     conflict_simulation_id = Column(
         Integer,
-        ForeignKey("conflict_simulations.id", ondelete="SET NULL"),
+        ForeignKey("hearing_result_a.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )

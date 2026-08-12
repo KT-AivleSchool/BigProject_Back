@@ -7,7 +7,7 @@
 
 동작:
   - `Base.metadata.create_all(checkfirst=True)` — **이미 있는 테이블은 건드리지 않는다.**
-    즉 컬럼이 다른 기존 테이블(`conflict_simulations` 등)을 고치지 않는다. 그건 별건이다.
+    즉 컬럼이 다른 기존 테이블(`hearing_result_a` 등)을 고치지 않는다. 그건 별건이다.
   - 실행 전에 무엇을 만들지 **먼저 출력**한다. `--yes` 없이는 만들지 않는다.
 
 사용:

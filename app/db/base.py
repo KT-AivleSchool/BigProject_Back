@@ -3,7 +3,7 @@
 
 from app.db.session import Base
 from app.db.models.user import User
-from app.db.models.simulation import Parcel, ConflictSimulation, DebateLog
+from app.db.models.simulation import Parcel, HearingResultA, DebateLog
 from app.db.models.precedent import VerifiedPrecedent
 from app.db.models.audit import AuditRule
 
@@ -22,7 +22,7 @@ __all__ = [
     "User",
     "RunRecord",
     "Parcel",
-    "ConflictSimulation",
+    "HearingResultA",
     "DebateLog",
     "VerifiedPrecedent",
     "AuditRule",

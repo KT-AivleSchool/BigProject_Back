@@ -25,14 +25,14 @@
 --    달랐다** — 같은 이름의 다른 스키마가 두 파일에 있었다.
 --
 -- ② **정본이 ORM 인 5개** — `users` · `rag_feedback_log` · `audit_rules` ·
---    `conflict_simulations` · `verified_precedents`.
+--    `hearing_result_a` · `verified_precedents`.
 --    정본은 `app/db/models/`, 생성은 `python scripts/create_missing_tables.py --yes`.
 --
 --    앞의 둘은 실 DB·ORM 과 **컬럼이 정확히 같았다** — 같아도 지운다.
 --    같은 스키마를 두 곳에서 정의하면 언젠가 한쪽만 바뀐다. 실제로 뒤의 셋이 그랬다:
 --      · `audit_rules`          여기 **7컬럼** ↔ 실 DB·ORM **20컬럼**
 --        (`domain`·`run_id`·`role_index`·`target_facility`·`confirmed`… 전부 없었다)
---      · `conflict_simulations` 여기 **9컬럼** ↔ 실 DB **12컬럼**. 필지 참조가
+--      · `hearing_result_a` 여기 **9컬럼** ↔ 실 DB **12컬럼**. 필지 참조가
 --        `cadastral_land_id` 인데 실제로 쓰는 건 `parcel_id`(FK→`booth_candidates.id`)다
 --        (경위: CLAUDE.md 「대조 대상이 둘인 줄 알았는데 셋」 · 처치: `schema_step5.sql`)
 --      · `verified_precedents`  여기 **6컬럼** ↔ 실 DB **9컬럼**

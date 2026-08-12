@@ -172,7 +172,7 @@ COMMENT ON COLUMN candidate_lands.width_m IS
 --
 -- 🔴 2026-08-11 — 여기 있던 `DROP TABLE IF EXISTS booth_candidates CASCADE;` 를 지웠다.
 --    `schema_cleaned_data.sql` 의 `candidate_lands` DROP 과 **같은 종류의 줄**이다:
---    지금 이 테이블엔 80행이 들어 있고 `conflict_simulations.parcel_id` 가
+--    지금 이 테이블엔 80행이 들어 있고 `hearing_result_a.parcel_id` 가
 --    `ON DELETE CASCADE` 로 매달려 있으며 `debate_logs` 가 다시 그걸 따른다
 --    → 실측 **공청회 3건 · 발화 42행**이 같이 사라진다. 후보점은 `topN.geojson` 에서
 --    다시 만들어지지만 **LLM 토론은 재구성이 안 된다**(발화는 Redis TTL 600초뿐).

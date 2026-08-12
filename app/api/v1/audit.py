@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.db.session import get_db
 from app.db.models.precedent import VerifiedPrecedent
-from app.db.models.simulation import ConflictSimulation
+from app.db.models.simulation import HearingResultA
 from app.core.audit_ai.parser import pdf_parser
 from app.core.audit_ai.classifier import audit_classifier
 from app.schemas.audit import AuditVerifyResponse, AuditSaveResponse
@@ -41,7 +41,7 @@ async def verify_precedent_document(
 
         # DB에서 원래 에이전트들이 도출했던 3대 예측 시나리오 정보 획득
         sim_result = await db.execute(
-            select(ConflictSimulation).where(ConflictSimulation.id == simulation_id)
+            select(HearingResultA).where(HearingResultA.id == simulation_id)
         )
         sim_data = sim_result.scalar()
 
@@ -51,7 +51,7 @@ async def verify_precedent_document(
         if sim_data is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"conflict_simulations 에 id={simulation_id} 가 없다.",
+                detail=f"hearing_result_a 에 id={simulation_id} 가 없다.",
             )
 
         predicted_scenarios = (sim_data.result_json or {}).get("scenarios") or []

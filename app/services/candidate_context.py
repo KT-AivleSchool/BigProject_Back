@@ -429,7 +429,7 @@ def basis_snapshot(
     실제로 깨진다:
 
       · `load_audit_data.py` 는 같은 `(domain, run_id)` 의 `audit_rules` 를 **교체**한다.
-        `conflict_simulations` 와는 FK 가 없으므로 **토론은 남고 근거만 바뀐다.**
+        `hearing_result_a` 와는 FK 가 없으므로 **토론은 남고 근거만 바뀐다.**
         (`booth_candidates` 쪽은 CASCADE 라 토론도 같이 지워져 이 문제가 안 난다 —
          한쪽만 짝이 맞아 있었다.)
       · 조례 청크는 재업로드 시 `delete_statute_chunks()` 로 지워진다. `doc_id` 만

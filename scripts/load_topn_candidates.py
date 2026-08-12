@@ -184,18 +184,18 @@ def build_rows(doc: dict, domain: str, run_id: str, facility: str) -> list[dict]
 
 
 # 삭제로 **딸려 나가는 것**을 세는 질의. 값은 「지우기 전」 기준이다.
-#   conflict_simulations   ON DELETE CASCADE  → 같이 지워진다  (화면5 **A** 대립 토론)
+#   hearing_result_a   ON DELETE CASCADE  → 같이 지워진다  (화면5 **A** 대립 토론)
 #   debate_logs            ON DELETE CASCADE  → 위를 따라 같이 지워진다
-#   hearing_results_b      ON DELETE CASCADE  → 같이 지워진다  (화면5 **B** 다인 토론)
+#   hearing_result_b      ON DELETE CASCADE  → 같이 지워진다  (화면5 **B** 다인 토론)
 #   verified_precedents    ON DELETE SET NULL → 행은 남고 **연결만 끊긴다**
 #                                               (지워지지 않아 더 안 보인다)
 #
-# 🔴 B 를 빠뜨리면 안 된다. `hearing_results_b` 도 `booth_candidates.id` 를 CASCADE 로
+# 🔴 B 를 빠뜨리면 안 된다. `hearing_result_b` 도 `booth_candidates.id` 를 CASCADE 로
 #    참조한다(`schema_step5_b.sql`). 안 세면 5분짜리 다인 토론이 **소리 없이** 사라지고,
 #    `cascade_loss()` 가 False 를 돌려 `--force` 없이도 지워진다.
 CASCADE_SQL = """
 WITH cs AS (
-    SELECT cs.id FROM conflict_simulations cs
+    SELECT cs.id FROM hearing_result_a cs
       JOIN booth_candidates bc ON bc.id = cs.parcel_id
      WHERE bc.domain = %(domain)s AND bc.run_id = %(run_id)s
 )
@@ -203,7 +203,7 @@ SELECT (SELECT count(*) FROM cs),
        (SELECT count(*) FROM debate_logs WHERE simulation_id IN (SELECT id FROM cs)),
        (SELECT count(*) FROM verified_precedents
          WHERE conflict_simulation_id IN (SELECT id FROM cs)),
-       (SELECT count(*) FROM hearing_results_b hb
+       (SELECT count(*) FROM hearing_result_b hb
           JOIN booth_candidates bc ON bc.id = hb.parcel_id
          WHERE bc.domain = %(domain)s AND bc.run_id = %(run_id)s)
 """
@@ -213,10 +213,10 @@ def count_cascade(cur, domain: str, run_id: str) -> dict[str, int]:
     cur.execute(CASCADE_SQL, {"domain": domain, "run_id": run_id})
     cs, dl, vp, hb = cur.fetchone()
     return {
-        "conflict_simulations": cs,
+        "hearing_result_a": cs,
         "debate_logs": dl,
         "verified_precedents_unlinked": vp,
-        "hearing_results_b": hb,
+        "hearing_result_b": hb,
     }
 
 
@@ -225,13 +225,13 @@ def cascade_loss(counts: dict[str, int]) -> bool:
 
     후보점 행 자체는 손실이 아니다 — 같은 `topN.geojson` 에서 다시 만들어진다.
     공청회 결과는 다르다: LLM 토론 5분이고 발화는 Redis TTL 600초라 **재구성이 안 된다**.
-    A(`conflict_simulations`)든 B(`hearing_results_b`)든 같다 — 엔진이 둘이라고
+    A(`hearing_result_a`)든 B(`hearing_result_b`)든 같다 — 엔진이 둘이라고
     한쪽만 지키면 안 지킨 것과 같다.
     판례 연결(SET NULL)도 한 번 끊기면 어느 공청회였는지 알 방법이 없다.
     """
     return bool(
-        counts["conflict_simulations"]
-        or counts["hearing_results_b"]
+        counts["hearing_result_a"]
+        or counts["hearing_result_b"]
         or counts["verified_precedents_unlinked"]
     )
 
@@ -246,9 +246,9 @@ def print_cascade(counts: dict[str, int], run_id: str) -> None:
     if cascade_loss(counts):
         print(
             f"⚠ 같은 (domain, run_id) 를 덮어쓴다 — 기존 후보점에 매달린 "
-            f"A 공청회 {counts['conflict_simulations']}건 · "
+            f"A 공청회 {counts['hearing_result_a']}건 · "
             f"발화 {counts['debate_logs']}행 · "
-            f"B 다인토론 {counts['hearing_results_b']}건이 CASCADE 로 함께 지워지고, "
+            f"B 다인토론 {counts['hearing_result_b']}건이 CASCADE 로 함께 지워지고, "
             f"판례 {counts['verified_precedents_unlinked']}행은 연결이 끊긴다(SET NULL)."
         )
     print(
@@ -376,7 +376,7 @@ def main() -> int:
             if cascade_loss(counts) and not args.force:
                 raise SystemExit(
                     f"🔴 (domain={args.domain}, run_id={run_id}) 를 덮어쓰면 "
-                    f"공청회 {counts['conflict_simulations']}건 · "
+                    f"공청회 {counts['hearing_result_a']}건 · "
                     f"발화 {counts['debate_logs']}행이 지워지고 "
                     f"판례 {counts['verified_precedents_unlinked']}행의 연결이 끊긴다. "
                     "LLM 토론은 재구성이 안 된다(발화는 Redis TTL 600초뿐). "

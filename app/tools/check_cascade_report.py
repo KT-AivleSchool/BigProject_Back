@@ -41,8 +41,8 @@ def _keyerror_on(counts) -> bool:
 
 RUN = "r_가짜_cascade"
 LINES = [
-    "[CASCADED] table=booth_candidates run_id={r} conflict_simulations=8 "
-    "debate_logs=112 verified_precedents_unlinked=0 hearing_results_b=2",
+    "[CASCADED] table=booth_candidates run_id={r} hearing_result_a=8 "
+    "debate_logs=112 verified_precedents_unlinked=0 hearing_result_b=2",
     "[LOADED] table=booth_candidates run_id={r} rows=20",
 ]
 
@@ -50,10 +50,10 @@ LINES = [
 # KeyError 다 — 일부러 그렇다. 키가 빠졌는데 `.get(k, 0)` 으로 넘기면 **안 센 것이
 # 0건으로 읽혀** 남의 토론이 --force 없이 지워진다(원칙 1·4).
 ZERO = {
-    "conflict_simulations": 0,
+    "hearing_result_a": 0,
     "debate_logs": 0,
     "verified_precedents_unlinked": 0,
-    "hearing_results_b": 0,
+    "hearing_result_b": 0,
 }
 
 
@@ -72,9 +72,9 @@ R.run_dir(RUN).mkdir(parents=True, exist_ok=True)
 print("--- 1) 같은 run_id 면 읽는다")
 p = drive(RUN)
 chk("loaded 읽음", p.loaded == {"booth_candidates": 20}, str(p.loaded))
-chk("cascaded 4키", p.cascaded == {"conflict_simulations": 8, "debate_logs": 112,
+chk("cascaded 4키", p.cascaded == {"hearing_result_a": 8, "debate_logs": 112,
                                    "verified_precedents_unlinked": 0,
-                                   "hearing_results_b": 2}, str(p.cascaded))
+                                   "hearing_result_b": 2}, str(p.cascaded))
 
 print("--- 2) 다른 run_id 면 안 읽는다 (남의 run 성과를 이 run 에 적지 않는다)")
 try:
@@ -100,12 +100,12 @@ chk("0 이 사라지지 않음", doc["loaded"]["cascaded"]["verified_precedents_
 print("--- 5) --force 판정 (되살릴 수 있는 것은 손실이 아니다)")
 chk("전부 0 이면 통과", not cascade_loss(ZERO))
 chk("A 공청회 있으면 정지", cascade_loss(
-    {**ZERO, "conflict_simulations": 8, "debate_logs": 112}))
+    {**ZERO, "hearing_result_a": 8, "debate_logs": 112}))
 chk("판례 연결만 끊겨도 정지", cascade_loss({**ZERO, "verified_precedents_unlinked": 3}))
 # 🔴 B 만 있는 run 이 있다. A 만 세던 시절엔 여기서 --force 없이 지워졌다.
-chk("B 다인토론만 있어도 정지", cascade_loss({**ZERO, "hearing_results_b": 1}))
+chk("B 다인토론만 있어도 정지", cascade_loss({**ZERO, "hearing_result_b": 1}))
 chk("키가 빠지면 조용히 넘어가지 않는다",
-    _keyerror_on({k: v for k, v in ZERO.items() if k != "hearing_results_b"}))
+    _keyerror_on({k: v for k, v in ZERO.items() if k != "hearing_result_b"}))
 
 shutil.rmtree(R.run_dir(RUN), ignore_errors=True)
 chk("가짜 run 폴더 정리됨", not R.run_dir(RUN).exists())

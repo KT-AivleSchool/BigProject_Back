@@ -145,7 +145,7 @@ end_doc = dict(
     finished_at=R._now_iso(),
     # 🔴 `cascaded` 는 「넣은 수」가 아니라 재적재로 **지워진 수**다. 옮기면 안 된다.
     loaded={"run_id": RUN_A, "audit_rules": 13, "booth_candidates": 20,
-            "cascaded": {"conflict_simulations": 8, "debate_logs": 112}},
+            "cascaded": {"hearing_result_a": 8, "debate_logs": 112}},
     # 발급 시점 값과 **다르게** 준다. 덮이면 안 된다.
     domain="재활용", mode="fixture",
 )

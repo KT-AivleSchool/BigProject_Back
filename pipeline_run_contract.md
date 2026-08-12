@@ -326,7 +326,7 @@ run 이고, 그 결과를 화면5 에서 못 보는 건 `fixture` 와 **똑같�
   "audit_rules": 13,
   "booth_candidates": 20,
   "cascaded": {
-    "conflict_simulations": 0,
+    "hearing_result_a": 0,
     "debate_logs": 0,
     "verified_precedents_unlinked": 0
   }
@@ -391,25 +391,25 @@ run 이고, 그 결과를 화면5 에서 못 보는 건 `fixture` 와 **똑같�
 #### `cascaded` — 적재하면서 **지워진 것** (2026-08-11 신설)
 
 `load_topn_candidates.py` 는 같은 `(domain, run_id)` 의 기존 후보점을 **지우고 다시
-넣는다.** 그런데 `conflict_simulations.parcel_id` 가 `ON DELETE CASCADE` 이고
+넣는다.** 그런데 `hearing_result_a.parcel_id` 가 `ON DELETE CASCADE` 이고
 `debate_logs.simulation_id` 가 다시 그것을 따른다 → **그 run 에서 열렸던 공청회와
 발화가 통째로 사라진다.** `verified_precedents` 는 `ON DELETE SET NULL` 이라 행은
 남고 **연결만 끊긴다**(지워지지 않아 더 안 보인다).
 
 | 필드 | 뜻 |
 |---|---|
-| `conflict_simulations` | CASCADE 로 지워진 공청회 건수 |
+| `hearing_result_a` | CASCADE 로 지워진 공청회 건수 |
 | `debate_logs` | 위를 따라 지워진 발화 행 수 |
 | `verified_precedents_unlinked` | 연결이 끊긴(행은 남은) 판례 수 |
 
 🔴 **이 세 필드는 「넣은 수」가 아니라 「지운 수」다. 실제로 반대로 읽힌 적이 있다**
-(2026-08-11, 백엔드 회신). 「`loaded` 에 `conflict_simulations` 적재 건수가 기록된다」는
+(2026-08-11, 백엔드 회신). 「`loaded` 에 `hearing_result_a` 적재 건수가 기록된다」는
 말이 나왔는데, 문장은 **글자 그대로 참**이고 뜻만 정반대였다 — 그대로 마이페이지에
 띄웠으면 **토론 N건이 열린 run 이 「0건」으로** 보였을 것이다(실측값이 전부 0 이라
 한동안 안 걸린다). 🔴 **run 별 토론 건수는 `status.json` 에 없다.** 토론은 run 이 끝난
 뒤에 따로 치는 것이라 **run 수명 밖**이고, 토론 API 는 `status.json` 을 **읽기만 한다**
 (`_write_status` 호출 0회). 건수를 내려면 조인뿐이다 —
-`conflict_simulations.parcel_id → booth_candidates.id → .run_id`(§8-5-2).
+`hearing_result_a.parcel_id → booth_candidates.id → .run_id`(§8-5-2).
 ⚠ 원인은 읽는 쪽이 아니라 **쓰는 쪽**에 있다: `loaded`(넣은 수) 안에 `cascaded`(지운 수)를
 두면 이름만으로 뜻이 안 선다. **한 블록에는 한 방향만 담는다** — 늘릴 때 지킬 것.
 
@@ -1288,8 +1288,8 @@ booth_candidates  WHERE id=?                       -- 사람이 화면4 에서 �
 나머지 산출물은 통째로 쓰는 값이라 좁힐 게 없다.
 
 **③ 다른 테이블이 FK 로 가리킨다 (파일에는 FK 를 못 건다).**
-`conflict_simulations.parcel_id → booth_candidates.id` (ON DELETE CASCADE) ·
-`debate_logs.simulation_id → conflict_simulations.id`.
+`hearing_result_a.parcel_id → booth_candidates.id` (ON DELETE CASCADE) ·
+`debate_logs.simulation_id → hearing_result_a.id`.
 
 넷째로, **파일은 언젠가 지워진다.** `run_pruner` 가 부팅마다 돌고 보호는 `keep`
 최근 N개(기본 100)와 진행 중 둘뿐이다(3-2). 오래된 run 의 `.gpkg`·`.parquet` 는
@@ -1337,17 +1337,17 @@ DB 에 안 묻는다 · 러너는 `record_run_start()`/`record_run_end()` **둘�
 (2026-08-11 정정). 사람 지시로 테이블·함수·배선을 **우리가 만들었다** — 앞 두 칸은
 끝났고 남은 건 **마이페이지 API** 하나다. 소유가 바뀌었으므로 상대에게 **통보**한다.
 
-### 8-5-2. `conflict_simulations.parcel_id` 는 **NOT NULL** 이다 (2026-08-11)
+### 8-5-2. `hearing_result_a.parcel_id` 는 **NOT NULL** 이다 (2026-08-11)
 
 이 테이블에는 **`run_id` 컬럼이 없다.** run 에 닿는 경로는
 
 ```
-conflict_simulations.parcel_id → booth_candidates.id → booth_candidates.run_id
+hearing_result_a.parcel_id → booth_candidates.id → booth_candidates.run_id
 ```
 
 **조인 하나뿐**이다. `parcel_id` 가 NULL 이면 「어느 실행의 어느 입지를 토론했나」를
 알 방법이 아예 사라진다. 그래서 실 DB 를 `SET NOT NULL` 로 조였다(사람 승인).
-`hearing_results_b.parcel_id` 는 처음부터 NOT NULL 이었다 — 짝을 맞춘 것이다.
+`hearing_result_b.parcel_id` 는 처음부터 NOT NULL 이었다 — 짝을 맞춘 것이다.
 
 **왜 `run_id` 컬럼을 대신 넣지 않았나** — 값이 이미 두 곳에 있다.
 
@@ -1365,7 +1365,7 @@ conflict_simulations.parcel_id → booth_candidates.id → booth_candidates.run_
 - 읽는 쪽(`GET /simulations/hearings?run_id=`)이 이미 이 조인 하나로 동작한다.
   컬럼을 더하면 **같은 질문에 답이 둘**이 되고 갈렸을 때 정본 규칙을 또 만들어야 한다.
 
-실측(2026-08-11): `conflict_simulations` 3행 · `hearing_results_b` 1행 모두
+실측(2026-08-11): `hearing_result_a` 3행 · `hearing_result_b` 1행 모두
 `parcel_id` 가 채워져 있고 조인이 **전부 해석**된다. 다만 `basis` 는 옛 행 2건(id 15·17)
 에 **없다**(`basis_snapshot` 이 2026-08-11 신설) — 그 행들에게는 ⓐ 조인이 **유일한**
 경로다. 그래서 보증해야 할 것은 ⓑ 가 아니라 ⓐ 였다.
@@ -1529,11 +1529,11 @@ rank 1 = `parcel_id=122`(0.7538). 🔴 rank 3 이 0.7781 로 더 높다(커버 �
 실제로 걸린 증거).
 
 **🔴 결과 문서의 run 귀속 — 조인으로만 확인된다.**
-`conflict_simulations` 에는 **`run_id` 컬럼이 없다.** 경로는
+`hearing_result_a` 에는 **`run_id` 컬럼이 없다.** 경로는
 `parcel_id → booth_candidates.id → booth_candidates.run_id` **하나뿐**이다.
 
 ```
-conflict_simulations  id=18 · parcel_id=122 · facility_type=흡연부스 · css_score=7.5
+hearing_result_a  id=18 · parcel_id=122 · facility_type=흡연부스 · css_score=7.5
   result_json 있음 5,736자 · worst_scenario 만 채움(A/B 는 NULL = 사실, 원칙 4)
   candidate_land_id=None ← booth_candidates.land_id 가 NULL 이라 유도값도 NULL(지어내지 않음)
   ⟵ JOIN booth_candidates : run_id='r_20260810_006' · domain='흡연_E2E2' · rank=1

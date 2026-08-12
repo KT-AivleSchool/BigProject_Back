@@ -354,7 +354,7 @@ async def persist_hearing_b(
     events: List[Dict[str, Any]],
     basis: Dict[str, Any],
 ) -> int:
-    """B 토론 결과를 `hearing_results_b` 에 남기고 id 를 돌려준다 (2026-08-11, 사람 승인).
+    """B 토론 결과를 `hearing_result_b` 에 남기고 id 를 돌려준다 (2026-08-11, 사람 승인).
 
     🔴 세션을 **새로 연다.** 요청 스코프의 `Depends(get_db)` 세션은 스트리밍이
        끝나는 시점에 이미 정리됐을 수 있다 — A 의 `run_debate_and_publish` 가
@@ -397,7 +397,7 @@ async def persist_hearing_b(
         "scenarios": scenarios,
         "evaluations": evaluations,
         "messages": messages,
-        # 이 토론이 실제로 무엇을 근거로 했는지. A(`conflict_simulations.result_json`)와
+        # 이 토론이 실제로 무엇을 근거로 했는지. A(`hearing_result_a.result_json`)와
         # **같은 모양**이다 — 두 엔진 결과를 나란히 놓고 비교하려면 근거도 같은 자리에
         # 같은 형태로 있어야 한다. 조립은 `candidate_context.basis_snapshot` 한 곳.
         "basis": basis,
@@ -432,7 +432,7 @@ async def stream_dynamic_discussion(
        예전엔 LangGraph 청크 원형(`{노드이름: {상태변화}}`)을 그대로 흘려보내
        **내부 노드 이름이 곧 프런트 계약**이었다.
 
-    결과는 `hearing_results_b` 에 남는다(2026-08-11, 사람 승인). `conflict_simulations`
+    결과는 `hearing_result_b` 에 남는다(2026-08-11, 사람 승인). `hearing_result_a`
     에 못 넣어서 신설한 테이블이다 — 거기는 `css_score`·`css_vector` 가 NOT NULL 인데
     둘 다 **A 전용 지표**라, 넣으려면 없는 값을 지어내야 한다.
     스트림 끝에 `saved`(또는 `save_failed`) 이벤트가 나가고 `result_url` 로

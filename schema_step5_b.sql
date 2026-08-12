@@ -1,7 +1,7 @@
 -- ============================================================================
 -- 화면5 B 다인 토론 결과 저장 (2026-08-11, 사람 승인)
 --
--- 왜 별도 테이블인가 — `conflict_simulations` 를 재사용하지 않는 이유는 셋이다.
+-- 왜 별도 테이블인가 — `hearing_result_a` 를 재사용하지 않는 이유는 셋이다.
 --   ① `css_score`·`css_vector` 가 **NOT NULL** 이다. 둘 다 A 대립 토론의 지표
 --      (갈등민감도 · 요인별 AHP 가중치)이고 B 엔진은 그 값을 내지 않는다.
 --      넣으려면 NOT NULL 을 완화해야 하는데, 그건 **A 의 반쪽짜리 결과도 저장
@@ -13,9 +13,9 @@
 --      다시 갈라야 하고, 그 갈라내는 규칙이 곧 「엔진이 하나인 척」이 된다.
 --
 -- 🔴 `run_id` 컬럼을 두지 않는다. A 와 **같은 경로**로 잇는다:
---      hearing_results_b.parcel_id → booth_candidates.id → booth_candidates.run_id
+--      hearing_result_b.parcel_id → booth_candidates.id → booth_candidates.run_id
 --    여기에 run_id 를 복사해 두면 후보점 쪽과 어긋날 수 있고, 어긋나도 안 터진다.
---    (`conflict_simulations` 에 run_id 가 없는 것과 같은 이유다 — 그건 결함이
+--    (`hearing_result_a` 에 run_id 가 없는 것과 같은 이유다 — 그건 결함이
 --     아니라 선택이다.)
 --
 -- 🔴 `result_json` 은 **통짜**다. B 의 산출물 모양은 아직 움직이고 있고
@@ -27,12 +27,12 @@
 -- 적용:
 --   docker exec -i omnisite-postgres-db psql -U postgres -d omnisite < schema_step5_b.sql
 --   🔴 `docker exec` 에 **`-i` 가 없으면 stdin 이 무시되고 exit 0** 이다(조용한 실패).
---   적용 후 `\d hearing_results_b` 로 확인할 것. rc=0 은 "명령이 돌았다"만 뜻한다.
+--   적용 후 `\d hearing_result_b` 로 확인할 것. rc=0 은 "명령이 돌았다"만 뜻한다.
 -- ============================================================================
 
 BEGIN;
 
-CREATE TABLE IF NOT EXISTS hearing_results_b (
+CREATE TABLE IF NOT EXISTS hearing_result_b (
     id            SERIAL PRIMARY KEY,
 
     -- 대상 후보점. A 와 **같은 id 공간**이다(booth_candidates.id).
@@ -63,18 +63,18 @@ CREATE TABLE IF NOT EXISTS hearing_results_b (
     created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_hearing_results_b_parcel
-    ON hearing_results_b(parcel_id);
+CREATE INDEX IF NOT EXISTS idx_hearing_result_b_parcel
+    ON hearing_result_b(parcel_id);
 
-COMMENT ON TABLE  hearing_results_b IS
-    '화면5 B 다인 토론(이해관계자 페르소나) 결과 1회 = 1행. A 는 conflict_simulations 다 — 합치지 않는다';
-COMMENT ON COLUMN hearing_results_b.parcel_id IS
+COMMENT ON TABLE  hearing_result_b IS
+    '화면5 B 다인 토론(이해관계자 페르소나) 결과 1회 = 1행. A 는 hearing_result_a 다 — 합치지 않는다';
+COMMENT ON COLUMN hearing_result_b.parcel_id IS
     '토론 대상 후보점(booth_candidates.id). run_id 는 여기를 조인해서 얻는다 — 복사해두지 않는다';
-COMMENT ON COLUMN hearing_results_b.personas IS
+COMMENT ON COLUMN hearing_result_b.personas IS
     '사람이 확정한 페르소나 배열. /stakeholders/generate 제안을 사람이 고친 결과다';
-COMMENT ON COLUMN hearing_results_b.result_json IS
+COMMENT ON COLUMN hearing_result_b.result_json IS
     'B 산출물 통짜(final_scenarios·evaluations·css_levels·messages). 모양이 굳기 전엔 컬럼으로 안 쪼갠다';
-COMMENT ON COLUMN hearing_results_b.message_count IS
+COMMENT ON COLUMN hearing_result_b.message_count IS
     '완성 발화 수. 0 이면 토론이 한 마디도 안 나온 것이다 — 행이 없는 것과 다르다';
 
 COMMIT;

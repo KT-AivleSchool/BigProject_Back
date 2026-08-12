@@ -22,7 +22,7 @@ from app.core.audit_ai.classifier import audit_classifier  # noqa: E402
 from app.core.audit_ai.parser import pdf_parser  # noqa: E402
 from app.core.sim_ai.scenario import scenario_code, scenario_compare_text  # noqa: E402
 from app.db.models.precedent import VerifiedPrecedent  # noqa: E402
-from app.db.models.simulation import ConflictSimulation  # noqa: E402
+from app.db.models.simulation import HearingResultA  # noqa: E402
 from app.db.session import AsyncSessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
 
@@ -133,7 +133,7 @@ async def _pick():
         async with AsyncSessionLocal() as db:
             row = (
                 await db.execute(
-                    select(ConflictSimulation).order_by(ConflictSimulation.id.desc())
+                    select(HearingResultA).order_by(HearingResultA.id.desc())
                 )
             ).scalars().first()
             return (
@@ -146,7 +146,7 @@ async def _pick():
 
 
 sim_id, result_json, sim_facility = asyncio.run(_pick())
-chk("conflict_simulations 에 행이 있다", sim_id is not None, f"id={sim_id}")
+chk("hearing_result_a 에 행이 있다", sim_id is not None, f"id={sim_id}")
 if sim_id is None:
     print("\n대조할 시뮬레이션이 없다 — 화면5 를 한 번 돌린 뒤 다시 실행할 것.")
     sys.exit(1)

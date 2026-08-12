@@ -56,7 +56,7 @@ docker exec -i omnisite-postgres-db psql -U postgres -d omnisite < schema.sql
 > | 3 | `schema_cadastral.sql` + `python scripts/load_cadastral.py --commit` | `cadastral_lands` (연속지적도) |
 > | 4 | `schema_cleaned_data.sql` → `schema_cleaned_data_add.sql` | `candidate_lands` · `national_properties` · `booth_candidates` |
 > | 5 | `schema_step4_topn.sql` · `schema_step5.sql` · `schema_step5_b.sql` | 산출물 계열 가산분(멱등) |
-> | 6 | `python scripts/create_missing_tables.py --yes` | ORM 정본 8종(`users`·`audit_rules`·`conflict_simulations`…) |
+> | 6 | `python scripts/create_missing_tables.py --yes` | ORM 정본 8종(`users`·`audit_rules`·`hearing_result_a`…) |
 >
 > 2·3 의 원본(SHP)은 `.gitignore` 대상이라 clone 에 안 들어옵니다.
 > 팀 seed(`omnisite_seed.sql.gz`)로 복원하면 1~5 는 건너뛸 수 있습니다(경계 3종 제외).
@@ -103,7 +103,7 @@ docker exec -i omnisite-postgres-db psql -U postgres -d omnisite < schema.sql
 > 처음 받은 사람이 첫 명령에서 막힙니다.
 
 > ✅ **`schema.sql` ↔ ORM 불일치는 2026-08-11 에 해소됐습니다.**
-> 여기 있던 경고 — 「공통 14개 중 `conflict_simulations`·`verified_precedents` 가 갈린다,
+> 여기 있던 경고 — 「공통 14개 중 `hearing_result_a`·`verified_precedents` 가 갈린다,
 > 하필 `/api/v1/audit/*` 이 쓰는 테이블이다」 — 는 그대로 참이었습니다.
 > **어느 쪽을 정본으로 삼을지 정해서** 끝냈습니다: 그 계열은 **ORM 이 정본**이고,
 > `schema.sql` 에서 중복 선언을 들어냈습니다(위 표 6행). 겹치는 정의가 없으니

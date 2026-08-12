@@ -8,12 +8,12 @@
 「구현됐지만 한 번도 안 돌려본」 자리였다. 이 대조기가 실제로 돌린다:
 
     /generate → 페르소나 고르기 → /dynamic/discuss/stream(SSE)
-    → hearing_results_b 저장 → /simulations/hearings/b/{id} → ?engine=B 목록
+    → hearing_result_b 저장 → /simulations/hearings/b/{id} → ?engine=B 목록
 
 🔴 **돈이 든다.** 페르소나 수만큼 발화가 늘어난다 — 기본 3명으로 줄여 돌린다.
 🔴 **lifespan 을 안 띄운다**(`httpx.ASGITransport` 기본). 띄우면 `reap_orphans` 가
    남의 run 을 닫고 부팅 정리가 `runs/` 산출물을 지운다.
-🔴 **쓰는 대조기다** — `hearing_results_b` 에 한 행이 남는다. 그게 정상이다
+🔴 **쓰는 대조기다** — `hearing_result_b` 에 한 행이 남는다. 그게 정상이다
    (프런트가 `?engine=B` 를 확인할 실물이 된다). 지우려면 `--cleanup`.
 """
 import argparse
@@ -201,28 +201,28 @@ async def main(parcel_id: int, n_personas: int, cleanup: bool):
     async with AsyncSessionLocal() as s:
         n = (
             await s.execute(
-                text("SELECT count(*) FROM hearing_results_b WHERE id = :i"),
+                text("SELECT count(*) FROM hearing_result_b WHERE id = :i"),
                 {"i": hearing_id},
             )
         ).scalar_one()
         chk("DB 에 실제 행", n == 1, f"-> {n}행")
         if cleanup:
             await s.execute(
-                text("DELETE FROM hearing_results_b WHERE id = :i"), {"i": hearing_id}
+                text("DELETE FROM hearing_result_b WHERE id = :i"), {"i": hearing_id}
             )
             await s.commit()
             chk(
                 "삭제됨",
                 (
                     await s.execute(
-                        text("SELECT count(*) FROM hearing_results_b WHERE id = :i"),
+                        text("SELECT count(*) FROM hearing_result_b WHERE id = :i"),
                         {"i": hearing_id},
                     )
                 ).scalar_one()
                 == 0,
             )
         else:
-            print(f"  [--] hearing_results_b id={hearing_id} 는 **남긴다** (--cleanup 으로 삭제)")
+            print(f"  [--] hearing_result_b id={hearing_id} 는 **남긴다** (--cleanup 으로 삭제)")
 
     print(f"\n{ok + fail}항목 중 {ok} 통과 · {fail} 실패")
     return 1 if fail else 0
