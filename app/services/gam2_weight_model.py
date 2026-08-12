@@ -467,15 +467,25 @@ def _norm_dong(s) -> pd.Series:
 
       '금호2·3가동' / '금호2ㆍ3가동' / '금호2,3가동' / '금호2.3가동'
       '왕십리도선동 ' / '성수1가 1동' / '용답동(용답)'
+      '왕십리제2동' / '성수1가제1동' / '행당제1동'   ← 서수 '제'
 
     가운뎃점·구분자·공백·괄호주석을 걷어내고 비교한다. 표기 규칙을 코드에 박는 게
     아니라 **양쪽에 같은 정규화를 걸어** 맞추는 것이므로 도메인 무관하다.
+
+    🔴 서수 '제' 는 법정 표기(왕십리제2동)와 약식 표기(왕십리2동)가 갈린다. 성동구
+       인구현황 xlsx 가 법정 표기라 크로스워크(약식)와 **59% 만 맞았고** STEP3 가
+       `행정동 조인 키를 찾지 못했습니다` 로 멈췄다(r_20260812_013). 숫자 앞의 '제'
+       만 지운다 — 양쪽에 같은 규칙을 걸므로 '홍제1동'→'홍1동' 처럼 과하게 깎여도
+       **짝이 같이 깎여 매칭은 유지**된다. 전국 크로스워크로 실측: 바뀌는 행 9개,
+       시군구 내 중복은 2건으로 **전후 동일**(새 오매칭 0). 그래서 '홍제'·'거제'
+       같은 지명을 예외로 적어두지 않는다 — 예외 목록은 다음 지역에서 또 틀린다.
     """
     return (
         s.astype(str)
         .str.replace(r"\(.*?\)", "", regex=True)  # 괄호 주석
         .str.replace(r"[·ㆍ・∙,\.\-~/]", "", regex=True)  # 구분자
         .str.replace(r"\s+", "", regex=True)  # 공백
+        .str.replace(r"제(?=\d)", "", regex=True)  # 서수 '제' (제2동 == 2동)
         .str.strip()
     )
 
@@ -939,17 +949,30 @@ def find_region_file(
     code = sgg_code or (sgg_code_of(region) if region else None)
     hits = sorted(glob.glob(os.path.join(base, "**", pattern), recursive=True))
 
+    def _reldirs(h: str) -> list[str]:
+        """base 기준 상대경로의 **폴더 부분**. 루트 직속이면 빈 리스트다."""
+        return os.path.relpath(h, base).replace("\\", "/").split("/")[:-1]
+
     if code:
         coded = [h for h in hits if code in os.path.basename(h)]
         if coded:
             hits = coded
         elif region:  # 파일명에 코드가 없으면 폴더명으로
             gu = region.split()[-1]
-            named = [
-                h for h in hits if gu in h.replace("\\", "/").split("/")[:-1].__str__()
-            ]
+            named = [h for h in hits if gu in _reldirs(h)]
             if named:
                 hits = named
+            else:
+                # 🔴 여기서 `hits` 를 그대로 두면 **남의 구 파일을 조용히 집는다.**
+                #    실측(2026-08-12): `국유부동산*.csv` + '서울특별시 성동구' 가
+                #    `region_data/용산구/국유부동산_위경도_v2.csv` 를 돌려줬다. 파일명에
+                #    코드가 없고 폴더명도 안 맞는데 **후보가 하나뿐이라** len(hits)>1
+                #    중단 검사에도 안 걸렸다 — 마포구 사건과 같은 구조다.
+                #    (반대 방향도 같다: `국유부동산*.xls*` + 용산 → 성동 파일)
+                #    다만 `BND_*.shp`·`행정동_크로스워크.csv` 처럼 **루트 직속 공용
+                #    파일**은 특정 구의 것이 아니므로 남긴다. 지자체 폴더 안에만
+                #    있는데 우리 구가 아니면 **없는 것으로 친다**.
+                hits = [h for h in hits if not _reldirs(h)]
 
     if not hits:
         if not must:
