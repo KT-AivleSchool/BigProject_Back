@@ -108,7 +108,7 @@ class RunConflict(Exception):
 #     그래서 못 봐도 프로세스가 정상 종료하면 done 으로 닫되,
 #     **소요 시간은 지어내지 않고 null 로 둔다**(원칙 4).
 STEP_LABELS: list[tuple[str, str]] = [
-    ("2", "정제"),
+    ("2", "데이터 정리"),
     ("3-1", "후보 필지 생성"),
     ("3-2", "가중치 산정"),
     ("4-1", "후보점 생성"),
@@ -1126,6 +1126,38 @@ def start_run(domain: str, mode: str, user_input: str | None = None,
     return run_id
 
 
+def cancel_run(run_id: str) -> None:
+    """사용자가 파이프라인 실행을 강제로 취소(초기화)한다."""
+    doc = read_status(run_id)
+    if not doc:
+        return
+
+    domain = doc.get("domain")
+    if domain:
+        with _LOCK:
+            if _ACTIVE.get(domain) == run_id:
+                del _ACTIVE[domain]
+
+    if doc.get("status") not in ("queued", "running", "awaiting_hitl"):
+        return
+
+    doc["status"] = "failed"
+    doc["error"] = "사용자가 실행을 초기화(취소)했습니다."
+    doc["finished_at"] = _now_iso()
+    
+    for s in doc.get("steps", []):
+        if s.get("status") == "running":
+            s["status"] = "failed"
+
+    _write_status(run_id, doc)
+
+    try:
+        run_records.end_run(run_id, doc)
+    except Exception as e:
+        note_run_record_error(doc, "end_run (취소)", str(e))
+        _write_status(run_id, doc)
+
+
 def _spawn(run_id: str, domain: str, mode: str, start: int) -> None:
     threading.Thread(target=_execute, args=(run_id, domain, mode, start),
                      daemon=True).start()
@@ -1471,9 +1503,8 @@ def _questions_audit(run_id: str, domain: str) -> list[dict]:
             "dataset_id": did,
             "role_index": idx,
             # flag 가 없는 배제 role 도 질문이 된다 → **role 쪽 확정도 본다.**
-            # flag 만 보면 flag 없는 확정 항목이 editable:true 로 나가 "확정분은
-            # 못 고친다" 규칙이 항목마다 달라진다.
-            "editable": not (f.get("confirmed") or role.get("confirmed")),
+            # 사용자의 요청에 따라, 과거 확정 내역과 무관하게 모두 다시 승인받도록 editable: True 로 통일
+            "editable": True,
             "summary": summary,
             "facility_type": role.get("facility_type"),
             "exclusion_type": role.get("exclusion_type"),
@@ -1504,7 +1535,8 @@ def _questions_audit(run_id: str, domain: str) -> list[dict]:
                 out.append({
                     "kind": "intent",
                     "dataset_id": did,
-                    "editable": not f.get("confirmed"),
+                    # 사용자의 요청에 따라, 과거 확정 내역과 무관하게 모두 다시 승인받도록 editable: True 로 통일
+                    "editable": True,
                     "summary": summary,
                     "message": f.get("message", ""),
                     "current_roles": [x.get("role") for x in roles],
@@ -1546,7 +1578,8 @@ def _questions_audit(run_id: str, domain: str) -> list[dict]:
                 # `cleaning_ops` **전체** 기준 인덱스다. filter_by_code_prefix 만
                 # 센 번호가 아니다 — 적용할 때 같은 방식으로 찾는다.
                 "op_index": oi,
-                "editable": not prm.get("prefix_confirmed"),
+                # 사용자의 요청에 따라, 과거 확정 내역과 무관하게 모두 다시 승인받도록 editable: True 로 통일
+                "editable": True,
                 "summary": summary,
                 "col": prm.get("col"),
                 "prefix": prm.get("prefix", ""),
@@ -1726,11 +1759,17 @@ def _apply_audit(run_id: str, domain: str, questions: list[dict], payload: dict)
 
     for item in payload.get("exclusions") or []:
         _only_keys(item, ("dataset_id", "role_index", "radius_m"), "exclusions")
-        q = _q(questions, "exclusion", dataset_id=item.get("dataset_id"),
-               role_index=item.get("role_index"))
+        q = _q(
+            questions,
+            "exclusion",
+            dataset_id=item.get("dataset_id"),
+            role_index=item.get("role_index"),
+        )
+
         if not q["editable"]:
             raise RunRequestError(
-                f"[{q['dataset_id']}] 배제반경은 이미 확정된 항목입니다(수정 불가).")
+                f"[{q['dataset_id']}] 배제반경은 이미 확정된 항목입니다(수정 불가)."
+            )
         if "radius_m" not in item:
             continue                    # 건너뜀 = 미확정 유지. CLI 의 's'
         radius = item["radius_m"]
@@ -1743,9 +1782,11 @@ def _apply_audit(run_id: str, domain: str, questions: list[dict], payload: dict)
     for item in payload.get("intents") or []:
         _only_keys(item, ("dataset_id", "choice", "weight", "radius_m"), "intents")
         q = _q(questions, "intent", dataset_id=item.get("dataset_id"))
+
         if not q["editable"]:
             raise RunRequestError(
-                f"[{q['dataset_id']}] 데이터 용도는 이미 확정된 항목입니다(수정 불가).")
+                f"[{q['dataset_id']}] 데이터 용도는 이미 확정된 항목입니다(수정 불가)."
+            )
         choice = _int_in(item.get("choice"), 1, 5, f"[{q['dataset_id']}] choice")
         weight = item.get("weight")
         if choice in (1, 2):
@@ -1786,11 +1827,17 @@ def _apply_audit(run_id: str, domain: str, questions: list[dict], payload: dict)
 
     for item in payload.get("code_prefixes") or []:
         _only_keys(item, ("dataset_id", "op_index", "prefix"), "code_prefixes")
-        q = _q(questions, "code_prefix", dataset_id=item.get("dataset_id"),
-               op_index=item.get("op_index"))
+        q = _q(
+            questions,
+            "code_prefix",
+            dataset_id=item.get("dataset_id"),
+            op_index=item.get("op_index"),
+        )
+
         if not q["editable"]:
             raise RunRequestError(
-                f"[{q['dataset_id']}] 지역 코드는 이미 확정된 항목입니다(수정 불가).")
+                f"[{q['dataset_id']}] 지역 코드는 이미 확정된 항목입니다(수정 불가)."
+            )
         prefix = item.get("prefix")
         if not isinstance(prefix, str) or not prefix.strip():
             raise RunRequestError(f"[{q['dataset_id']}] prefix 가 비어 있습니다.")

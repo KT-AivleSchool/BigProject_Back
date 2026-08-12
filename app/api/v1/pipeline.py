@@ -128,6 +128,12 @@ def get_run(run_id: str):
     return doc
 
 
+@router.delete("/runs/{run_id}", status_code=204)
+def delete_run(run_id: str):
+    """실행 중인 파이프라인 취소(초기화)."""
+    runner.cancel_run(run_id)
+
+
 @router.post("/runs/{run_id}/hitl/{gate_id}")
 def submit_hitl(run_id: str, gate_id: str, payload: dict = Body(...)):
     """게이트 답변 접수 → 즉시 `running` 으로 돌아간 status 를 반환(계약 7절).
