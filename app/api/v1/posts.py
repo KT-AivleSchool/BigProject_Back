@@ -138,16 +138,20 @@ async def list_posts(
     order: str = Query("desc", description="정렬 방향 (asc, desc)"),
     search_type: str = Query("title_content", description="검색 기준 (title, content, author, title_content)"),
     search_query: Optional[str] = Query(None, description="검색어 키워드"),
+    mine: bool = Query(False, description="본인 작성글만 필터링하여 조회할지 여부"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    🔒 [토큰 필수] 게시글 목록 조회 (페이지네이션, 정렬 및 키워드 검색 기능)
+    🔒 [토큰 필수] 게시글 목록 조회 (페이지네이션, 정렬, 키워드 검색 및 본인글 필터 기능)
     """
     offset = (page - 1) * limit
 
     # 검색 필터 조건 구성
     where_clauses = []
+    if mine:
+        where_clauses.append(Post.user_id == current_user.id)
+
     if search_query and search_query.strip():
         kw = f"%{search_query.strip()}%"
         if search_type == "title":
@@ -158,6 +162,7 @@ async def list_posts(
             where_clauses.append(User.username.ilike(kw))
         elif search_type == "title_content":
             where_clauses.append(or_(Post.title.ilike(kw), Post.content.ilike(kw)))
+
 
     # 전체 수 쿼리
     count_stmt = select(func.count(Post.id)).join(User, Post.user_id == User.id)
