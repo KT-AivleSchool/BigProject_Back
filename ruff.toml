@@ -1,4 +1,21 @@
 # Ruff configuration for OmniSite Backend
+#
+# 🔴 이 파일이 **정본**이다. PR #245 가 같은 설정을 `pyproject.toml` 의 `[tool.ruff]`
+#    로 한 벌 더 들고 왔는데, 실측하면 ruff 는 그걸 **한 번도 안 읽는다**:
+#      ruff check -v → "Using configuration file (via parent) at: …\ruff.toml"
+#    즉 죽은 설정이었다. `schema.sql` 때와 같은 처방을 했다 —
+#    **정본이 아닌 선언은 내용이 같아도 지운다**(같으면 언젠가 한쪽만 바뀐다).
+#    2026-08-12 `pyproject.toml` 삭제.
+#
+# 🔴 아래 ignore 중 **F401·F841·E722 셋은 조용한 실패 탐지기**다. 끄면 편하지만
+#    「값만 틀리는」 코드를 안 보이게 만든다. 켜면 지금 27건이 뜬다
+#    (F401 20 · F841 5 · E722 2). 그중 둘은 **남의 엔진**이라 임의로 못 고친다:
+#      · app/core/sim_ai/graph.py:111,151,190 — `history_text` 를 만들어 놓고 안 쓴다
+#        (대화 이력이 프롬프트에 안 들어갈 수 있다. 동현님)
+#      · app/core/stakeholder_mode/graph/dynamic_nodes.py:258,291 — `except:` → `evals = {}`
+#        (평가 실패가 「평가 없음」으로 바뀐다. 민영님)
+#    이 둘을 담당자와 정리하기 전까지는 켜지 않는다 — 켜면 남의 코드가 빨간불이
+#    되고, 빨간불이 상시가 되면 아무도 안 본다.
 line-length = 120
 target-version = "py310"
 
