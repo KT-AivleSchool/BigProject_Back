@@ -34,11 +34,16 @@ Docker를 활용해 지리 정보 공간 데이터베이스(PostGIS) 및 RAG 벡
 # Docker Compose 백그라운드 실행
 docker compose up -d --build
 
-# 앱 기본 테이블 DDL 주입 (districts · dong_boundaries + 확장팩)
-docker exec -i omnisite-postgres-db psql -U postgres -d omnisite < schema.sql
+# 스키마 전체 주입 (계획만 출력이 기본 — 무엇을 만들지 먼저 보고 --yes)
+python scripts/bootstrap_db.py
+python scripts/bootstrap_db.py --yes
 ```
 
 > 🔴 **`schema.sql` 하나로는 DB 가 완성되지 않습니다 (2026-08-11 정정).**
+> 그래서 `scripts/bootstrap_db.py` 가 아래 순서를 대신 칩니다 — **DDL 은 한 줄도
+> 새로 안 씁니다.** 기존 `.sql` 과 `create_missing_tables.py` 를 순서대로 부르기만
+> 합니다(정본을 늘리면 「같은 스키마가 두 곳」 함정이 다시 생깁니다).
+> 표를 남기는 이유는 **정본이 어느 파일인지**가 여기 말고는 적힌 데가 없어서입니다.
 > 그전까지 이 자리에는 "17개 물리 테이블 DDL 주입" 이라고 적혀 있었는데,
 > 그 17개 중 **11개는 실 DB 에도 없고 코드 참조도 0회**였고 **5개는 정본이 ORM**,
 > **1개는 정본이 `schema_cadastral.sql`** 이었습니다. 낡은 선언들은
@@ -55,11 +60,27 @@ docker exec -i omnisite-postgres-db psql -U postgres -d omnisite < schema.sql
 > | 2 | `schema_region_boundaries.sql` + `python scripts/load_region_boundaries.py --commit` | 1계층 경계 3종 + `admin_crosswalk` |
 > | 3 | `schema_cadastral.sql` + `python scripts/load_cadastral.py --commit` | `cadastral_lands` (연속지적도) |
 > | 4 | `schema_cleaned_data.sql` → `schema_cleaned_data_add.sql` | `candidate_lands` · `national_properties` · `booth_candidates` |
-> | 5 | `schema_step4_topn.sql` · `schema_step5.sql` · `schema_step5_b.sql` | 산출물 계열 가산분(멱등) |
-> | 6 | `python scripts/create_missing_tables.py --yes` | ORM 정본 8종(`users`·`audit_rules`·`hearing_result_a`…) |
+> | 5 | `schema_step4_topn.sql` | `booth_candidates` 컬럼 가산(멱등) |
+> | 6 | `python scripts/create_missing_tables.py --yes` | ORM 정본 9종(`users`·`audit_rules`·`run_records`·`hearing_result_a`…) |
+> | 7 | `schema_step5.sql` · `schema_step5_b.sql` | STEP5 정합분 — **6 뒤여야 합니다** |
+>
+> 🔴 **5·6·7 의 순서는 2026-08-12 에 정정된 것입니다.** 그전 표는 step5 계열을
+> `create_missing_tables.py` **앞**에 두었는데, `schema_step5.sql` 은
+> `hearing_result_a`·`verified_precedents` 를 **ALTER** 하고 그 두 테이블은 어느
+> `.sql` 에도 `CREATE TABLE` 이 없습니다(정본이 ORM 입니다). 그래서 빈 DB 에서
+> 표대로 치면 `relation "hearing_result_a" does not exist` 로 죽습니다.
+> 표가 틀렸다기보다 **한 번도 빈 DB 에서 끝까지 쳐본 적이 없었다**는 뜻입니다
+> (지금은 일회용 DB 로 9칸 완주를 확인했습니다 — 21테이블).
+>
+> ⚠ `schema_cleaned_data_add.sql` 에는 `DROP TABLE IF EXISTS national_properties
+> CASCADE;` 가 살아 있습니다. `bootstrap_db.py` 는 그 테이블이 **이미 있으면
+> 행 수와 딸려 나갈 대상을 먼저 출력하고 `--force` 없이는 그 단계를 건너뜁니다.**
 >
 > 2·3 의 원본(SHP)은 `.gitignore` 대상이라 clone 에 안 들어옵니다.
-> 팀 seed(`omnisite_seed.sql.gz`)로 복원하면 1~5 는 건너뛸 수 있습니다(경계 3종 제외).
+> 팀 seed(`omnisite_seed.sql.gz`)로 복원하면 표의 행 적재는 건너뛸 수 있지만,
+> 🔴 **`python scripts/bootstrap_db.py --yes` 는 그래도 한 번 치십시오.**
+> seed 를 뜬 시점 이후에 생긴 테이블(예: `run_records`)이 조용히 빠집니다 —
+> 그러면 파이프라인이 도는 도중에야 「테이블이 없다」가 나옵니다.
 *   **로컬 DB 접속 정보**: 포트 `5432` / 사용자 `postgres` / 비밀번호 `postgres` / DB명 `omnisite`
     *   컨테이너명은 `omnisite-postgres-db` 입니다(Redis 는 `omnisite-redis-cache`).
     *   🔴 **`DATABASE_URL`·`REDIS_URL`·`SECRET_KEY` 는 기본값이 없습니다**

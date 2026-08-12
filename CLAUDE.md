@@ -337,6 +337,20 @@ python app\tools\check_optional_auth.py              :: 선택적 인증 — run
                                                      ::    「내 것 1 + 주인 없는 것 7」로 갈리는지 볼 실물이다
                                                      :: ⚠ 옛 행은 소급 안 됐다(㉠ 익명은 정상 상태)
                                                      :: ⚠ 컬럼명은 `ended_at` 이 아니라 **`finished_at`** 이다
+python app\tools\measure_runtime.py --domain <도메인> :: 파이프라인 실행시간 실측 (기본 읽기 전용 · LLM 0회)
+                                                     :: [--run] 새 실행 (y/n 확인) [--cold] LLM 캐시 비우고
+                                                     :: 🔴 계측 층이 **둘**이고 놓치는 게 다르다 —
+                                                     ::    `status.json` 의 `steps[].sec`(자식 프로세스 구간.
+                                                     ::    STEP 0.5 마커가 없어 단계 "0" 이 흡수한다) ↔
+                                                     ::    `run.log` 의 `[소요 시간]` 표(세부 내역. 파싱 실패는
+                                                     ::    조용히 안 넘기고 `ParseError` — 이 숫자가 없으면
+                                                     ::    핵심 주장이 사라진다)
+                                                     :: 🔴 **무인 구간 Σsec ↔ 게이트 포함 벽시계**를 섞지 않는다.
+                                                     ::    뒤엔 사람이 화면 보는 시간이 들어 있고 그건 측정
+                                                     ::    대상이 아니다. 적재 두 칸은 판단이 아니라 DB 인프라라
+                                                     ::    무인 합계에서 뺀다
+                                                     :: 못 재는 것은 `null` + 사유로 남긴다(지오코딩 소요 ·
+                                                     :: LLM 호출 횟수 · 게이트 대기 — 전부 찍히는 데가 없다)
 
 :: 운영 도구 (PR #220 통합 — 전부 수동. 자동으로 안 돈다)
 python app\tools\get_cache.py {geocode|jimok|list} [질의]   :: Redis 캐시 조회(읽기 전용)
@@ -371,6 +385,30 @@ python app\services\make_parcel_candidates.py <도메인>
 python app\services\run_weight_model.py <도메인> --candidates 후보_지적도필지.gpkg ^
        --auto-radius --auto-weight --no-diag --bootstrap 0
 python app\services\gam4_site_select.py <도메인>
+
+:: 빈 DB 부트스트랩 (배포받고 **맨 처음** 한 번. 2026-08-12 신설)
+python scripts\bootstrap_db.py                     :: 계획만 출력. --yes 로 실제 적용
+                                                   :: 🔴 **DDL 을 한 줄도 새로 안 쓴다** — 기존 `.sql` 6개와
+                                                   ::    `create_missing_tables.py` 를 **순서대로** 부르기만
+                                                   ::    한다. 정본을 늘리면 「같은 스키마가 두 곳」이 된다
+                                                   :: 🔴 **step5 계열은 ORM 생성기 뒤다.** `schema_step5.sql` 은
+                                                   ::    `hearing_result_a` 를 ALTER 하는데 그 테이블은 어느
+                                                   ::    `.sql` 에도 CREATE 가 없다(정본이 ORM) → 옛 README 표
+                                                   ::    순서대로 빈 DB 에 치면 `relation … does not exist`
+                                                   :: 🔴 **`docker exec -i … < schema.sql` 하나로는 안 된다.**
+                                                   ::    `merge_Back` 의 그 파일은 확장팩+2개뿐이고, **다른
+                                                   ::    브랜치엔 17~19개짜리 낡은 판이 있다**(2026-08-12 실측).
+                                                   ::    그걸 부으면 `audit_rules` 가 **8컬럼**(정본 20)으로
+                                                   ::    먼저 생기고 뒤이은 `create_all(checkfirst=True)` 이
+                                                   ::    「이미 있다」며 건너뛴다 — **에러가 안 난다.**
+                                                   ::    `conflict_simulations`(옛 이름)와 `hearing_result_a` 가
+                                                   ::    둘 다 생기고 폐기 11개가 되살아난다
+                                                   :: ⚠ **이미 그렇게 만든 DB 는 못 고친다**(있는 테이블은 안
+                                                   ::    건드리는 게 안전 기본값). 확인: `audit_rules` 컬럼 수가
+                                                   ::    **20** 이 아니면 낡은 DDL 로 만들어진 것이다
+                                                   :: ⚠ seed(`omnisite_seed.sql.gz`)를 복원했어도 **한 번 친다** —
+                                                   ::    seed 를 뜬 뒤 생긴 테이블(`run_records` 등)이 조용히 빠진다
+                                                   :: 검증: 일회용 DB 로 빈 상태에서 **9칸 완주 · 21테이블**
 
 :: DB 적재 (scripts\ — 파이프라인 산출물을 실 DB 로)
 python scripts\create_missing_tables.py            :: 계획만 출력. --yes 로 실제 생성

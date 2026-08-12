@@ -1,12 +1,15 @@
 import json
-from typing import Dict, Any, List
+from typing import List
+from pydantic import BaseModel, Field
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from app.core.stakeholder_mode.graph.dynamic_state import DynamicDiscussionState
 from app.core.stakeholder_mode.schemas.persona import PersonaConfig
+from app.core.stakeholder_mode.schemas.factcheck import FactCheckStatus
 from app.core.stakeholder_mode.prompts.renderer import render_persona_system_prompt
+
 from app.core.sim_ai.multi_party_discussion_prompts import build_multi_party_prompt, REPORTER_PROMPT
 from app.config import settings
 
