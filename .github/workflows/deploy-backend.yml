@@ -27,6 +27,7 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           envs: GITHUB_TOKEN
+          command_timeout: 30m
           script: |
             set -e # 명령어 중 하나라도 실패하면 즉시 중단하고 실패 처리합니다.
             
