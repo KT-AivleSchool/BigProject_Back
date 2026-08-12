@@ -64,18 +64,27 @@ def _normalize_dsn(name: str, url: str) -> str:
     **조용히 바꾸지 않는다**(원칙 4) — 바꿨다는 사실을 로그로 남긴다.
     호스트명만 손대고 포트·경로·자격증명은 건드리지 않는다.
     """
+    res_url = url
     m = _DSN_HOST_RE.match(url)
-    if not m:
-        return url
-    fixed = _LOOPBACK_ALIASES[m.group("host")]
-    logging.getLogger(__name__).warning(
-        "%s 의 호스트를 'localhost' → '%s' 로 고정했다. "
-        "IPv6(::1) 우선 해석 때문에 동기 DB 접속이 130초 걸린다(2026-08-10 실측). "
-        ".env 를 직접 고치는 편이 낫다.",
-        name,
-        fixed,
-    )
-    return url[: m.start("host")] + fixed + url[m.end("host") :]
+    if m:
+        fixed = _LOOPBACK_ALIASES[m.group("host")]
+        logging.getLogger(__name__).warning(
+            "%s 의 호스트를 'localhost' → '%s' 로 고정했다. "
+            "IPv6(::1) 우선 해석 때문에 동기 DB 접속이 130초 걸린다(2026-08-10 실측). "
+            ".env 를 직접 고치는 편이 낫다.",
+            name,
+            fixed,
+        )
+        res_url = url[: m.start("host")] + fixed + url[m.end("host") :]
+
+    # REDIS_URL 인증 비밀번호 자동 주입 보정
+    if name == "REDIS_URL" and "@" not in res_url:
+        redis_pw = os.getenv("REDIS_PASSWORD")
+        if redis_pw:
+            res_url = res_url.replace("redis://", f"redis://:{redis_pw}@")
+
+    return res_url
+
 
 
 # 🔴 접속 타임아웃 — 명시하지 않으면 libpq 가 DB 부재를 **260초**(실측) 뒤에야

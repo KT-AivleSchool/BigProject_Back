@@ -16,6 +16,7 @@ from app.db.models.audit import AuditRule
 #    DB 에서 지웠으면 선언도 같이 지운다(FK 는 DB 가 아니라 `Base.metadata` 에서 풀린다).
 from app.db.models.rag_feedback import RagFeedbackLog
 from app.db.models.run_record import RunRecord
+from app.db.models.post import Post
 
 __all__ = [
     "Base",
@@ -27,4 +28,6 @@ __all__ = [
     "VerifiedPrecedent",
     "AuditRule",
     "RagFeedbackLog",
+    "Post",
 ]
+
