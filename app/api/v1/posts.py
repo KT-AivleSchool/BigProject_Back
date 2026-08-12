@@ -15,7 +15,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import FileResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -136,16 +136,33 @@ async def list_posts(
     limit: int = Query(10, ge=1, le=50, description="페이지당 개수"),
     sort_by: str = Query("created_at", description="정렬 기준 컬럼 (id, title, author_name, created_at)"),
     order: str = Query("desc", description="정렬 방향 (asc, desc)"),
+    search_type: str = Query("title_content", description="검색 기준 (title, content, author, title_content)"),
+    search_query: Optional[str] = Query(None, description="검색어 키워드"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    🔒 [토큰 필수] 게시글 목록 조회 (페이지네이션 & 정렬 기능)
+    🔒 [토큰 필수] 게시글 목록 조회 (페이지네이션, 정렬 및 키워드 검색 기능)
     """
     offset = (page - 1) * limit
 
+    # 검색 필터 조건 구성
+    where_clauses = []
+    if search_query and search_query.strip():
+        kw = f"%{search_query.strip()}%"
+        if search_type == "title":
+            where_clauses.append(Post.title.ilike(kw))
+        elif search_type == "content":
+            where_clauses.append(Post.content.ilike(kw))
+        elif search_type == "author":
+            where_clauses.append(User.username.ilike(kw))
+        elif search_type == "title_content":
+            where_clauses.append(or_(Post.title.ilike(kw), Post.content.ilike(kw)))
+
     # 전체 수 쿼리
-    count_stmt = select(func.count(Post.id))
+    count_stmt = select(func.count(Post.id)).join(User, Post.user_id == User.id)
+    if where_clauses:
+        count_stmt = count_stmt.where(*where_clauses)
     total_result = await db.execute(count_stmt)
     total = total_result.scalar_one_or_none() or 0
 
@@ -160,18 +177,15 @@ async def list_posts(
     elif sort_by == "created_at":
         order_column = Post.created_at
 
-    sort_clause = order_column.asc() if order.lower() == "asc" else order_column.desc()
-
     # 목록 조인 쿼리 (User 테이블과 조인하여 작성자 이름 획득)
-    stmt = (
-        select(Post, User.username)
-        .join(User, Post.user_id == User.id)
-        .order_by(sort_clause)
-        .offset(offset)
-        .limit(limit)
-    )
+    stmt = select(Post, User.username).join(User, Post.user_id == User.id)
+    if where_clauses:
+        stmt = stmt.where(*where_clauses)
+
+    stmt = stmt.order_by(sort_clause).offset(offset).limit(limit)
     result = await db.execute(stmt)
     rows = result.all()
+
 
 
     items = []
