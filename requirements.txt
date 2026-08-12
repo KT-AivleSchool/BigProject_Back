@@ -44,6 +44,7 @@ scikit-learn>=1.3.0
 #  pyogrio : geopandas 의 GPKG/SHP IO 엔진. 없으면 fiona 로 떨어져 동작·속도가 갈린다
 pyarrow>=15.0.0
 pyogrio>=0.8.0
+openpyxl>=3.1.0
 
 # HWPX 보고서(PR #224) — 지도 핀 QR 코드 PNG 생성용.
 qrcode>=7.4

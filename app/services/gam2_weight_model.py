@@ -303,7 +303,7 @@ def define_indicators(reviewed: dict, report: dict) -> list:
     wr_by_id = {}
     for r in report.get("results", []):
         wr = r.get("whitelist_resolved")
-        if wr:
+        if wr and "from_dataset" in wr[0]:
             wr_by_id[r["dataset_id"]] = wr[0]
 
     pos = {}
