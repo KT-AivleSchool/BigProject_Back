@@ -182,7 +182,13 @@ def build(
     need = []
     if union_nsl is None and "배제_union_km2_no_shape_lift" in prev4:
         need.append("--union-nsl <--no-shape-lift 로 재실행했을 때의 union 값>")
-    if spacing is None and "spacing" in prevc:
+    # 🔴 `spacing` 은 **이월 금지가 아니라 필수**다. 이월 검사만 있던 시절, 처음
+    #    만드는 픽스처는 `--spacing` 없이도 통과했고 `_drop_none` 이 키를 지웠다.
+    #    그 픽스처로 `mode:"fixture"` 를 돌리면 `_proc_of` 의 `cond["spacing"]` 이
+    #    **KeyError → 500** 이다(재활용 실측 2026-08-12). 사유가 응답에 안 실려
+    #    「픽스처가 잘못됐다」가 아니라 「API 가 깨졌다」로 읽힌다.
+    #    산출물에 없는 값이라 추측할 수 없다 — 그래서 여기서 멈춘다(원칙 1).
+    if spacing is None:
         need.append("--spacing <gam4_site_select.py 에 준 --spacing 값>")
     if cli is None and "cli" in prevc:
         need.append('--cli "<이번 실행에 쓴 명령>"')
