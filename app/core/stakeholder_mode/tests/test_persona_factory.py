@@ -1,20 +1,20 @@
 from app.core.stakeholder_mode.schemas.stakeholder import (
-    CandidateSite,
-    OrdinanceContext,
     StakeholderCandidate
 )
 from app.core.stakeholder_mode.schemas.persona import PersonaConfig, Priority
 from app.core.stakeholder_mode.schemas.output import (
     PersonaOpinion,
     CandidateScore,
-    StakeholderModeResult,
-    ValidationIssue
+    StakeholderModeResult
 )
 
 
 def test_phase2_schema_instantiation():
     """Phase 2 확장 데이터 모델 파싱 및 유효성 검증 테스트"""
     candidate = StakeholderCandidate(
+        stakeholder_id="SH-001",
+        display_name="후보지 인근 주민",
+        constituency="주민",
         name="후보지 인근 주민",
         stakeholder_type="resident",
         relationship_to_topic="생활환경 영향 받음",
@@ -22,7 +22,9 @@ def test_phase2_schema_instantiation():
         relevance_score=0.95
     )
     assert candidate.name == "후보지 인근 주민"
-    assert candidate.relevance_score == 0.95
+    assert candidate.display_name == "후보지 인근 주민"
+
+
 
     persona = PersonaConfig(
         persona_id="PERSONA-001",

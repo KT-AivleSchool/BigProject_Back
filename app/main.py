@@ -13,7 +13,8 @@ from app.api.deps import redis_pool
 # 🔴 2026-08-04 — import 가 안 되는 라우터를 뺐다. 전부 실측이다(추정 아님).
 #    try/except 로 감싸서 "실패하면 건너뛰기" 하지 않는다 — 라우터가 사라졌는데
 #    서버는 200 을 주는 상태가 제일 나쁘다(원칙 1: 조용한 실패 금지).
-from app.api.v1 import auth, audit, pipeline
+from app.api.v1 import auth, audit, pipeline, posts
+
 
 # ── 🔴 폐기된 스캐폴딩 — lands·ahp (사람 확인 2026-08-04) ─────────────────────
 #    두 라우터가 부르던 gis_service·ahp_service 는 다른 팀원이 **임시로 만들어둔
@@ -179,8 +180,14 @@ app.include_router(
 app.include_router(
     pipeline.router,
     prefix=settings.API_V1_STR + "/pipeline",
-    tags=["Pipeline Run"],
+    tags=["Pipeline"],
 )
+app.include_router(
+    posts.router,
+    prefix=settings.API_V1_STR + "/posts",
+    tags=["Board Posts"],
+)
+
 # 다인 토론(B) · HWPX — PR #224
 app.include_router(
     stakeholders.router,
