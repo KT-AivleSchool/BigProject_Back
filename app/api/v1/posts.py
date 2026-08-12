@@ -132,14 +132,15 @@ async def create_post(
 @router.get("", response_model=PostListResponse)
 @router.get("/", response_model=PostListResponse, include_in_schema=False)
 async def list_posts(
-
     page: int = Query(1, ge=1, description="페이지 번호"),
     limit: int = Query(10, ge=1, le=50, description="페이지당 개수"),
+    sort_by: str = Query("created_at", description="정렬 기준 컬럼 (id, title, author_name, created_at)"),
+    order: str = Query("desc", description="정렬 방향 (asc, desc)"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    🔒 [토큰 필수] 게시글 목록 조회 (페이지네이션)
+    🔒 [토큰 필수] 게시글 목록 조회 (페이지네이션 & 정렬 기능)
     """
     offset = (page - 1) * limit
 
@@ -148,16 +149,30 @@ async def list_posts(
     total_result = await db.execute(count_stmt)
     total = total_result.scalar_one_or_none() or 0
 
+    # 정렬 컬럼 및 방향 지정
+    order_column = Post.created_at
+    if sort_by == "id":
+        order_column = Post.id
+    elif sort_by == "title":
+        order_column = Post.title
+    elif sort_by == "author_name":
+        order_column = User.username
+    elif sort_by == "created_at":
+        order_column = Post.created_at
+
+    sort_clause = order_column.asc() if order.lower() == "asc" else order_column.desc()
+
     # 목록 조인 쿼리 (User 테이블과 조인하여 작성자 이름 획득)
     stmt = (
         select(Post, User.username)
         .join(User, Post.user_id == User.id)
-        .order_by(Post.created_at.desc())
+        .order_by(sort_clause)
         .offset(offset)
         .limit(limit)
     )
     result = await db.execute(stmt)
     rows = result.all()
+
 
     items = []
     for post_obj, author_name in rows:
