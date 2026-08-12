@@ -86,6 +86,30 @@ _REPLACE_BACKOFF_S = 0.025
 #   죽은 서버가 남긴 status.json 이 새 실행을 영원히 막지 않는다.
 _ACTIVE: dict[str, str] = {}
 
+# 취소(계약 3-4). 장부가 **셋** 필요하다 — 하나로는 부족하다.
+#   _CANCELLED : 취소가 접수된 run_id. 실행 스레드가 다음 갈림길에서 이걸 보고 멈춘다.
+#   _CHILDREN  : 지금 돌고 있는 자식 프로세스(run_id → Popen).
+#                🔴 이게 없으면 취소는 status.json 만 고쳐 쓰고 **자식은 계속 돈다** —
+#                   화면은 멈췄다는데 정본 캐시·산출물 디렉터리는 계속 갈린다(원칙 4).
+#                   자식 핸들은 여기 말고 어디에도 남지 않으므로 죽일 방법이 없어진다.
+#   _WORKERS   : 실행 스레드(run_id → Thread). 취소가 **뒷정리를 직접 해야 하는지**
+#                (게이트 대기·서버 재시작처럼 스레드가 이미 없는 경우) 아니면
+#                **스레드에 맡기고 기다릴지**를 추측하지 않고 `is_alive()` 로 정한다.
+_CANCELLED: set[str] = set()
+_CHILDREN: dict[str, subprocess.Popen] = {}
+_WORKERS: dict[str, threading.Thread] = {}
+
+# 취소된 run 의 `error`. 실패 사유와 **같은 자리**에 적는다 — 취소도 종료 사유다.
+_CANCEL_MSG = "사용자가 실행을 취소했습니다."
+# 자식에게 terminate 를 주고 기다리는 유예. 지나면 kill 한다.
+_TERM_GRACE_S = 5.0
+# 취소 요청이 실행 스레드의 뒷정리(= `_ACTIVE` 반납)를 기다리는 상한.
+# 🔴 여기서 안 기다리면 204 를 받은 프런트가 곧바로 같은 도메인을 다시 돌리려다
+#    409 를 맞는다 — 「초기화」가 초기화가 아니게 된다.
+_CANCEL_JOIN_S = 20.0
+# 아직 끝나지 않은 run. 이 셋만 취소 대상이다.
+_LIVE_STATUSES = ("queued", "running", "awaiting_hitl")
+
 
 # ══════════════════════════════════════════════════════════════════
 # 예외 — 라우터가 HTTP 코드로 옮긴다
@@ -1126,9 +1150,144 @@ def start_run(domain: str, mode: str, user_input: str | None = None,
     return run_id
 
 
+def _is_cancelled(run_id: str) -> bool:
+    with _LOCK:
+        return run_id in _CANCELLED
+
+
+def _terminate(child: subprocess.Popen) -> None:
+    """자식을 끝낸다 — terminate → 유예 → kill.
+
+    🔴 `child.wait()` 를 쓰지 않는다. 실행 스레드가 같은 객체로 `wait()` 중이라
+       두 스레드가 같은 자식을 기다리게 된다. `poll()` 은 이미 반납된 뒤에도
+       종료 코드를 그대로 돌려주므로 누가 먼저 거둬가든 판정이 안 갈린다.
+    """
+    if child.poll() is not None:
+        return
+    try:
+        child.terminate()
+    except OSError:
+        return                      # 그 사이에 스스로 끝났다
+    deadline = time.monotonic() + _TERM_GRACE_S
+    while child.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if child.poll() is None:
+        child.kill()
+
+
+def _close_cancelled(run_id: str, doc: dict) -> dict:
+    """실행 스레드가 **없는** 취소를 여기서 닫는다(게이트 대기·서버 재시작 뒤).
+
+    스레드가 살아 있으면 이 함수를 부르면 안 된다 — 스레드는 자기 메모리의 `doc` 을
+    들고 있어서 단계 전이마다 `_write_status` 를 다시 쓴다. 밖에서 쓴 상태는
+    **다음 전이에 조용히 덮인다**(그게 원래 PR 이 `running` run 을 못 멈춘 이유다).
+    """
+    # 🔴 여기서 한 번 더 읽는다. `cancel_run` 이 상태를 본 뒤 스레드가 마지막
+    #    한 칸을 끝내고 `succeeded` 로 닫았을 수 있다 — 그 좁은 틈에서 이 함수가
+    #    돌면 **완주한 run 을 취소로 적는다**(원칙 4). 그건 취소가 아니라 위조다.
+    fresh = read_status(run_id)
+    if fresh is not None:
+        doc = fresh
+        if doc.get("status") not in _LIVE_STATUSES:
+            with _LOCK:
+                _CANCELLED.discard(run_id)
+            raise RunConflict(
+                f"취소를 접수하는 사이에 run 이 끝났습니다 "
+                f"(status={doc.get('status')!r}) — 상태를 덮어쓰지 않았습니다.")
+    domain = doc.get("domain")
+    doc["status"] = "failed"
+    doc["error"] = _CANCEL_MSG
+    doc["finished_at"] = _now_iso()
+    doc.pop("gate", None)           # 계약 7-3 — 끝난 run 에 gate 키는 없다
+    for s in doc.get("steps", []):
+        if s.get("status") == "running":
+            s["status"] = "failed"
+    _refresh_artifacts(doc)
+    # 자원 반납이 상태 기록보다 **먼저**다 — `_execute` 의 finally 와 같은 이유다
+    # (2026-08-08 WinError 5: `_write_status` 가 터지면 도메인이 409 로 잠긴다).
+    with _LOCK:
+        if domain and _ACTIVE.get(domain) == run_id:
+            _ACTIVE.pop(domain, None)
+        _CANCELLED.discard(run_id)
+    reason = run_records.record_run_end(doc,
+                                        _read_params(run_id).get("user_input"))
+    if reason:
+        note_run_record_error(doc, "end(취소)", reason)
+    _write_status(run_id, doc)
+    return doc
+
+
+def cancel_run(run_id: str) -> dict:
+    """실행을 취소한다 — **자식 프로세스를 실제로 죽인다**(계약 3-4).
+
+    🔴 status.json 만 고쳐 쓰는 것은 취소가 아니다. 두 가지가 같이 안 되면
+       「멈췄다고 말하는 화면」과 「계속 도는 파이프라인」이 동시에 존재한다:
+         ① 자식 프로세스를 죽인다(`_CHILDREN`). 안 죽이면 정본 캐시·산출물
+            디렉터리를 계속 갈아엎고, 실행 스레드가 다음 단계 전이에서
+            `_write_status` 로 취소 상태를 **덮어쓴다**.
+         ② `_ACTIVE` 를 반납한다. 안 하면 그 도메인은 재시작 전까지 409 다.
+            반납은 **스레드가 실제로 끝난 뒤**여야 한다 — 스레드가 살아 있는데
+            먼저 풀면 같은 도메인으로 새 run 이 시작돼 두 실행이 같은 정본
+            데이터를 동시에 건드린다.
+
+    끝난 뒤 `status` 는 `failed` 이고 `error` 가 취소 사유다. 취소용 상태값을
+    새로 만들지 않는다 — 계약 3절의 상태 어휘가 늘면 프런트의 폴링 종료 조건이
+    모든 화면에서 갈린다. **왜 끝났는지는 `error` 가 말한다.**
+
+    없는 run_id 는 `KeyError`(→404), 이미 끝난 run 은 `RunConflict`(→409)다.
+    조용히 204 로 답하면 「취소했다」가 되는데 실제로는 아무 일도 안 일어났다(원칙 4).
+    """
+    doc = read_status(run_id)
+    if doc is None:
+        raise KeyError(run_id)
+    status = doc.get("status")
+    if status not in _LIVE_STATUSES:
+        raise RunConflict(
+            f"이미 끝난 run 입니다 (status={status!r}) — 취소할 것이 없습니다.")
+
+    with _LOCK:
+        _CANCELLED.add(run_id)
+        child = _CHILDREN.get(run_id)
+        worker = _WORKERS.get(run_id)
+
+    if child is not None:
+        _terminate(child)
+
+    # 🔴 `is_alive()` 를 여기 조건에 넣지 않는다(2026-08-12 실측으로 고쳤다).
+    #    방금 `_terminate` 로 자식을 죽였으므로 실행 스레드는 **그 자리에서 끝난다** —
+    #    운이 나쁘면 이 줄에 닿기 전에 이미 죽어 있다. 그때 `is_alive()` 로 갈라
+    #    아래 `_close_cancelled` 로 보내면, 그 함수가 다시 읽은 status 는 스레드가
+    #    이미 `failed` 로 닫아둔 값이라 **정상 취소가 409 로 나간다.** 타이밍에 따라
+    #    갈리는 자리라 한 번 돌려보고 "된다"고 말할 수 없다.
+    #    장부에 스레드가 있다 = 이 run 은 스레드가 돌린 것 = **뒷정리 주체는 그쪽**이다
+    #    (`_execute` 의 finally 하나뿐). 살아 있으면 기다리고, 끝났으면 이미 끝났다.
+    if worker is not None:
+        if worker.is_alive():
+            worker.join(_CANCEL_JOIN_S)
+            if worker.is_alive():
+                # 🔴 끝난 척하지 않는다. 스레드가 살아 있다 = `_ACTIVE` 가 아직 안
+                #    풀렸다 = 같은 도메인 재실행은 여전히 409 다.
+                raise RunConflict(
+                    f"취소 요청은 접수했고 자식 프로세스는 정리했지만, 실행 스레드가 "
+                    f"{_CANCEL_JOIN_S:.0f}초 안에 끝나지 않았습니다. "
+                    f"GET /runs/{run_id} 로 상태를 확인하고 다시 시도하세요.")
+        with _LOCK:
+            _CANCELLED.discard(run_id)   # 스레드가 이미 지웠으면 no-op
+        return read_status(run_id) or doc
+
+    # 스레드가 없다 — 게이트 대기 중이거나(스레드는 게이트에서 끝난다) 서버가
+    # 재시작된 뒤다. 그러면 아무도 뒷정리를 안 하므로 여기서 닫는다.
+    return _close_cancelled(run_id, doc)
+
+
 def _spawn(run_id: str, domain: str, mode: str, start: int) -> None:
-    threading.Thread(target=_execute, args=(run_id, domain, mode, start),
-                     daemon=True).start()
+    t = threading.Thread(target=_execute, args=(run_id, domain, mode, start),
+                         daemon=True)
+    # 등록은 `start()` **앞**이다. 뒤에 두면 그 사이에 들어온 취소가 스레드를
+    # 못 보고 `_close_cancelled` 로 가서, 스레드와 취소가 같은 문서를 같이 쓴다.
+    with _LOCK:
+        _WORKERS[run_id] = t
+    t.start()
 
 
 def _execute(run_id: str, domain: str, mode: str, start: int = 0) -> None:
@@ -1148,6 +1307,11 @@ def _execute(run_id: str, domain: str, mode: str, start: int = 0) -> None:
         # 프런트가 게이트 화면에서 보던 로그가 답변 순간 증발한다(원칙 4).
         with open(log_path, "a" if start else "w", encoding="utf-8") as log:
             for i in range(start, len(plan)):
+                # 🔴 칸과 칸 **사이**에서도 본다. 자식이 없는 칸(`seed`)이나 자식이
+                #    막 끝난 순간에 들어온 취소는 `_run_one` 이 못 잡는다 — 여기서
+                #    안 보면 그 run 은 취소를 접수하고도 다음 칸을 시작한다.
+                if _is_cancelled(run_id):
+                    raise _Cancelled()
                 stage = plan[i]
                 if stage.startswith("gate:"):
                     gate_id = stage.split(":", 1)[1]
@@ -1194,6 +1358,16 @@ def _execute(run_id: str, domain: str, mode: str, start: int = 0) -> None:
                     _assert_provenance(run_id, mode)
         if not paused:
             doc["status"] = "succeeded"
+    except _Cancelled:
+        # 취소도 **종료 사유**다 — 실패와 같은 자리에 적는다. 취소 전용 상태값을
+        # 새로 만들지 않는 이유는 `cancel_run` 독스트링에 있다(폴링 종료 조건이 갈린다).
+        doc["status"] = "failed"
+        doc["error"] = _CANCEL_MSG
+        for s in doc.get("steps", []):
+            if s.get("status") == "running":
+                # 🔴 done 으로 적지 않는다. 중간에 끊긴 칸이다 — done 이면
+                #    산출물이 다 나온 것처럼 읽힌다(원칙 4).
+                s["status"] = "failed"
     except _StepFailed as e:
         doc["status"] = "failed"
         doc["error"] = str(e)
@@ -1201,6 +1375,14 @@ def _execute(run_id: str, domain: str, mode: str, start: int = 0) -> None:
         doc["status"] = "failed"
         doc["error"] = f"{type(e).__name__}: {e}"
     finally:
+        # 🔴 취소 장부 정리는 게이트 정지·완주·실패를 **가리지 않는다.** 스레드가
+        #    끝났다는 사실 자체가 여기서 참이 되므로, 게이트에서 멈춘 run 도
+        #    `_WORKERS` 에서 빠져야 한다 — 안 빼면 나중 취소가 죽은 Thread 객체를
+        #    보고 `join()` 으로 가서, 실제로는 아무도 뒷정리를 하지 않는다.
+        #    (`is_alive()` 가 False 라 통과는 하지만 그때 상태를 닫는 코드가 없다.)
+        with _LOCK:
+            _WORKERS.pop(run_id, None)
+            _CANCELLED.discard(run_id)
         if doc["status"] != "awaiting_hitl":
             # 🔴 게이트에서 멈춘 run 은 **끝난 게 아니다.** finished_at 을 찍지 않고
             #    _ACTIVE 에서 빼지도 않는다 — 빼면 같은 도메인으로 새 run 을 시작할 수
@@ -1234,6 +1416,12 @@ def _execute(run_id: str, domain: str, mode: str, start: int = 0) -> None:
 
 class _StepFailed(Exception):
     pass
+
+
+class _Cancelled(Exception):
+    """사용자 취소. `_StepFailed` 와 나누는 이유는 **사유가 다르기 때문**이다 —
+    파이프라인이 틀린 게 아니라 사람이 그만두게 한 것이고, 그 둘을 한 예외로 묶으면
+    자식의 종료 코드(-15 등)가 실패 사유로 적힌다."""
 
 
 def _assert_provenance(run_id: str, mode: str) -> None:
@@ -1308,51 +1496,70 @@ def _run_one(run_id: str, doc: dict, proc: _Proc, log) -> None:
         stderr=subprocess.STDOUT,
         text=True, encoding="utf-8", errors="replace", bufsize=1,
     )
-    assert child.stdout is not None
-    for line in child.stdout:
-        log.write(line)
-        s = line.strip()
-        if s:
-            tail.append(s)
-            del tail[:-40]
-        if (m := _LOADED_RE.match(s)):
-            # run_id 도 같이 본다. 적재기가 `--run` 을 무시하고 정본에 넣었다면
-            # 여기서 드러나야 한다 — 이 run 의 성과로 status 에 적히면 프런트가
-            # `/candidates?run_id=` 로 조회했을 때 0건이 나온다(원칙 4).
-            # 🔴 여기서 바로 raise 하지 않는다. 파이프를 읽다 말고 나가면 자식이
-            #    write 에서 막힌 채 남는다. 아래 wait() 뒤에 던진다.
-            if m["run_id"] != run_id:
-                mismatch = (f"적재기가 다른 run_id 로 넣었습니다: "
-                            f"기대 {run_id!r} ≠ 실제 {m['run_id']!r} "
-                            f"(table={m['table']})")
-            else:
-                proc.loaded[m["table"]] = int(m["rows"])
-        elif (m := _CASCADED_RE.match(s)) and m["run_id"] == run_id:
-            # run_id 가 어긋나면 위 `[LOADED]` 대조가 어차피 잡는다.
-            # 여기서 또 던지면 같은 사실을 두 곳에서 판정하게 된다.
-            for kv in m["pairs"].split():
-                k, _, v = kv.partition("=")
-                if v.isdigit():
-                    proc.cascaded[k] = int(v)
-        for sid, marker in proc.markers.items():
-            if sid != cur and s.startswith(marker):
-                _step(doc, cur).update(
-                    status="done", sec=round(time.perf_counter() - started, 2))
-                cur = sid
-                _step(doc, cur)["status"] = "running"
-                started = time.perf_counter()
-                _refresh_artifacts(doc)
-                _write_status(run_id, doc)
-                break
-    log.flush()
+    # 🔴 핸들을 장부에 남긴다. 여기 말고는 자식에 닿을 방법이 없다 — 없으면 취소는
+    #    status.json 만 고쳐 쓰고 자식은 끝까지 돈다(원칙 4).
+    #    등록은 `Popen` **직후**다. 뒤로 미루면 그 사이에 들어온 취소가 자식을 못 본다.
+    with _LOCK:
+        _CHILDREN[run_id] = child
+    try:
+        assert child.stdout is not None
+        for line in child.stdout:
+            log.write(line)
+            s = line.strip()
+            if s:
+                tail.append(s)
+                del tail[:-40]
+            if (m := _LOADED_RE.match(s)):
+                # run_id 도 같이 본다. 적재기가 `--run` 을 무시하고 정본에 넣었다면
+                # 여기서 드러나야 한다 — 이 run 의 성과로 status 에 적히면 프런트가
+                # `/candidates?run_id=` 로 조회했을 때 0건이 나온다(원칙 4).
+                # 🔴 여기서 바로 raise 하지 않는다. 파이프를 읽다 말고 나가면 자식이
+                #    write 에서 막힌 채 남는다. 아래 wait() 뒤에 던진다.
+                if m["run_id"] != run_id:
+                    mismatch = (f"적재기가 다른 run_id 로 넣었습니다: "
+                                f"기대 {run_id!r} ≠ 실제 {m['run_id']!r} "
+                                f"(table={m['table']})")
+                else:
+                    proc.loaded[m["table"]] = int(m["rows"])
+            elif (m := _CASCADED_RE.match(s)) and m["run_id"] == run_id:
+                # run_id 가 어긋나면 위 `[LOADED]` 대조가 어차피 잡는다.
+                # 여기서 또 던지면 같은 사실을 두 곳에서 판정하게 된다.
+                for kv in m["pairs"].split():
+                    k, _, v = kv.partition("=")
+                    if v.isdigit():
+                        proc.cascaded[k] = int(v)
+            for sid, marker in proc.markers.items():
+                if sid != cur and s.startswith(marker):
+                    _step(doc, cur).update(
+                        status="done", sec=round(time.perf_counter() - started, 2))
+                    cur = sid
+                    _step(doc, cur)["status"] = "running"
+                    started = time.perf_counter()
+                    _refresh_artifacts(doc)
+                    _write_status(run_id, doc)
+                    break
+        log.flush()
+        rc = child.wait()
+    finally:
+        # 자식이 어떻게 끝났든(정상·실패·취소·러너 예외) 장부에서 뺀다.
+        # 안 빼면 죽은 프로세스 핸들이 남아, 나중 취소가 이미 없는 자식을
+        # 죽이려 든다 — 그때 `terminate()` 가 남의 PID 를 칠 수 있다.
+        with _LOCK:
+            _CHILDREN.pop(run_id, None)
 
-    if child.wait() != 0 or mismatch:
+    # 🔴 종료 코드보다 **취소 여부를 먼저** 본다. 취소로 죽은 자식은 rc≠0 이라
+    #    여기를 안 지나면 「종료 코드 -15」가 실패 사유로 적힌다 — 사용자가 누른
+    #    취소가 파이프라인 오류로 기록되는 것이다(원칙 4).
+    if _is_cancelled(run_id):
+        raise _Cancelled()
+
+    if rc != 0 or mismatch:
         if cur:
             _step(doc, cur)["status"] = "failed"
         _refresh_artifacts(doc)
         _write_status(run_id, doc)
         raise _StepFailed(
-            mismatch or (tail[-1] if tail else f"종료 코드 {child.returncode}"))
+            mismatch or (tail[-1] if tail else f"종료 코드 {rc}"))
 
     if cur:
         _step(doc, cur).update(status="done",
@@ -1452,10 +1659,21 @@ def build_gate(gate_id: str, run_id: str, domain: str) -> dict:
 
 
 # ── 게이트A 질문 ───────────────────────────────────────────────────
-#  🔴 확정분도 **보여준다. 단 수정은 못 한다**(`editable: false`). (사람 결정 2026-08-05)
-#     HITL 전에 confirmed 가 되는 건 조례에서 근거를 확실히 찾았을 때뿐이라
-#     고칠 이유가 없다. 그렇다고 감추면 사람은 "무엇이 이미 정해졌는지" 를 모른 채
-#     남은 것만 답하게 된다 — 화면이 사실의 일부만 보여주는 것이다(원칙 4).
+#  확정분도 **보여준다.** 감추면 사람은 "무엇이 이미 정해졌는지" 를 모른 채 남은 것만
+#  답하게 된다 — 화면이 사실의 일부만 보여주는 것이다(원칙 4).
+#
+#  🔴 **확정분도 이제 고칠 수 있다**(`editable` 은 항상 true). 2026-08-05 에는
+#     `false` 였다 — 「HITL 전 confirmed 는 조례에서 근거를 확실히 찾았을 때뿐이라
+#     고칠 이유가 없다」가 근거였다. 그 근거가 무너졌다: 조례 대조는 2026-08-10 에
+#     **확정에서 제안으로 강등**됐고(함정표 「자동 확정이 flag 를 안 남겨…」),
+#     자동 확정 경로 둘을 없앤 지금 남은 confirmed 는 **앞선 게이트 답변** 뿐이다.
+#     자기가 방금 넣은 값을 못 고치면 화면은 「다시 시작」 말고는 길이 없다.
+#
+#  🔴 그래서 **`confirmed` 를 따로 싣는다.** `editable` 을 true 로 바꾸는 것만으로
+#     끝내면 「이미 확정된 항목」이라는 사실이 산출물에서 **사라진다** — 그 사실을
+#     들고 있던 필드가 `editable` 하나뿐이었기 때문이다(원칙 4). 화면은 이 값으로
+#     「확정됨 · 수정 가능」을 표시한다. 두 값은 뜻이 다르다:
+#       editable  = 지금 고칠 수 있는가   ·  confirmed = 이미 정해진 값인가
 def _questions_audit(run_id: str, domain: str) -> list[dict]:
     p = _reviewed_path(run_id, domain)
     if not p.is_file():
@@ -1470,10 +1688,11 @@ def _questions_audit(run_id: str, domain: str) -> list[dict]:
             "kind": "exclusion",
             "dataset_id": did,
             "role_index": idx,
+            "editable": True,
             # flag 가 없는 배제 role 도 질문이 된다 → **role 쪽 확정도 본다.**
-            # flag 만 보면 flag 없는 확정 항목이 editable:true 로 나가 "확정분은
-            # 못 고친다" 규칙이 항목마다 달라진다.
-            "editable": not (f.get("confirmed") or role.get("confirmed")),
+            # flag 만 보면 flag 없는 확정 항목이 `confirmed:false` 로 나가
+            # 「이미 정해졌다」는 표시가 항목마다 달라진다.
+            "confirmed": bool(f.get("confirmed") or role.get("confirmed")),
             "summary": summary,
             "facility_type": role.get("facility_type"),
             "exclusion_type": role.get("exclusion_type"),
@@ -1504,7 +1723,8 @@ def _questions_audit(run_id: str, domain: str) -> list[dict]:
                 out.append({
                     "kind": "intent",
                     "dataset_id": did,
-                    "editable": not f.get("confirmed"),
+                    "editable": True,
+                    "confirmed": bool(f.get("confirmed")),
                     "summary": summary,
                     "message": f.get("message", ""),
                     "current_roles": [x.get("role") for x in roles],
@@ -1546,7 +1766,8 @@ def _questions_audit(run_id: str, domain: str) -> list[dict]:
                 # `cleaning_ops` **전체** 기준 인덱스다. filter_by_code_prefix 만
                 # 센 번호가 아니다 — 적용할 때 같은 방식으로 찾는다.
                 "op_index": oi,
-                "editable": not prm.get("prefix_confirmed"),
+                "editable": True,
+                "confirmed": bool(prm.get("prefix_confirmed")),
                 "summary": summary,
                 "col": prm.get("col"),
                 "prefix": prm.get("prefix", ""),
@@ -1724,13 +1945,17 @@ def _apply_audit(run_id: str, domain: str, questions: list[dict], payload: dict)
     # (배제반경 캐시는 2026-08-10 제거됐다 — 확정은 이 run 안에서만 유효하다)
     A.set_domain(domain)
 
+    # 🔴 **「이미 확정됐으니 수정 불가」검사는 없다**(2026-08-12 제거). 예전엔 세 갈래
+    #    각각에 `if not q["editable"]: raise` 가 있었다. 두 가지 이유로 지웠다:
+    #      ⓐ `editable` 은 이제 **항상 true** 다(그 근거는 `_questions_audit` 위 주석).
+    #         남겨두면 영원히 안 도는 분기가 「그런 규칙이 아직 있다」고 말한다.
+    #      ⓑ 애초에 이 검사는 **우리가 방금 만든 질문 dict 를 우리가 되읽는** 것이라
+    #         재는 자와 재어지는 자가 같았다. 요청이 보낸 값을 막는 게 아니었다.
+    #    확정 여부는 이제 질문의 `confirmed` 로 **화면에 알리기만** 한다.
     for item in payload.get("exclusions") or []:
         _only_keys(item, ("dataset_id", "role_index", "radius_m"), "exclusions")
         q = _q(questions, "exclusion", dataset_id=item.get("dataset_id"),
                role_index=item.get("role_index"))
-        if not q["editable"]:
-            raise RunRequestError(
-                f"[{q['dataset_id']}] 배제반경은 이미 확정된 항목입니다(수정 불가).")
         if "radius_m" not in item:
             continue                    # 건너뜀 = 미확정 유지. CLI 의 's'
         radius = item["radius_m"]
@@ -1743,9 +1968,6 @@ def _apply_audit(run_id: str, domain: str, questions: list[dict], payload: dict)
     for item in payload.get("intents") or []:
         _only_keys(item, ("dataset_id", "choice", "weight", "radius_m"), "intents")
         q = _q(questions, "intent", dataset_id=item.get("dataset_id"))
-        if not q["editable"]:
-            raise RunRequestError(
-                f"[{q['dataset_id']}] 데이터 용도는 이미 확정된 항목입니다(수정 불가).")
         choice = _int_in(item.get("choice"), 1, 5, f"[{q['dataset_id']}] choice")
         weight = item.get("weight")
         if choice in (1, 2):
@@ -1774,7 +1996,10 @@ def _apply_audit(run_id: str, domain: str, questions: list[dict], payload: dict)
         #    여기서 안 받으면 그 run 은 **답할 자리가 없는 채** 죽는다.
         if choice == 3:
             # roles 를 통째로 갈아치웠으므로 옛 확정은 무효다. 지우지 않으면 게이트를
-            # 다시 열었을 때 `editable: false` 로 굳는다(실측).
+            # 다시 열었을 때 그 flag 가 `confirmed: true` 로 남아, 아무도 답하지 않은
+            # 반경이 「사람이 확정했다」로 읽힌다(원칙 4). 예전엔 같은 값이
+            # `editable: false` 로도 굳어 아예 답할 수가 없었다 — 그건 2026-08-12 에
+            # 없어졌지만, 거짓 확정 표시는 여전히 남으므로 이 정리는 그대로 둔다.
             flag = _exclusion_flag(r, 0, "게이트A 배제 승격 — 반경 확정")
             for k in ("confirmed", "confirmed_by_human", "제안값", "출처", "근거_시설_일치"):
                 flag.pop(k, None)
@@ -1788,9 +2013,6 @@ def _apply_audit(run_id: str, domain: str, questions: list[dict], payload: dict)
         _only_keys(item, ("dataset_id", "op_index", "prefix"), "code_prefixes")
         q = _q(questions, "code_prefix", dataset_id=item.get("dataset_id"),
                op_index=item.get("op_index"))
-        if not q["editable"]:
-            raise RunRequestError(
-                f"[{q['dataset_id']}] 지역 코드는 이미 확정된 항목입니다(수정 불가).")
         prefix = item.get("prefix")
         if not isinstance(prefix, str) or not prefix.strip():
             raise RunRequestError(f"[{q['dataset_id']}] prefix 가 비어 있습니다.")
