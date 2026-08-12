@@ -39,7 +39,20 @@ jobs:
             # 브랜치가 없으면 만들고, 있으면 해당 리모트 브랜치로 강제 초기화
             git checkout -B ${{ github.ref_name }} origin/${{ github.ref_name }}
             
-            # 2. Build and restart containers (runs detached)
+            # 2. Add Swap Memory to prevent OOM (Out Of Memory) during docker build
+            if [ ! -f /swapfile ]; then
+              echo "Creating 2GB swap file to prevent OOM..."
+              sudo fallocate -l 2G /swapfile
+              sudo chmod 600 /swapfile
+              sudo mkswap /swapfile
+              sudo swapon /swapfile
+              echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+              echo "Swap file created successfully."
+            else
+              echo "Swap file already exists."
+            fi
+            
+            # 3. Build and restart containers (runs detached)
             docker-compose up -d --build
             
             # 3. Clean up dangling images to save space
