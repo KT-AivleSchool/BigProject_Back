@@ -53,6 +53,8 @@ jobs:
             fi
             
             # 3. Build and restart containers (runs detached)
+            # 이전 컨테이너가 남아있으면 구버전 docker-compose에서 ContainerConfig 에러가 발생하므로 먼저 down 시킵니다.
+            docker-compose down || true
             docker-compose up -d --build
             
             # 3. Clean up dangling images to save space
