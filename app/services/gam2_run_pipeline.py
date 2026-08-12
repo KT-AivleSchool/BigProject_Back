@@ -134,7 +134,11 @@ def _step(timer: Timer, name: str, fn, *args, **kwargs):
 
 
 def run(
-    domain_dir: str, user_input: str, skip_search: bool = False, mock: bool = False
+    domain_dir: str,
+    user_input: str,
+    skip_search: bool = False,
+    mock: bool = False,
+    reprofile: bool = False,
 ) -> dict:
     """profile(자동) → real → search. 반환: {산출물 경로들}"""
     timer = Timer()
@@ -170,7 +174,13 @@ def run(
         print("\n[참조 데이터 점검] 이상 없음")
 
     # ── STEP 0-1. fixture 확보 (없으면 build_fixtures 가 자동 프로파일링)
-    fixtures = _step(timer, "STEP 0  프로파일/조례", A.build_fixtures)
+    #   🔴 `--reprofile` 이면 **있어도 다시 만든다.** profiles.json 은 `data/` 의
+    #      사본이라, 원본이 바뀐 실행(업로드 = full 모드)에서 낡은 사본을 쓰면
+    #      감리 AI 가 없는 데이터셋을 보고 있는 데이터셋을 못 본다 — 안 터지고
+    #      근거만 틀린다(2026-08-12 재활용에서 실제로 발생).
+    fixtures = _step(
+        timer, "STEP 0  프로파일/조례", A.build_fixtures, force_profile=reprofile
+    )
     print(f"[fixture] {len(fixtures)}개 데이터셋")
 
     # ── STEP 0-2. 시설·지역 확정 (mini)
@@ -250,7 +260,10 @@ def run(
 # ══════════════════════════════════════════════════════════════════
 
 USAGE = """사용법:
-  python run_pipeline.py <도메인폴더> "<사용자 입력>" [--skip-search] [--mock]
+  python run_pipeline.py <도메인폴더> "<사용자 입력>" [--skip-search] [--mock] [--reprofile]
+
+  --reprofile : fixture/profiles.json 이 있어도 data/ 를 다시 프로파일링한다
+                (원본이 바뀔 수 있는 실행 — API 의 full 모드가 항상 넘긴다)
 
 예)
   python run_pipeline.py 흡연 "용산구 흡연부스 부지 선정"
@@ -273,6 +286,7 @@ if __name__ == "__main__":
             args[1],
             skip_search="--skip-search" in flags,
             mock="--mock" in flags,
+            reprofile="--reprofile" in flags,
         )
     except FileNotFoundError as e:
         print(f"\n[중단] {e}")

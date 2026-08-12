@@ -552,7 +552,7 @@ _LOADED_RE = re.compile(
 
 # 덮어쓰기로 **딸려 나간 것**을 알리는 줄. 같은 이유로 자식이 선언한다 —
 # 지운 뒤엔 셀 방법이 없고, 콘솔 출력은 사라진다.
-#   `[CASCADED] table=booth_candidates run_id=… conflict_simulations=1 debate_logs=14 …`
+#   `[CASCADED] table=booth_candidates run_id=… hearing_result_a=1 debate_logs=14 …`
 # 🔴 값이 0 이어도 자식이 찍는다. 줄이 **없는** 것은 「딸려 나간 게 없다」가 아니라
 #    「그 적재기가 세지 않았다」다 — status 에서도 둘을 섞지 않는다(원칙 4).
 _CASCADED_RE = re.compile(
@@ -716,9 +716,18 @@ def _proc_runpipe(domain: str, user_input: str) -> _Proc:
     이 스크립트의 CLI 는 argparse 가 아니라 **위치인자 2개**(도메인, 사용자 입력)이고
     `--` 로 시작하는 토큰만 플래그로 본다. 그래서 사용자 입력이 `--` 로 시작하면
     조용히 플래그로 먹힌다 — `start_run` 이 미리 막는다.
+
+    🔴 `--reprofile` 을 **항상** 넘긴다. 이 칸은 `full` 에만 있고, full 은 화면1 로
+       올린 원본을 도는 모드다 — `fixture/profiles.json` 은 그 `data/` 의 사본이라
+       원본이 바뀌면 같이 바뀌어야 한다. 없을 때만 만드는 기본 동작이면 낡은 사본이
+       계속 이기고, 감리 AI 는 **지운 데이터셋을 보고 새로 올린 것을 못 본다**
+       (2026-08-12 재활용 실측 — 예외가 안 나고 근거만 틀린다).
+       조건부로 넘기지 않는다: "언제 다시 프로파일링하나" 를 러너가 판단하기
+       시작하면 그 판단이 틀렸을 때 드러날 자리가 없다.
     """
     return _Proc(("0", "1"),
-                 [_python_exe(), _svc("gam2_run_pipeline.py"), domain, user_input],
+                 [_python_exe(), _svc("gam2_run_pipeline.py"), domain, user_input,
+                  "--reprofile"],
                  markers=_RUNPIPE_MARKERS)
 
 
