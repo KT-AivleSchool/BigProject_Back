@@ -1,3 +1,18 @@
+# Ruff configuration for OmniSite Backend
+line-length = 120
+target-version = "py310"
+
 [lint]
-select = ["E", "F"]
-ignore = ["E501"]
+select = ["E", "F", "W"]
+ignore = [
+    "E402", # Module level import not at top of file (sys.path scripts)
+    "F401", # Imported but unused
+    "E702", # Multiple statements on one line
+    "E701", # Multiple statements on one line (colon)
+    "E722", # Do not use bare except
+    "E501", # Line too long
+    "W293", # Blank line contains whitespace
+    "W291", # Trailing whitespace
+    "F841", # Local variable is assigned to but never used
+    "E731", # Do not assign a lambda expression
+]
