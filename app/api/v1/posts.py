@@ -19,7 +19,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
-from app.config import BASE_DIR, settings
+from app.config import BASE_DIR
 from app.db.base import Post, User
 from app.schemas.post import PostListItem, PostListResponse, PostResponse
 
@@ -321,7 +321,105 @@ async def download_post_file(
 
     download_name = post_obj.original_filename or full_path.name
     return FileResponse(
-        path=full_path,
+        path=str(full_path),
         filename=download_name,
         media_type="application/octet-stream",
+    )
+
+
+@router.put("/{post_id}", response_model=PostResponse)
+async def update_post(
+    post_id: int,
+    title: str = Form(..., description="수정할 안건 제목"),
+    content: str = Form(..., description="수정할 안건 본문"),
+    remove_file: bool = Form(False, description="기존 첨부파일 삭제 여부"),
+    file: Optional[UploadFile] = File(None, description="새 첨부파일 (선택)"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    🔒 [토큰 필수] 본인 작성 게시글 수정 (제목, 본문, 첨부파일 변경/제거)
+    """
+    stmt = select(Post).where(Post.id == post_id)
+    result = await db.execute(stmt)
+    post_obj = result.scalar_one_or_none()
+
+    if not post_obj:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="해당 게시글을 찾을 수 없습니다.",
+        )
+
+    if post_obj.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="본인이 작성한 게시글만 수정할 수 있습니다.",
+        )
+
+    # 1. 기본 필드 업데이트
+    post_obj.title = title
+    post_obj.content = content
+
+    # 2. 기존 첨부파일 제거 요청 처리
+    if remove_file and post_obj.file_path:
+        old_path = BASE_DIR / post_obj.file_path
+        if old_path.is_file():
+            try:
+                old_path.unlink()
+            except Exception as e:
+                print(f"[File Delete Warning] {e}")
+        post_obj.file_path = None
+        post_obj.original_filename = None
+        post_obj.file_size = None
+
+    # 3. 새 첨부파일 업로드 처리
+    if file and file.filename:
+        file_bytes = await file.read()
+        file_size = len(file_bytes)
+
+        if file_size > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"첨부파일 크기는 최대 20MB를 초과할 수 없습니다. (현재: {file_size / (1024*1024):.1f}MB)",
+            )
+
+        # 기존 파일 제거
+        if post_obj.file_path:
+            old_path = BASE_DIR / post_obj.file_path
+            if old_path.is_file():
+                try:
+                    old_path.unlink()
+                except Exception as e:
+                    print(f"[File Overwrite Warning] {e}")
+
+        orig_filename = file.filename
+        ext = os.path.splitext(orig_filename)[1]
+        unique_filename = f"{uuid.uuid4().hex}{ext}"
+
+        upload_dir = get_upload_dir()
+        target_file_path = upload_dir / unique_filename
+
+        with open(target_file_path, "wb") as f:
+            f.write(file_bytes)
+
+        saved_file_path = str(target_file_path.relative_to(BASE_DIR))
+        post_obj.file_path = saved_file_path
+        post_obj.original_filename = orig_filename
+        post_obj.file_size = file_size
+
+    await db.commit()
+    await db.refresh(post_obj)
+
+    return PostResponse(
+        id=post_obj.id,
+        user_id=post_obj.user_id,
+        author_name=current_user.username,
+        author_email=current_user.email,
+        title=post_obj.title,
+        content=post_obj.content,
+        has_file=bool(post_obj.file_path),
+        original_filename=post_obj.original_filename,
+        file_size=post_obj.file_size,
+        created_at=post_obj.created_at,
+        is_owner=True,
     )
