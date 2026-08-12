@@ -177,12 +177,15 @@ async def list_posts(
     elif sort_by == "created_at":
         order_column = Post.created_at
 
+    sort_clause = order_column.asc() if order.lower() == "asc" else order_column.desc()
+
     # 목록 조인 쿼리 (User 테이블과 조인하여 작성자 이름 획득)
     stmt = select(Post, User.username).join(User, Post.user_id == User.id)
     if where_clauses:
         stmt = stmt.where(*where_clauses)
 
     stmt = stmt.order_by(sort_clause).offset(offset).limit(limit)
+
     result = await db.execute(stmt)
     rows = result.all()
 
