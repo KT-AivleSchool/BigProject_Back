@@ -337,6 +337,35 @@ python app\tools\check_optional_auth.py              :: 선택적 인증 — run
                                                      ::    「내 것 1 + 주인 없는 것 7」로 갈리는지 볼 실물이다
                                                      :: ⚠ 옛 행은 소급 안 됐다(㉠ 익명은 정상 상태)
                                                      :: ⚠ 컬럼명은 `ended_at` 이 아니라 **`finished_at`** 이다
+python app\tools\check_mypage_runs.py                :: 마이페이지 run 이력 `GET /pipeline/runs?mine=true`
+                                                     :: 48항목 (실 DB·실 Redis · LLM 0회)
+                                                     :: 🔴 제일 중요한 항목은 **「익명 행이 응답에 들어 있는가」**다 —
+                                                     ::    `WHERE user_id = :me` 로 걸러도 **200 이 나온다.**
+                                                     ::    화면의 아래 구획만 조용히 비고 에러가 안 난다
+                                                     :: 🔴 동시에 **「남의 행은 안 샌다」**도 본다(계정을 둘 만든다).
+                                                     ::    「내 것 + 익명」이지 「전부」가 아니다
+                                                     :: 🔴 인증을 **목으로 안 갈아끼운다** — 401 갈래 4개(없음·만료·
+                                                     ::    위조·refresh를access자리)가 이 엔드포인트의 절반이다
+                                                     :: 🔴 행은 정본 `run_records.record_run_start` 로 넣는다.
+                                                     ::    손 INSERT 하면 시각 경로(naive→TIMESTAMPTZ)를 건너뛰어
+                                                     ::    「9시간 밀리는가」 항목이 아무것도 안 본다
+                                                     :: `users`·`run_records` 에 넣고 지운다(남의 행 개수 전후 대조)
+                                                     :: ⚠ in-process 라 **이것만으론 배포됐는지 모른다** → 아래를 같이 쓴다
+python app\tools\check_mypage_runs_live.py [base_url] :: 같은 엔드포인트를 **살아 있는 서버**로 27항목
+                                                     :: (기본 http://127.0.0.1:8000/api/v1 · 실 DB · LLM 0회)
+                                                     :: 🔴 위 48항목과 **묻는 게 다르다.** 저쪽은 ASGITransport 라
+                                                     ::    자기 프로세스에 방금 import 한 코드를 잰다 — 살아 있는
+                                                     ::    uvicorn 이 옛 프로세스여도 초록불이다
+                                                     :: ⚠ 이것도 「지금 그 포트가 새 코드다」까지다. 근거의 뿌리는
+                                                     ::    여전히 **기동 시각 ↔ 파일 mtime** 이고 이건 그 위에 얹는다
+                                                     :: ✅ 2026-08-12 재시작 후 **27/27**(사람 승인 · PID 45960
+                                                     ::    기동 19:55:27 > `pipeline.py` mtime 19:35:16).
+                                                     ::    옛 PID 3896 은 기동 18:16:41 이라 이 경로를 몰랐다
+                                                     :: 🔴 그때 `started_at` 이 **`+00:00`** 으로 나온다는 걸 봤다 —
+                                                     ::    값(순간)은 옳지만 표기가 UTC 다. 읽는 쪽이 오프셋을
+                                                     ::    안 파싱하고 자르면 **9시간 이른 시각**이 화면에 뜬다
+                                                     ::    (계약 §3-3-1). 서버에서 +09:00 으로 바꾸지 않는다 —
+                                                     ::    표기가 서버 TZ 에 묶인다
 python app\tools\measure_runtime.py --domain <도메인> :: 파이프라인 실행시간 실측 (기본 읽기 전용 · LLM 0회)
                                                      :: [--run] 새 실행 (y/n 확인) [--cold] LLM 캐시 비우고
                                                      :: 🔴 계측 층이 **둘**이고 놓치는 게 다르다 —
@@ -1037,6 +1066,11 @@ D:\obsidian_claude\10_OmniSite\
           (`/simulation`·`/simulations`) · upload 7 · **stakeholders 2 · report 1**(PR #224).
           33→35 는 `GET /simulations/hearings/b/{id}` **하나**를 넣은 것이다
           (두 prefix 라 둘 는다). 그 앞 31→33 은 `GET /simulations/hearings` 였다.
+          🔴 **지금 이 브랜치(`merge_Back`)는 44 다**(2026-08-12 실측 · 같은 세는 단위 —
+          route 객체. 고유 경로로 세면 **38**). 위 35 는 **다른 브랜치의 다른 날 값**이라
+          나란히 놓고 빼면 안 된다. `pipeline` 은 5→**6** 이다 —
+          `GET /runs`(마이페이지, 3-3-1)를 더했다. **경로가 아니라 메서드가 늘었다**:
+          `POST /runs` 와 같은 경로라 고유 경로 수는 안 는다(그래서 405 였다).
           🔴 **35개 중 「돌려본 것」은 그보다 적다**(2026-08-10 로그 실측). 구현됐다고
           실행 근거가 생기는 게 아니다. `pipeline` 5 · `upload` 7 · `simulations`(복수) 7 ·
           `report/hwpx` 1 = **실행 확인됨**. `simulation`(단수) 7 은 안 쳤지만

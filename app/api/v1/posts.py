@@ -1,3 +1,4 @@
+import logging
 import os
 import uuid
 from datetime import datetime
@@ -26,7 +27,17 @@ from app.schemas.post import PostListItem, PostListResponse, PostResponse
 
 router = APIRouter()
 
+logger = logging.getLogger("uvicorn.error")
+
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB 제한
+
+# 🔴 목록 조회의 열거형 인자. **모르는 값은 조용히 무시하지 않는다**(원칙 1).
+#    예전엔 `if/elif` 만 있고 `else` 가 없어서 `search_type` 에 오타가 나면
+#    검색 조건이 통째로 빠진 채 **200 + 전체 목록**이 나갔다 — 프런트에는
+#    「검색 결과가 이만큼」으로 보인다. 안 터지고 값만 틀린다.
+_SEARCH_TYPES = ("title", "content", "author", "title_content")
+_SORT_COLUMNS = ("id", "title", "author_name", "created_at")
+_SORT_ORDERS = ("asc", "desc")
 
 
 def get_upload_dir() -> Path:
@@ -147,6 +158,31 @@ async def list_posts(
     """
     offset = (page - 1) * limit
 
+    # 🔴 모르는 값은 거절한다. 422(pydantic `Literal`)가 아니라 **400 + 한 문장**인 이유:
+    #    프런트는 에러 `code` 로 분기하지 않고 `detail` 문장을 그대로 띄운다.
+    #    422 의 `detail` 은 객체 배열이라 화면에 그대로 못 쓴다.
+    #    빈 문자열은 「안 보냈다」로 보고 기본값을 쓴다 — 프런트가 검색을 안 할 때
+    #    빈 칸을 실어 보내는 것까지 거절하면 멀쩡하던 호출이 깨진다.
+    search_type = (search_type or "").strip() or "title_content"
+    sort_by = (sort_by or "").strip() or "created_at"
+    order = (order or "").strip().lower() or "desc"
+
+    if search_type not in _SEARCH_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"search_type 은 {', '.join(_SEARCH_TYPES)} 중 하나여야 합니다. (받은 값: {search_type})",
+        )
+    if sort_by not in _SORT_COLUMNS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"sort_by 는 {', '.join(_SORT_COLUMNS)} 중 하나여야 합니다. (받은 값: {sort_by})",
+        )
+    if order not in _SORT_ORDERS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"order 는 {', '.join(_SORT_ORDERS)} 중 하나여야 합니다. (받은 값: {order})",
+        )
+
     # 검색 필터 조건 구성
     where_clauses = []
     if mine:
@@ -171,18 +207,15 @@ async def list_posts(
     total_result = await db.execute(count_stmt)
     total = total_result.scalar_one_or_none() or 0
 
-    # 정렬 컬럼 및 방향 지정
-    order_column = Post.created_at
-    if sort_by == "id":
-        order_column = Post.id
-    elif sort_by == "title":
-        order_column = Post.title
-    elif sort_by == "author_name":
-        order_column = User.username
-    elif sort_by == "created_at":
-        order_column = Post.created_at
+    # 정렬 컬럼 및 방향 지정 (위에서 값을 이미 검증했다)
+    order_column = {
+        "id": Post.id,
+        "title": Post.title,
+        "author_name": User.username,
+        "created_at": Post.created_at,
+    }[sort_by]
 
-    sort_clause = order_column.asc() if order.lower() == "asc" else order_column.desc()
+    sort_clause = order_column.asc() if order == "asc" else order_column.desc()
 
     # 목록 조인 쿼리 (User 테이블과 조인하여 작성자 이름 획득)
     stmt = select(Post, User.username).join(User, Post.user_id == User.id)
@@ -278,17 +311,32 @@ async def delete_post(
             detail="자신이 작성한 게시글만 삭제할 수 있습니다.",
         )
 
-    # 저장된 첨부파일이 있는 경우 디스크에서 삭제
-    if post_obj.file_path:
-        full_file_path = BASE_DIR / post_obj.file_path
+    # 🔴 파일을 **행보다 먼저** 지우면 안 된다. commit 이 실패했을 때 행은 남고
+    #    파일만 사라져 `has_file: true` 인데 다운로드가 404 「서버에 물리 파일이
+    #    존재하지 않습니다」가 된다 — 사용자에겐 「글은 있는데 첨부가 증발」이다.
+    #    순서를 뒤집으면 최악이 **주인 없는 파일 하나**이고, 그건 아래 로그에 남는다.
+    #    싼 쪽으로 실패하게 둔다.
+    file_to_remove = post_obj.file_path
+
+    await db.delete(post_obj)
+    await db.commit()
+
+    if file_to_remove:
+        full_file_path = BASE_DIR / file_to_remove
         if full_file_path.is_file():
             try:
                 full_file_path.unlink()
             except Exception as e:
-                print(f"[Post File Delete Warning] {e}")
-
-    await db.delete(post_obj)
-    await db.commit()
+                # 🔴 print 는 uvicorn 로그로 안 간다(러너가 돌리면 stdout 이 사라진다).
+                #    지우다 실패한 파일은 **참조가 끊긴 채 영원히 남는다** —
+                #    `runs/` 와 달리 이 폴더엔 정리기도 상한도 없다. 흔적은 남긴다.
+                logger.warning(
+                    "[posts] 첨부파일 삭제 실패 — 주인 없는 파일이 남는다: "
+                    "post_id=%s path=%s err=%s",
+                    post_id,
+                    file_to_remove,
+                    e,
+                )
 
     return {"message": "게시글이 성공적으로 삭제되었습니다.", "post_id": post_id}
 
@@ -357,17 +405,32 @@ async def update_post(
         )
 
     # 1. 기본 필드 업데이트
-    post_obj.title = title
-    post_obj.content = content
+    #    🔴 작성(create_post)에는 있는 검사가 여기엔 없었다 — 공백만 보내면
+    #    제목이 `"   "` 인 글로 **수정된다**(만들 땐 400 인데). 같은 규칙을 건다.
+    clean_title = title.strip()
+    clean_content = content.strip()
+
+    if not clean_title:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="제목을 입력해주세요.",
+        )
+    if not clean_content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="내용을 입력해주세요.",
+        )
+
+    post_obj.title = clean_title
+    post_obj.content = clean_content
+
+    # 🔴 삭제와 같은 이유로 **commit 뒤에** 지운다(delete_post 주석 참조).
+    #    여기 모아두고 아래에서 한 번에 지운다.
+    pending_removals: list[str] = []
 
     # 2. 기존 첨부파일 제거 요청 처리
     if remove_file and post_obj.file_path:
-        old_path = BASE_DIR / post_obj.file_path
-        if old_path.is_file():
-            try:
-                old_path.unlink()
-            except Exception as e:
-                print(f"[File Delete Warning] {e}")
+        pending_removals.append(post_obj.file_path)
         post_obj.file_path = None
         post_obj.original_filename = None
         post_obj.file_size = None
@@ -383,14 +446,9 @@ async def update_post(
                 detail=f"첨부파일 크기는 최대 20MB를 초과할 수 없습니다. (현재: {file_size / (1024*1024):.1f}MB)",
             )
 
-        # 기존 파일 제거
+        # 기존 파일 제거 (실제 unlink 는 commit 뒤)
         if post_obj.file_path:
-            old_path = BASE_DIR / post_obj.file_path
-            if old_path.is_file():
-                try:
-                    old_path.unlink()
-                except Exception as e:
-                    print(f"[File Overwrite Warning] {e}")
+            pending_removals.append(post_obj.file_path)
 
         orig_filename = file.filename
         ext = os.path.splitext(orig_filename)[1]
@@ -409,6 +467,20 @@ async def update_post(
 
     await db.commit()
     await db.refresh(post_obj)
+
+    for rel_path in pending_removals:
+        old_path = BASE_DIR / rel_path
+        if old_path.is_file():
+            try:
+                old_path.unlink()
+            except Exception as e:
+                logger.warning(
+                    "[posts] 첨부파일 교체/제거 실패 — 주인 없는 파일이 남는다: "
+                    "post_id=%s path=%s err=%s",
+                    post_id,
+                    rel_path,
+                    e,
+                )
 
     return PostResponse(
         id=post_obj.id,
