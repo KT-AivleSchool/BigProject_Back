@@ -1,7 +1,7 @@
 """
 OmniSite Redis Raw Bytes Data Seeder / Staging Restorer
 =======================================================
-`data_임시/<도메인>/` 아래 원본 파일을 **바이트 그대로** Redis 에 넣고,
+`datasets/<도메인>/` 아래 원본 파일을 **바이트 그대로** Redis 에 넣고,
 다른 곳에서 스테이징 폴더로 복원한다. 정본 파서(`gam2_profile._read_csv` 등)를
 그대로 재사용하기 위해 형식을 바꾸지 않는다.
 
@@ -60,7 +60,7 @@ def seed_domain_data_to_redis(
     ttl_sec: int | None = DEFAULT_TTL_SEC,
 ) -> dict[str, int]:
     """
-    `data_임시/<domain>/` 아래 모든 파일을 바이트 그대로 Redis 에 넣는다.
+    `datasets/<domain>/` 아래 모든 파일을 바이트 그대로 Redis 에 넣는다.
 
     반환: {상대경로: 바이트수}. 하나라도 실패하면 `raise` 한다 —
     부분 적재는 복원 쪽에서 「데이터가 좀 적네」로 보일 뿐 터지지 않는다.

@@ -34,13 +34,61 @@ Docker를 활용해 지리 정보 공간 데이터베이스(PostGIS) 및 RAG 벡
 # Docker Compose 백그라운드 실행
 docker compose up -d --build
 
-# 17개 물리 테이블 DDL 주입
+# 앱 기본 테이블 DDL 주입 (districts · dong_boundaries + 확장팩)
 docker exec -i omnisite-postgres-db psql -U postgres -d omnisite < schema.sql
 ```
+
+> 🔴 **`schema.sql` 하나로는 DB 가 완성되지 않습니다 (2026-08-11 정정).**
+> 그전까지 이 자리에는 "17개 물리 테이블 DDL 주입" 이라고 적혀 있었는데,
+> 그 17개 중 **11개는 실 DB 에도 없고 코드 참조도 0회**였고 **5개는 정본이 ORM**,
+> **1개는 정본이 `schema_cadastral.sql`** 이었습니다. 낡은 선언들은
+> `CREATE TABLE IF NOT EXISTS` 라서 **빈 DB 에 먼저 돌리면 틀린 스키마가 만들어지고**
+> 뒤이은 `create_all(checkfirst=True)` 이 「이미 있다」며 건너뜁니다 —
+> 이름이 같아 `SELECT` 를 짤 때까지 안 보입니다. 그래서 17개를 들어냈습니다
+> (경위는 `schema.sql` 머리말).
+>
+> 빈 DB 를 채우는 순서는 다음과 같습니다. **파일마다 정본이 다릅니다.**
+>
+> | 순서 | 무엇 | 대상 |
+> |---|---|---|
+> | 1 | `schema.sql` | 확장팩 · `districts` · `dong_boundaries` |
+> | 2 | `schema_region_boundaries.sql` + `python scripts/load_region_boundaries.py --commit` | 1계층 경계 3종 + `admin_crosswalk` |
+> | 3 | `schema_cadastral.sql` + `python scripts/load_cadastral.py --commit` | `cadastral_lands` (연속지적도) |
+> | 4 | `schema_cleaned_data.sql` → `schema_cleaned_data_add.sql` | `candidate_lands` · `national_properties` · `booth_candidates` |
+> | 5 | `schema_step4_topn.sql` · `schema_step5.sql` · `schema_step5_b.sql` | 산출물 계열 가산분(멱등) |
+> | 6 | `python scripts/create_missing_tables.py --yes` | ORM 정본 8종(`users`·`audit_rules`·`hearing_result_a`…) |
+>
+> 2·3 의 원본(SHP)은 `.gitignore` 대상이라 clone 에 안 들어옵니다.
+> 팀 seed(`omnisite_seed.sql.gz`)로 복원하면 1~5 는 건너뛸 수 있습니다(경계 3종 제외).
 *   **로컬 DB 접속 정보**: 포트 `5432` / 사용자 `postgres` / 비밀번호 `postgres` / DB명 `omnisite`
     *   컨테이너명은 `omnisite-postgres-db` 입니다(Redis 는 `omnisite-redis-cache`).
-    *   `app/config.py` 의 `DATABASE_URL` 기본값이 이 값과 같으므로, 로컬에서는 `.env` 없이도 붙습니다.
+    *   🔴 **`DATABASE_URL`·`REDIS_URL`·`SECRET_KEY` 는 기본값이 없습니다**
+        (2026-08-07 침해 대응 · `app/config.py:36-44` `_require_env`).
+        로컬이라도 **`.env` 가 반드시 있어야 기동됩니다** — `.env.example` 을 복사해
+        위 접속 정보를 채우세요.
+        없으면 「DB 접속 실패」가 아니라 **import 시점 `RuntimeError`** 로 죽습니다.
+        docker 를 헤매지 마세요 — 그 예외 문구가 `.env.example` 을 복사하라고 정확히
+        말해줍니다.
 *   *주의*: pgvector 확장 제어 선언은 `CREATE EXTENSION vector;` 문법을 사용해야 합니다.
+
+> 🔴 **`:65` 는 2026-08-12 에 정정된 것입니다** (프런트 세션 지적).
+> 그전까지 이 자리에는 「`app/config.py` 의 `DATABASE_URL` 기본값이 이 값과 같으므로
+> 로컬에서는 `.env` 없이도 붙습니다」라고 적혀 있었습니다. **그 기본값은
+> 2026-08-09 보안 조치로 일부러 없앤 것**입니다(`_require_env` 를 넣은 그 커밋).
+> **코드가 옳고 README 만 그때 같이 안 고쳐졌습니다.**
+>
+> 증상이 헷갈리는 방향으로 납니다. 처음 받은 사람은 README 를 믿고 `.env` 없이
+> `uvicorn` 을 치는데, 나오는 건 「DB 접속 실패」가 아니라 **import 시점
+> `RuntimeError`** 입니다 → 「DB 를 안 띄웠나」로 읽고 docker 쪽을 헤맵니다.
+> `RuntimeError` 문구는 `.env.example` 을 복사하라고 정확히 말해주는데,
+> **그 앞의 README 문장이 반대로 안내하고 있었습니다.**
+>
+> ⚠ **`:63` 의 접속 정보 자체는 지금도 맞습니다**(`docker-compose.yml` 과 일치).
+> 틀린 건 「그래서 `.env` 가 없어도 된다」는 **뒷문장 하나**였습니다 —
+> 앞줄까지 같이 고치면 멀쩡한 값이 사라집니다.
+>
+> 이건 CLAUDE.md 함정표 「**안 고친 주석이 남의 요구사항이 된다**」와 같은 모양입니다.
+> 없앤 것을 있다고 말하는 문서는 **다음 사람의 계획이 됩니다.**
 
 > 🔴 **위 접속 정보는 2026-08-05 에 정정된 것입니다.**
 > 그전까지 이 자리에는 컨테이너 `omnisite-db` / 사용자 `admin` / 비밀번호 `admin1234` /
@@ -48,17 +96,20 @@ docker exec -i omnisite-postgres-db psql -U postgres -d omnisite < schema.sql
 > `docker-compose.yml` 은 `omnisite-postgres-db` · `postgres`/`postgres` 이고
 > `Dockerfile.db` 어디에도 `admin` 계정을 만드는 구문이 없으며, `schema.sql` 의
 > `CREATE TABLE` 은 **17개**입니다. 그대로 치면 컨테이너명과 사용자 두 군데에서 실패합니다.
+> (⚠ 그 **17개**는 2026-08-11 에 **2개**가 됐습니다 — 위 표 참조. 여기 숫자는
+> 「16대」가 왜 틀렸는지를 적은 당시 기록이라 고치지 않고 둡니다.)
 >
 > 코드가 아니라 **문서만 어긋나 있었습니다.** 이런 종류는 실행해 보기 전엔 안 걸리고,
 > 처음 받은 사람이 첫 명령에서 막힙니다.
 
-> ⚠️ **`schema.sql` 과 ORM(`app/db/models/`)이 지금 서로 다릅니다.**
-> 공통 14개 테이블 중 11개는 컬럼까지 일치하지만 `conflict_simulations`·
-> `verified_precedents` 는 컬럼 구성이 갈리고, ORM 이 참조하는 `parcels` 테이블은
-> `schema.sql` 에 아예 없습니다. **하필 `/api/v1/audit/*` 이 쓰는 테이블들입니다.**
-> 어느 쪽을 정본으로 삼을지 정해지기 전까지 `/audit/*` 은 이 DB 에서 동작을 보장할 수
-> 없습니다. 대조 근거와 스크립트는 문서
-> `01_설계결정\백엔드팀_API현황_및_Redis_Postgres_전환.md` §5-2 · §10-1 에 있습니다.
+> ✅ **`schema.sql` ↔ ORM 불일치는 2026-08-11 에 해소됐습니다.**
+> 여기 있던 경고 — 「공통 14개 중 `hearing_result_a`·`verified_precedents` 가 갈린다,
+> 하필 `/api/v1/audit/*` 이 쓰는 테이블이다」 — 는 그대로 참이었습니다.
+> **어느 쪽을 정본으로 삼을지 정해서** 끝냈습니다: 그 계열은 **ORM 이 정본**이고,
+> `schema.sql` 에서 중복 선언을 들어냈습니다(위 표 6행). 겹치는 정의가 없으니
+> 갈릴 자리도 없습니다. 컬럼 정합은 2026-08-09 `schema_step5.sql` 로 맞췄고,
+> `/audit/*` 은 2026-08-11 에 `python app/tools/check_audit.py` **57/57** 로 실측했습니다.
+> 대조 근거는 `01_설계결정\백엔드팀_API현황_및_Redis_Postgres_전환.md` §5-2 · §10-1.
 
 ### ➌ FastAPI 백엔드 개발 서버 실행
 ```bash

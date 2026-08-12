@@ -32,8 +32,7 @@ from app.services import run_pruner as P  # noqa: E402
 
 
 def _print_plan(res: dict) -> int:
-    print(f"보관 최근 {res['keep']}개 · booth_candidates 참조 보호 "
-          f"{len(res['protected'])}개 {res['protected']}")
+    print(f"보관 최근 {res['keep']}개")
     print("-" * 78)
     prune_bytes = prune_files = 0
     for it in res["items"]:
@@ -80,7 +79,7 @@ async def _main() -> int:
         print("\n지울 것이 없다.")
         return 0
 
-    applied = P.apply(res["items"])
+    applied = P.apply(res["items"], keep=res["keep"])
     print(f"\n✅ 삭제: run {applied['runs']}개 · 파일 {applied['files']}개 · "
           f"{applied['bytes'] / 2**20:.1f} MB 회수")
     print("   지운 사실은 각 run 의 status.json `pruned` 에 남겼다.")

@@ -37,8 +37,12 @@ omnisite-redis-cache (Redis, AOF 영속화)
 |---|---|---|---|
 | `scripts/load_region_boundaries.py` | `region_data/BND_*.shp` + 크로스워크 | sido/sigungu/adm_dong_boundaries, admin_crosswalk | `schema_region_boundaries.sql` |
 | `scripts/load_cadastral.py` | `region_data/LSMD_*.shp` | cadastral_lands | `schema_cadastral.sql` |
-| `scripts/load_domain_from_gpkg.py` | `step2_output/*.gpkg` | smoking_areas·commercial_shops·street_trash_bins | `schema_cleaned_data.sql` |
 | `scripts/README.md` | — | 사전준비·실행순서·재현 가이드 | — |
+
+> 🔴 `scripts/load_domain_from_gpkg.py`(`step2_output/*.gpkg` → smoking_areas·
+> commercial_shops·street_trash_bins)는 **2026-08-11 에 지웠다.** 세 대상 테이블을 포함한
+> 흡연 도메인 데이터셋 8개를 DB 에서 제거했기 때문이다 — 프리셋 원본은 이제 DB 가 아니라
+> **디스크**에 둔다(이슈 #215 계층 구분). 파이프라인은 그 테이블들을 읽은 적이 없다.
 
 > 모든 로더는 **멱등 가드**(대상 0행/시군구 미적재일 때만) — 재실행해도 중복 안 됨.
 > 실행: `python scripts/load_XXX.py`(DRY-RUN) → `--commit`(실제 적재).
@@ -53,12 +57,12 @@ omnisite-redis-cache (Redis, AOF 영속화)
 
 ### 2-4. 원본 데이터 (`.gitignore` — 로컬 전용, 각자 배치)
 ```
-data_임시/region_data/
+datasets/region_data/
   BND_{SIDO,SIGUNGU,ADM_DONG}_PG.shp   경계 3종 (EPSG:5186)
   행정동_크로스워크.csv                 코드 매핑 3,555행
   LSMD_CONT_LDREG_11170_202607.shp     연속지적도 44,459필지 (용산)
   국유부동산_위경도_v2.csv              공유지 2,486건 (좌표 포함)
-data_임시/step2_output/{흡연_1차,재활용_1차}/*.gpkg   STEP2 정제본 (EPSG:4326)
+datasets/step2_output/{흡연_1차,재활용_1차}/*.gpkg   STEP2 정제본 (EPSG:4326)
 {도메인}/law/*.pdf,*.txt                조례 원본 (RAG용)
 ```
 
@@ -79,8 +83,10 @@ region_data/BND_*.shp(5186) → schema_region_boundaries → load_region_boundar
 행정동_크로스워크.csv        → (동일)                    → (동일)                    → admin_crosswalk
 region_data/LSMD_*.shp(5186) → schema_cadastral         → load_cadastral.py         → cadastral_lands
 국유부동산.csv               → schema_cleaned_data_add   → (CSV 로더)                → national_properties
-step2_output/*.gpkg(4326)    → schema_cleaned_data       → load_domain_from_gpkg.py  → 도메인 테이블
 {도메인}/law/*.pdf           → statute 파서              → add_statute_chunks(임베딩) → langchain_pg_embedding
+
+  🔴 `step2_output/*.gpkg → 도메인 테이블` 줄은 2026-08-11 에 없앴다. STEP2 정제본은
+     DB 로 안 들어간다 — 파이프라인도 화면5 POI 문맥도 **파일에서 직접 읽는다**.
 
   공통: 5186 원본 → geom(4326) 저장 → geom_5186(GENERATED 자동변환) → GiST 인덱스
 ```

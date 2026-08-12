@@ -50,12 +50,19 @@ class Parcel(Base):
     rank = Column(Integer, nullable=True)
 
     simulations = relationship(
-        "ConflictSimulation", back_populates="parcel", cascade="all, delete-orphan"
+        "HearingResultA", back_populates="parcel", cascade="all, delete-orphan"
     )
 
 
-class ConflictSimulation(Base):
-    """STEP5 공청회 시뮬레이션 1회 = 1행.
+class HearingResultA(Base):
+    """화면5 **A 대립 토론**(찬성/반대/정부 + evaluator) 1회 = 1행.
+
+    🔴 2026-08-12 개명. 예전 이름은 클래스 `ConflictSimulation` · 테이블
+       `conflict_simulations` 였다. B 엔진 결과가 `hearing_results_b` 라 **두 엔진의
+       결과 테이블이 이름만으로는 짝으로 안 읽혔다** — 옛 로그·외부 문서에 남은
+       그 이름은 **같은 테이블**이다. 소문자로 둔 이유: 대문자가 섞이면 SQLAlchemy 가
+       `__tablename__` 을 따옴표로 감싸고 생 SQL 은 소문자로 접혀 **테이블이 둘로
+       갈린다**(둘 다 만들어지고 안 터진다).
 
     🔴 2026-08-09 재선언(B안). 이전 선언은 `parcel_id`·`facility_type`·`result_json`
        세 컬럼뿐이었고 **실 DB 에 그 셋이 다 없어서** INSERT 가 100% 실패했다
@@ -67,15 +74,21 @@ class ConflictSimulation(Base):
       나머지 둘이 NULL 인 것은 결함이 아니라 사실이다 — 안 나온 걸 지어내지 않는다(원칙 4).
     """
 
-    __tablename__ = "conflict_simulations"
+    __tablename__ = "hearing_result_a"
 
     id = Column(Integer, primary_key=True, index=True)
 
     # ── 대상 ────────────────────────────────────────────────────────────
+    # 🔴 NOT NULL 이다(2026-08-11, 사람 승인). 이 테이블에는 `run_id` 컬럼이 없어
+    #    run 에 닿는 경로가 `parcel_id → booth_candidates.run_id` **조인 하나뿐**이다.
+    #    NULL 이면 어느 실행의 어느 입지를 토론했는지 알 방법이 사라진다.
+    #    쓰기 경로는 `resolve_candidate`(실패 시 CandidateNotFound)를 통과해야만
+    #    저장하므로 실제로 NULL 이 될 수 없었지만, 그건 코드의 약속이지 DB 의
+    #    보증이 아니었다 — 손입력·다른 도구로 들어오면 막을 게 없다.
     parcel_id = Column(
         Integer,
         ForeignKey("booth_candidates.id", ondelete="CASCADE"),
-        nullable=True,
+        nullable=False,
         index=True,
     )
     # 위 후보점이 놓인 필지. booth_candidates.land_id 에서 유도해 채운다.
@@ -116,7 +129,7 @@ class ConflictSimulation(Base):
 class DebateLog(Base):
     """공청회 토론 발화 1건 = 1행.
 
-    `ConflictSimulation.result_json["debate_logs"]` 와 같은 내용이지만 행으로도
+    `HearingResultA.result_json["debate_logs"]` 와 같은 내용이지만 행으로도
     남긴다. 통짜 JSON 으로는 발화 단위 조회·인용·보고서 재구성이 안 된다.
     STEP1~4 주요 산출물을 테이블로 둔 것과 같은 방침이다.
 
@@ -132,7 +145,7 @@ class DebateLog(Base):
     id = Column(Integer, primary_key=True, index=True)
     simulation_id = Column(
         Integer,
-        ForeignKey("conflict_simulations.id", ondelete="CASCADE"),
+        ForeignKey("hearing_result_a.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -141,13 +154,13 @@ class DebateLog(Base):
     message = Column(Text, nullable=False)
     created_at = Column(DateTime, server_default=func.current_timestamp())
 
-    simulation = relationship("ConflictSimulation", back_populates="debate_logs")
+    simulation = relationship("HearingResultA", back_populates="debate_logs")
 
 
 class HearingResultB(Base):
     """화면5 **B 다인 토론**(이해관계자 페르소나) 1회 = 1행.
 
-    A 대립 토론은 `ConflictSimulation` 이다. **합치지 않았다** — 이유는
+    A 대립 토론은 `HearingResultA` 이다. **합치지 않았다** — 이유는
     `schema_step5_b.sql` 머리말에 있다(요약: `css_score`·`css_vector` 가 NOT NULL 인데
     B 는 그 지표를 안 내고, 완화하면 A 의 반쪽 결과도 저장 가능해진다).
 
@@ -156,7 +169,7 @@ class HearingResultB(Base):
        복사해 두면 후보점 쪽과 어긋날 수 있고, 어긋나도 안 터진다.
     """
 
-    __tablename__ = "hearing_results_b"
+    __tablename__ = "hearing_result_b"
 
     id = Column(Integer, primary_key=True, index=True)
     parcel_id = Column(

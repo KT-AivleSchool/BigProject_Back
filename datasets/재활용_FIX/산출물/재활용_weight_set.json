@@ -1,0 +1,406 @@
+{
+  "domain": "재활용",
+  "facility": "재활용정거장",
+  "region": "서울특별시 성동구",
+  "engine_version": "wm-1.0",
+  "generated_at": "2026-08-12T06:12:36",
+  "inputs": {
+    "reviewed": {
+      "file": "재활용_audit_result_reviewed.json",
+      "sha256": "1396265de1422ec8a6d11ada03556045cf6bcefa3c340e0a27d12a72d9e0b6c1",
+      "mtime": "2026-08-12T06:11:44",
+      "size": 13229
+    },
+    "clean_report": {
+      "file": "재활용_clean_report.json",
+      "sha256": "53cde97b1773e906692a05168fd2b1fcf49d78ef37d1e770746f8acf4de9f598",
+      "mtime": "2026-08-12T06:11:47",
+      "size": 15480
+    },
+    "candidates": {
+      "file": "재활용_후보_지적도필지.gpkg",
+      "sha256": "7be3c78bbd93abe24932bf9b0e22ba9790bc7c923efb7bac2997a721d0d8d8c6",
+      "mtime": "2026-08-12T06:11:59",
+      "size": 15728640
+    }
+  },
+  "hitl": {
+    "radius_confirmed": true,
+    "weight_confirmed": true,
+    "value_source": "human",
+    "radius_sources": [
+      "human_confirmed",
+      "none"
+    ],
+    "weight_sources": [
+      "human_confirmed"
+    ]
+  },
+  "alpha": 0.3,
+  "n_candidates": 24861,
+  "candidate_unit": "candidates 레이어 1행 (Point)",
+  "candidate_source": {
+    "file": "재활용_후보_지적도필지.gpkg",
+    "layer": "candidates",
+    "geom_type": "Point",
+    "crs": 5186,
+    "loaded_as": "geometry",
+    "n": 24861
+  },
+  "indicators": [
+    {
+      "id": "01",
+      "kind": "point_count",
+      "direction": "benefit",
+      "components": {
+        "geo": "01",
+        "val": null
+      },
+      "radius_m": 100,
+      "radius_source": "human_confirmed",
+      "radius_rationale": "",
+      "seed_rationale": "사업장 폐기물 발생량은 재활용정거장 설치 수요를 높이는 요인이다.",
+      "sparse_excluded": false,
+      "w_human": 0.122,
+      "w_human_source": "human_confirmed",
+      "direction_source": "llm",
+      "direction_llm": "benefit",
+      "direction_conflict": null,
+      "adjusted_at": "2026-08-12T06:12:30",
+      "w_critic": 0.0813,
+      "w_critic_ci": {
+        "mean": 0.0812587629811439,
+        "std": 0.0009417128494430968,
+        "ci_low": 0.07952951558007985,
+        "ci_high": 0.08312647410004223
+      },
+      "w_final": 0.1098
+    },
+    {
+      "id": "02",
+      "kind": "point_count",
+      "direction": "benefit",
+      "components": {
+        "geo": "02",
+        "val": null
+      },
+      "radius_m": 50,
+      "radius_source": "human_confirmed",
+      "radius_rationale": "",
+      "seed_rationale": "의류수거함은 재활용 수요를 나타내는 지표로, 재활용정거장 설치 시 긍정적인 요인으로 작용할 수 있다.",
+      "sparse_excluded": false,
+      "w_human": 0.1707,
+      "w_human_source": "human_confirmed",
+      "direction_source": "llm",
+      "direction_llm": "benefit",
+      "direction_conflict": null,
+      "adjusted_at": "2026-08-12T06:12:30",
+      "w_critic": 0.1714,
+      "w_critic_ci": {
+        "mean": 0.17143863170511242,
+        "std": 0.0006567269270795103,
+        "ci_low": 0.17029533728786966,
+        "ci_high": 0.17265045499163026
+      },
+      "w_final": 0.1709
+    },
+    {
+      "id": "04",
+      "kind": "point_count",
+      "direction": "benefit",
+      "components": {
+        "geo": "04",
+        "val": null
+      },
+      "radius_m": 300,
+      "radius_source": "human_confirmed",
+      "radius_rationale": "",
+      "seed_rationale": "버스정류소는 유동인구가 많은 장소로, 재활용정거장의 수요를 높이는 요인이 될 수 있다.",
+      "sparse_excluded": false,
+      "w_human": 0.1707,
+      "w_human_source": "human_confirmed",
+      "direction_source": "llm",
+      "direction_llm": "benefit",
+      "direction_conflict": null,
+      "adjusted_at": "2026-08-12T06:12:30",
+      "w_critic": 0.1928,
+      "w_critic_ci": {
+        "mean": 0.19278012937247418,
+        "std": 0.0004936770750352405,
+        "ci_low": 0.19183541002089669,
+        "ci_high": 0.19372920463233823
+      },
+      "w_final": 0.1773
+    },
+    {
+      "id": "05",
+      "kind": "admin",
+      "direction": "benefit",
+      "components": {
+        "geo": "05",
+        "val": null
+      },
+      "radius_m": null,
+      "radius_source": "none",
+      "radius_rationale": "행정동 단위 지표(반경 무관)",
+      "seed_rationale": "인구 및 세대 수는 재활용정거장 설치 수요를 높이는 요인이다.",
+      "sparse_excluded": false,
+      "w_human": 0.1707,
+      "w_human_source": "human_confirmed",
+      "direction_source": "llm",
+      "direction_llm": "benefit",
+      "direction_conflict": null,
+      "adjusted_at": "2026-08-12T06:12:30",
+      "w_critic": 0.1865,
+      "w_critic_ci": {
+        "mean": 0.186483272731636,
+        "std": 0.0005395408089166645,
+        "ci_low": 0.1854554863176413,
+        "ci_high": 0.18748205682772534
+      },
+      "w_final": 0.1755
+    },
+    {
+      "id": "06",
+      "kind": "admin",
+      "direction": "benefit",
+      "components": {
+        "geo": "06",
+        "val": null
+      },
+      "radius_m": null,
+      "radius_source": "none",
+      "radius_rationale": "행정동 단위 지표(반경 무관)",
+      "seed_rationale": "생활인구는 재활용정거장 설치 수요를 나타내는 중요한 지표로 사용될 수 있다.",
+      "sparse_excluded": false,
+      "w_human": 0.1951,
+      "w_human_source": "human_confirmed",
+      "direction_source": "llm",
+      "direction_llm": "benefit",
+      "direction_conflict": null,
+      "adjusted_at": "2026-08-12T06:12:30",
+      "w_critic": 0.1846,
+      "w_critic_ci": {
+        "mean": 0.18459564365221298,
+        "std": 0.0004915660644581038,
+        "ci_low": 0.18369757081854146,
+        "ci_high": 0.18543272443301273
+      },
+      "w_final": 0.192
+    },
+    {
+      "id": "07",
+      "kind": "point_count",
+      "direction": "benefit",
+      "components": {
+        "geo": "07",
+        "val": null
+      },
+      "radius_m": 150,
+      "radius_source": "human_confirmed",
+      "radius_rationale": "",
+      "seed_rationale": "상업 활동이 활발한 지역은 재활용정거장 설치 수요가 높을 수 있다.",
+      "sparse_excluded": false,
+      "w_human": 0.1707,
+      "w_human_source": "human_confirmed",
+      "direction_source": "llm",
+      "direction_llm": "benefit",
+      "direction_conflict": null,
+      "adjusted_at": "2026-08-12T06:12:30",
+      "w_critic": 0.1834,
+      "w_critic_ci": {
+        "mean": 0.1834435595574205,
+        "std": 0.0004082846761033937,
+        "ci_low": 0.1826577389547057,
+        "ci_high": 0.18413778830042676
+      },
+      "w_final": 0.1745
+    }
+  ],
+  "notes": {
+    "critic_method": "Spearman-CRITIC",
+    "sparse_threshold": 0.05,
+    "sparse_excluded_ids": [],
+    "weight_meaning": "지표 간 상대 중요도(평가단위 독립). 위치선정이 이 값으로 후보 점수화."
+  },
+  "decay": {
+    "func": "gaussian",
+    "sigma_ratio": 0.3333333333333333
+  },
+  "scale": "log",
+  "diagnostics": {
+    "sample_bias": {
+      "01": {
+        "base": 0.08129388378951102,
+        "min": 0.07370260345702978,
+        "max": 0.08198354266853976,
+        "spread": 0.008280939211509977
+      },
+      "02": {
+        "base": 0.1713683068414121,
+        "min": 0.17028178240033015,
+        "max": 0.1782313991855008,
+        "spread": 0.007949616785170643
+      },
+      "04": {
+        "base": 0.19277466836595145,
+        "min": 0.19243242190793408,
+        "max": 0.2046426672415068,
+        "spread": 0.012210245333572706
+      },
+      "05": {
+        "base": 0.18654811410736552,
+        "min": 0.17497456190013974,
+        "max": 0.18736346650857302,
+        "spread": 0.012388904608433282
+      },
+      "06": {
+        "base": 0.1845690045903338,
+        "min": 0.18128224354059494,
+        "max": 0.18511188832580816,
+        "spread": 0.003829644785213221
+      },
+      "07": {
+        "base": 0.18344602230542592,
+        "min": 0.18324288914890932,
+        "max": 0.18810099331386534,
+        "spread": 0.004858104164956023
+      },
+      "_max_spread": 0.012388904608433282,
+      "_rank_stable": false,
+      "_rank_flips": [
+        {
+          "pair": [
+            "05",
+            "06"
+          ],
+          "gap": 0.0019791095170317297,
+          "tol": 0.012388904608433282,
+          "explained": true,
+          "variant": "층화균등"
+        },
+        {
+          "pair": [
+            "05",
+            "07"
+          ],
+          "gap": 0.0031020918019395993,
+          "tol": 0.012388904608433282,
+          "explained": true,
+          "variant": "층화균등"
+        },
+        {
+          "pair": [
+            "06",
+            "07"
+          ],
+          "gap": 0.0011229822849078697,
+          "tol": 0.004858104164956023,
+          "explained": true,
+          "variant": "층화균등"
+        },
+        {
+          "pair": [
+            "05",
+            "02"
+          ],
+          "gap": 0.015179807265953416,
+          "tol": 0.012388904608433282,
+          "explained": false,
+          "variant": "최다2계층제외"
+        }
+      ],
+      "_variants": {
+        "전체": 24861,
+        "층화균등": 14388,
+        "최다2계층제외": 17593,
+        "무작위절반": 12430
+      }
+    },
+    "alpha_sensitivity": {
+      "weights": {
+        "0.0": {
+          "01": 0.1219512195121951,
+          "02": 0.17073170731707316,
+          "04": 0.17073170731707316,
+          "05": 0.17073170731707316,
+          "06": 0.19512195121951217,
+          "07": 0.17073170731707316
+        },
+        "0.1": {
+          "01": 0.1178854859399267,
+          "02": 0.17079536726950706,
+          "04": 0.172936003421961,
+          "05": 0.1723133479961024,
+          "06": 0.19406665655659433,
+          "07": 0.17200313881590845
+        },
+        "0.2": {
+          "01": 0.11381975236765832,
+          "02": 0.17085902722194096,
+          "04": 0.17514029952684884,
+          "05": 0.17389498867513165,
+          "06": 0.19301136189367654,
+          "07": 0.17327457031474375
+        },
+        "0.3": {
+          "01": 0.1097540187953899,
+          "02": 0.17092268717437484,
+          "04": 0.17734459563173666,
+          "05": 0.17547662935416086,
+          "06": 0.1919560672307587,
+          "07": 0.174546001813579
+        },
+        "0.4": {
+          "01": 0.10568828522312149,
+          "02": 0.17098634712680877,
+          "04": 0.1795488917366245,
+          "05": 0.17705827003319013,
+          "06": 0.19090077256784085,
+          "07": 0.17581743331241428
+        },
+        "0.5": {
+          "01": 0.10162255165085309,
+          "02": 0.17105000707924267,
+          "04": 0.18175318784151234,
+          "05": 0.17863991071221938,
+          "06": 0.18984547790492304,
+          "07": 0.17708886481124958
+        }
+      },
+      "rank_groups": [
+        {
+          "alphas": [
+            0.0
+          ],
+          "order": [
+            "06",
+            "02",
+            "05",
+            "04",
+            "07",
+            "01"
+          ]
+        },
+        {
+          "alphas": [
+            0.1,
+            0.2,
+            0.3,
+            0.4,
+            0.5
+          ],
+          "order": [
+            "06",
+            "04",
+            "05",
+            "07",
+            "02",
+            "01"
+          ]
+        }
+      ]
+    },
+    "strata": "법정동코드"
+  }
+}

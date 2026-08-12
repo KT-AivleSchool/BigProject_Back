@@ -3,7 +3,7 @@
 """
 OmniSite Redis 원본 데이터 운반 도구 (수동)
 ==========================================
-`data_임시/<도메인>/` 를 Redis 에 바이트로 넣고(seed), 다른 곳에서 폴더로 꺼낸다(stage).
+`datasets/<도메인>/` 를 Redis 에 바이트로 넣고(seed), 다른 곳에서 폴더로 꺼낸다(stage).
 파일이 없는 기계에서 파이프라인을 돌려야 할 때 쓴다.
 
   적재:  python app/tools/seed_redis.py seed  <도메인> [--ttl 86400]

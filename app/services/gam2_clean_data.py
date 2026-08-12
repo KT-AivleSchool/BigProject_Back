@@ -24,7 +24,7 @@ OmniSite 정제 실행 엔진 (STEP 3) — 독립 실행
   5) 저장: geometry 있으면 .gpkg (좌표->Point/폴리곤, GIS·QGIS 소비)
           없으면 .csv (사람 확인·범용)
 
-출력 — 전부 config.STEP2_OUTPUT_DIR (…/data_임시/step2_output). 도메인 프리픽스로 구분.
+출력 — 전부 config.STEP2_OUTPUT_DIR (…/datasets/step2_output). 도메인 프리픽스로 구분.
   · <prefix>_clean_<dataset_id>.{gpkg|parquet}  (+ --csv-preview 시 _preview.csv)
   · <prefix>_clean_report.json  (dataset별 rows before/after·flags·op logs·role·GIS입력여부)
 

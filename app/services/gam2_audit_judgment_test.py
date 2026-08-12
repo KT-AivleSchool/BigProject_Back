@@ -2012,20 +2012,27 @@ def load_ordinance(source: str | None = None) -> str:
     return "\n\n".join(parts)
 
 
-def build_fixtures(profiles_path: str | None = None) -> dict:
+def build_fixtures(profiles_path: str | None = None,
+                   force_profile: bool = False) -> dict:
     """fixture/profiles.json 로드 → 조례 (a)안 전 데이터셋 주입.
     profiles.json 이 없으면 profile.py 로 자동 생성한다(data/ 프로파일링).
+
+    🔴 `force_profile=True` 면 **있어도 다시 만든다.** 이 파일은 `data/` 의 사본이지
+       독립된 입력이 아닌데, 없을 때만 만들면 원본이 바뀌어도 낡은 사본이 계속
+       이긴다 — 파일이 늘거나 줄어도 감리 AI 는 옛 목록을 본다(예외 없이 값만 틀린다).
+       실제로 재활용 도메인에서 지운 데이터셋 2개가 프로파일에 남아 있었다
+       (2026-08-12). 호출자는 `full` 모드뿐이다 — 거기서만 원본이 바뀔 수 있다.
     """
     path = profiles_path or _DOMAIN["profiles"]
     if not path:
         raise RuntimeError("도메인 미설정 — set_domain(<도메인폴더>) 먼저 호출 필요")
 
-    if not os.path.isfile(path):
-        # fixture 없음 → data/ 를 프로파일링해서 자동 생성 (무슨 상황인지 출력)
+    if force_profile or not os.path.isfile(path):
+        # fixture 없음(또는 강제 재생성) → data/ 를 프로파일링 (무슨 상황인지 출력)
         from app.services.gam2_profile import profile_folder, save_profiles
 
         data_dir = _DOMAIN["data"]
-        print(f"[fixture 없음] {path}")
+        print(f"[fixture {'재생성' if os.path.isfile(path) else '없음'}] {path}")
         if not os.path.isdir(data_dir):
             raise FileNotFoundError(
                 f"데이터 폴더도 없음: {data_dir}\n"

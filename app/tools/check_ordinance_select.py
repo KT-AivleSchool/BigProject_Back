@@ -41,7 +41,7 @@ def main() -> None:
     set_domain(args.domain)
     text = load_ordinance()
     if not text:
-        print(f"[중단] 조례 없음 — data_임시/{args.domain}/law/ 확인")
+        print(f"[중단] 조례 없음 — datasets/{args.domain}/law/ 확인")
         return
 
     arts = split_articles(text)

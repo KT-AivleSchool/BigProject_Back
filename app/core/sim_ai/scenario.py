@@ -16,7 +16,7 @@
 """
 import re
 
-# `conflict_simulations` 의 칸 이름과는 별개다. 여기는 **코드 어휘**만 안다.
+# `hearing_result_a` 의 칸 이름과는 별개다. 여기는 **코드 어휘**만 안다.
 SCENARIO_CODES = ("A", "B", "C")
 
 # 🔴 `"Scenario A"` 를 글자 단위로 훑으면 `SCENARIO` 의 **`C` 가 먼저 걸려 "C"** 가 된다.

@@ -2,10 +2,14 @@
 """후보점 주변 **POI 문맥** — 그 run 이 실제로 쓴 STEP2 정제 데이터에서 만든다.
 
 무엇이 문제였나 (2026-08-11 실측) — 예전 경로 `gis_service.get_poi_context_from_db`
-는 파이프라인 산출물을 **한 건도 안 본다.** 별도로 적재된 테이블 6개를 본다:
+는 파이프라인 산출물을 **한 건도 안 본다.** 별도로 적재된 테이블 6개를 봤다:
 
     parks 44행 · street_trash_bins 280 · smoking_areas 8 · bus_stop_passenger_stats 304
     cigarette_litter_hotspots **0행** · fire_water_facilities **0행**
+
+⚠ 위 6개는 **이제 DB 에 없다**(2026-08-11 삭제 — 프리셋 원본을 디스크로 옮기면서
+   흡연 도메인 데이터셋을 정리했다. 이슈 #215 계층 구분). 행 수는 삭제 직전 실측값이고
+   되살리라는 뜻이 아니다 — **왜 이 모듈이 파일을 읽는지**의 근거로만 남긴다.
 
 셋이 겹쳐 있었다.
   ① **도메인 하드코딩**(원칙 2). 테이블 6개도, 붙는 말머리도(`📍 대중교통`·
@@ -19,7 +23,7 @@
      **영원히 안 나오는데 매 토론마다 조회한다.**
 
 여기서는 **그 후보점의 run 이 낸 STEP2 산출물**을 센다. 경로는 후보점 행에서 온다 —
-`booth_candidates.run_id` 가 `'정본'` 이면 `data_임시/step2_output/`, `r_…` 이면
+`booth_candidates.run_id` 가 `'정본'` 이면 `datasets/step2_output/`, `r_…` 이면
 `runs/<run_id>/step2/` 다. 프리픽스는 `booth_candidates.domain`.
 요청으로 안 받는다: 파라미터로 받으면 흡연 후보점에 재활용 run 의 주변 문맥을 넘길 수 있다.
 

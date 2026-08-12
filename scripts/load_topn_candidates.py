@@ -12,11 +12,19 @@
 
 입력 우선순위(먼저 찾는 것을 쓴다):
   1) `--run <run_id>` → runs/<run_id>/step4/<도메인>_topN.geojson
-  2) 정본            → data_임시/step4_output/<도메인>_topN.geojson
+  2) 정본            → datasets/step4_output/<도메인>_topN.geojson
 
 `land_id`(후보점이 놓인 필지)는 **공간조인으로 유도**한다. `candidate_lands` 에는
 PNU 컬럼이 없어 코드 조인이 불가능하다. 매칭이 안 되면 NULL 로 두고 **몇 건이
 안 붙었는지 출력**한다 — 조용히 0으로 채우면 다른 필지를 가리킨다.
+
+🔴 그 공간조인에 **시군구 조건**을 같이 건다(2026-08-11, 사람 결정 「칼럼으로 가르자」).
+   `ST_Contains` 는 **가장 먼저 걸리는 필지**를 집으므로, 2계층에 다른 구 필지가
+   섞이면 경계에 붙은 남의 구 필지를 집어도 **안 터지고 값만 틀린다.**
+   조건 값은 상수가 아니라 **그 산출물의 PNU 앞 5자리**(행자부 시군구코드)에서 온다 —
+   여기에 `11170` 을 박으면 도메인 값 하드코딩이다(원칙 2).
+   PNU 가 없는 도메인이면 걸 근거가 없어 **조건을 안 건다.** 그때는 「안 걸렀다」를
+   출력한다 — 안 적으면 걸린 줄 알고 읽는다(원칙 4).
 
 `facility_type` 은 감리 확정본(`<도메인>_audit_result_reviewed.json`)의
 `facility_inference.facility` 에서 읽는다. 화면5 가 `audit_rules.target_facility`
@@ -93,7 +101,7 @@ def resolve_source(domain: str, run_id: str | None) -> tuple[Path, str]:
             raise SystemExit(f"🔴 {p} 가 없다. run_id 를 확인할 것.")
         return p, run_id
 
-    p = ROOT / "data_임시" / "step4_output" / name
+    p = ROOT / "datasets" / "step4_output" / name
     if not p.exists():
         raise SystemExit(
             f"🔴 {p} 가 없다. STEP4 를 먼저 돌리거나 --run <run_id> 로 지정할 것."
@@ -112,7 +120,7 @@ def resolve_facility(domain: str, run_id: str | None) -> str:
     """
     name = f"{domain_prefix(domain)}_audit_result_reviewed.json"
     p = (ROOT / "runs" / run_id / "step1" / name if run_id
-         else ROOT / "data_임시" / "step1_output" / name)
+         else ROOT / "datasets" / "step1_output" / name)
     if not p.exists():
         raise SystemExit(
             f"🔴 {p} 가 없다. 시설명을 추측하지 않는다 — STEP1 확정본이 필요하다."
@@ -156,6 +164,14 @@ def build_rows(doc: dict, domain: str, run_id: str, facility: str) -> list[dict]
         cnt = props.get("국유_건수")
         row["is_national"] = (int(cnt) > 0) if cnt is not None else None
 
+        # 공간조인을 좁힐 시군구코드. **산출물에서 온다** — 상수가 아니다.
+        # PNU 는 법정동코드 10자리로 시작하고 앞 5자리가 행자부 시군구코드다
+        # (`candidate_lands.sigungu_cd` 와 같은 체계 · 통계청 코드가 아니다).
+        # 없으면 None 이고 그러면 조건을 안 건다 — 추측해서 채우지 않는다.
+        pnu = row.get("pnu")
+        sgg = str(pnu)[:5] if pnu else ""
+        row["sgg"] = sgg if len(sgg) == 5 and sgg.isdigit() else None
+
         if row.get("rank") is None:
             raise SystemExit(f"🔴 features[{i}] 에 '순위' 가 없다. 정렬 근거가 사라진다.")
         rows.append(row)
@@ -168,18 +184,18 @@ def build_rows(doc: dict, domain: str, run_id: str, facility: str) -> list[dict]
 
 
 # 삭제로 **딸려 나가는 것**을 세는 질의. 값은 「지우기 전」 기준이다.
-#   conflict_simulations   ON DELETE CASCADE  → 같이 지워진다  (화면5 **A** 대립 토론)
+#   hearing_result_a   ON DELETE CASCADE  → 같이 지워진다  (화면5 **A** 대립 토론)
 #   debate_logs            ON DELETE CASCADE  → 위를 따라 같이 지워진다
-#   hearing_results_b      ON DELETE CASCADE  → 같이 지워진다  (화면5 **B** 다인 토론)
+#   hearing_result_b      ON DELETE CASCADE  → 같이 지워진다  (화면5 **B** 다인 토론)
 #   verified_precedents    ON DELETE SET NULL → 행은 남고 **연결만 끊긴다**
 #                                               (지워지지 않아 더 안 보인다)
 #
-# 🔴 B 를 빠뜨리면 안 된다. `hearing_results_b` 도 `booth_candidates.id` 를 CASCADE 로
+# 🔴 B 를 빠뜨리면 안 된다. `hearing_result_b` 도 `booth_candidates.id` 를 CASCADE 로
 #    참조한다(`schema_step5_b.sql`). 안 세면 5분짜리 다인 토론이 **소리 없이** 사라지고,
 #    `cascade_loss()` 가 False 를 돌려 `--force` 없이도 지워진다.
 CASCADE_SQL = """
 WITH cs AS (
-    SELECT cs.id FROM conflict_simulations cs
+    SELECT cs.id FROM hearing_result_a cs
       JOIN booth_candidates bc ON bc.id = cs.parcel_id
      WHERE bc.domain = %(domain)s AND bc.run_id = %(run_id)s
 )
@@ -187,7 +203,7 @@ SELECT (SELECT count(*) FROM cs),
        (SELECT count(*) FROM debate_logs WHERE simulation_id IN (SELECT id FROM cs)),
        (SELECT count(*) FROM verified_precedents
          WHERE conflict_simulation_id IN (SELECT id FROM cs)),
-       (SELECT count(*) FROM hearing_results_b hb
+       (SELECT count(*) FROM hearing_result_b hb
           JOIN booth_candidates bc ON bc.id = hb.parcel_id
          WHERE bc.domain = %(domain)s AND bc.run_id = %(run_id)s)
 """
@@ -197,10 +213,10 @@ def count_cascade(cur, domain: str, run_id: str) -> dict[str, int]:
     cur.execute(CASCADE_SQL, {"domain": domain, "run_id": run_id})
     cs, dl, vp, hb = cur.fetchone()
     return {
-        "conflict_simulations": cs,
+        "hearing_result_a": cs,
         "debate_logs": dl,
         "verified_precedents_unlinked": vp,
-        "hearing_results_b": hb,
+        "hearing_result_b": hb,
     }
 
 
@@ -209,13 +225,13 @@ def cascade_loss(counts: dict[str, int]) -> bool:
 
     후보점 행 자체는 손실이 아니다 — 같은 `topN.geojson` 에서 다시 만들어진다.
     공청회 결과는 다르다: LLM 토론 5분이고 발화는 Redis TTL 600초라 **재구성이 안 된다**.
-    A(`conflict_simulations`)든 B(`hearing_results_b`)든 같다 — 엔진이 둘이라고
+    A(`hearing_result_a`)든 B(`hearing_result_b`)든 같다 — 엔진이 둘이라고
     한쪽만 지키면 안 지킨 것과 같다.
     판례 연결(SET NULL)도 한 번 끊기면 어느 공청회였는지 알 방법이 없다.
     """
     return bool(
-        counts["conflict_simulations"]
-        or counts["hearing_results_b"]
+        counts["hearing_result_a"]
+        or counts["hearing_result_b"]
         or counts["verified_precedents_unlinked"]
     )
 
@@ -230,9 +246,9 @@ def print_cascade(counts: dict[str, int], run_id: str) -> None:
     if cascade_loss(counts):
         print(
             f"⚠ 같은 (domain, run_id) 를 덮어쓴다 — 기존 후보점에 매달린 "
-            f"A 공청회 {counts['conflict_simulations']}건 · "
+            f"A 공청회 {counts['hearing_result_a']}건 · "
             f"발화 {counts['debate_logs']}행 · "
-            f"B 다인토론 {counts['hearing_results_b']}건이 CASCADE 로 함께 지워지고, "
+            f"B 다인토론 {counts['hearing_result_b']}건이 CASCADE 로 함께 지워지고, "
             f"판례 {counts['verified_precedents_unlinked']}행은 연결이 끊긴다(SET NULL)."
         )
     print(
@@ -252,6 +268,12 @@ VALUES
      ST_SetSRID(ST_MakePoint(%(lon)s, %(lat)s), 4326),
      (SELECT cl.id FROM candidate_lands cl
        WHERE ST_Contains(cl.geom, ST_SetSRID(ST_MakePoint(%(lon)s, %(lat)s), 4326))
+         -- 🔴 `%(sgg)s IS NULL` 은 「거르지 않는다」다(PNU 가 없는 도메인).
+         --    `cl.sigungu_cd IS NULL` 은 「지적도로 못 맞춘 필지」이고 그건 **거른다** —
+         --    못 맞춘 것을 통과시키면 컬럼을 만든 이유가 없어진다.
+         -- ⚠ `::varchar` 는 장식이 아니다. `%(sgg)s IS NULL` 만으로는 타입을 못 정해
+         --    `AmbiguousParameter: could not determine data type` 로 터진다.
+         AND (%(sgg)s::varchar IS NULL OR cl.sigungu_cd = %(sgg)s)
        LIMIT 1))
 RETURNING id, rank, land_id
 """
@@ -291,6 +313,18 @@ def main() -> int:
     if missing:
         print(f"[비어있음] topN 에 없어 NULL 로 두는 컬럼: {missing}")
     print(f"[비어있음] 도메인 지표(topN 밖): {list(UNFILLED)}")
+
+    # 🔴 「시군구로 갈랐다」와 「못 갈랐다」를 **둘 다** 말한다.
+    #    안 적으면 조건이 걸린 줄 알고 읽는다(원칙 4).
+    sggs = sorted({r["sgg"] for r in rows if r["sgg"]})
+    n_nosgg = sum(1 for r in rows if not r["sgg"])
+    if sggs:
+        print(f"[시군구] 공간조인을 {sggs} 로 한정한다 (출처: 산출물 PNU 앞 5자리)")
+    if n_nosgg:
+        print(
+            f"[시군구] {n_nosgg}행은 PNU 가 없어 **한정하지 않는다** — "
+            "경계에 붙은 다른 구 필지가 land_id 로 붙을 수 있다"
+        )
 
     if not args.yes:
         for r in rows[:5]:
@@ -342,7 +376,7 @@ def main() -> int:
             if cascade_loss(counts) and not args.force:
                 raise SystemExit(
                     f"🔴 (domain={args.domain}, run_id={run_id}) 를 덮어쓰면 "
-                    f"공청회 {counts['conflict_simulations']}건 · "
+                    f"공청회 {counts['hearing_result_a']}건 · "
                     f"발화 {counts['debate_logs']}행이 지워지고 "
                     f"판례 {counts['verified_precedents_unlinked']}행의 연결이 끊긴다. "
                     "LLM 토론은 재구성이 안 된다(발화는 Redis TTL 600초뿐). "

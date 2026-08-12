@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -36,6 +37,9 @@ from datetime import datetime
 from pathlib import Path
 
 from app.config import BASE_DIR, DOMAIN_ROOT, domain_prefix, settings
+from app.services import run_records
+
+_log = logging.getLogger(__name__)
 
 RUNS_ROOT = Path(BASE_DIR) / "runs"
 # 발급한 run 번호의 최고수위 원장. 이름이 `r_<날짜>_*` 와 안 겹쳐야 한다 —
@@ -119,26 +123,36 @@ _GAM4_MARKERS: dict[str, str] = {
     "4-3": "[H] 선정",
 }
 
-# full 모드는 앞에 STEP0·STEP1 두 칸이 더 붙는다.
-#   🔴 이 둘을 **모든 모드에 같이 두지 않는다.** fixture 는 STEP1 을 안 돌리므로
-#      영원히 idle 인 단계가 화면에 남는다 — 진행률이 거짓말을 한다(원칙 4).
-#      그래서 단계 목록은 mode 에서 유도한다(`step_labels`).
-#      뒤에 붙는 적재 두 칸도 같은 이유로 full 에만 있다 — fixture·hitl 은 정본
-#      산출물이 이미 DB 에 있어 적재하지 않는다(`_proc_load_topn` 주석).
-#
 # 🔴 적재가 **두 칸**인 이유 — 화면5 로 넘어가려면 다리가 둘 다 있어야 한다.
 #    후보점(`booth_candidates`)만 넣으면 목록은 뜨는데 토론이 첫 줄에서 죽는다:
 #    `_select_audit_rules` 가 읽을 `audit_rules` 가 그 도메인에 없기 때문이다
 #    (2026-08-10 실측 — `r_20260810_001` 이 여기서 막혔다. 다행히 조용히 죽지 않고
 #    "적재된 (도메인, 시설)" 을 세어 알려줬다).
 #    한 칸에 두 프로세스를 넣지 않는다 — 어느 쪽이 실패했는지 진행 표시에서 사라진다.
-_STEP_LABELS_FULL: list[tuple[str, str]] = [
-    ("0", "프로파일링 · 시설/지역 확정"),
-    ("1", "감리 판정 · 상위법 검색"),
-] + STEP_LABELS + [
+_LOAD_LABELS: list[tuple[str, str]] = [
     ("적재-감리", "감리 규칙 DB 적재 (토론 근거)"),
     ("적재-후보", "후보점 DB 적재 (화면5 목록)"),
 ]
+
+# full 모드는 앞에 STEP0·STEP1 두 칸이 더 붙는다.
+#   🔴 이 둘을 **모든 모드에 같이 두지 않는다.** fixture 는 STEP1 을 안 돌리므로
+#      영원히 idle 인 단계가 화면에 남는다 — 진행률이 거짓말을 한다(원칙 4).
+#      그래서 단계 목록은 mode 에서 유도한다(`step_labels`).
+_STEP_LABELS_FULL: list[tuple[str, str]] = [
+    ("0", "프로파일링 · 시설/지역 확정"),
+    ("1", "감리 판정 · 상위법 검색"),
+] + STEP_LABELS + _LOAD_LABELS
+
+# 🔴 fixture 도 적재한다 (2026-08-11, 사람 결정). 예전엔 full 에만 있었고 사유는
+#    "fixture 는 정본 산출물의 재생이고 그 Top-N 은 이미 `run_id='정본'` 으로 DB 에
+#    있다" 였다 — 맞는 말이지만, 그래서 **fixture run 의 결과는 화면5 에서 볼 수가
+#    없었다.** 시연에서 업로드를 건너뛰고 화면5까지 가려면 이 두 칸이 있어야 한다.
+#    누적 우려(그때의 반대 근거)는 `runs/` 정리 정책 쪽에서 받는다 — `run_pruner`.
+#    🔴 hitl 도 같은 날 붙였다(사람 지시). 처음엔 뺐고 이유는 "게이트에서 사람을
+#       기다리므로 시연 프리셋이 아니다" 였는데, 그건 **왜 fixture 에 넣는가**의
+#       답이지 **왜 hitl 에서 빼는가**의 답이 아니다. 게이트를 지나 완주한 run 은
+#       사람이 값을 확정한 run 이다 — 그 결과를 화면5 에서 못 보는 건 똑같은 구멍이다.
+_STEP_LABELS_WITH_LOAD: list[tuple[str, str]] = STEP_LABELS + _LOAD_LABELS
 
 # gam2_run_pipeline.py 의 `_step()` 이 찍는 구분선 머리글.
 #   "▶ STEP 0.5 시설·지역 확정" 은 마커에 **일부러 없다** — 뒤의 공백 하나로
@@ -150,7 +164,11 @@ _RUNPIPE_MARKERS: dict[str, str] = {
 
 
 def step_labels(mode: str) -> list[tuple[str, str]]:
-    return _STEP_LABELS_FULL if mode == MODE_FULL else STEP_LABELS
+    # 지금은 세 모드 다 적재 칸을 갖는다. 그래도 mode 로 유도하는 구조는 유지한다 —
+    # 모드가 늘거나 한 모드에서 칸이 빠질 때 볼 곳이 여기 하나여야 한다.
+    if mode == MODE_FULL:
+        return _STEP_LABELS_FULL
+    return _STEP_LABELS_WITH_LOAD
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -270,6 +288,12 @@ def read_status(run_id: str) -> dict | None:
     #    그래서 지어내지 않고 null 로 두되, **구분이 필요하면 볼 곳을 계약에 적어뒀다**:
     #    `steps` 의 `적재-감리`·`적재-후보` 칸 상태가 그 run 의 사실이다(계약 3절).
     doc.setdefault("loaded", None)
+    # `user_id` 도 나중에 생긴 필드다(2026-08-11, run_records). 옛 run 에는 키가 없다.
+    # 🔴 여기서 `null` 은 **「주인이 없다」와 「그 시절엔 안 적었다」를 둘 다** 포함한다.
+    #    구분이 필요하면 `run_records` 행의 유무를 본다 — 그 표는 이 기능 이후의
+    #    run 만 갖고 있다. 지어내지 않고 null 로 둔다(원칙 4).
+    #    ⚠ 익명 실행은 **정상 상태**다. null 을 "로그인 배선 전"으로 읽지 말 것.
+    doc.setdefault("user_id", None)
     return doc
 
 
@@ -312,6 +336,22 @@ def loaded_record(run_id: str) -> dict:
     return {"state": "known", "loaded": doc.get("loaded"), "reason": None}
 
 
+def note_run_record_error(doc: dict, at: str, reason: str) -> None:
+    """`run_records`(DB 사본) 기록 실패를 **산출물에 남긴다.**
+
+    🔴 「catch 한다」와 「조용히 삼킨다」는 다르다(원칙 1·4). DB 기록이 실패해도
+       run 은 안 죽이기로 했는데, 그 실패가 아무 데도 안 남으면 마이페이지에서
+       **없는 run** 이 되고 왜 없는지 알 방법이 사라진다.
+
+    키는 실패했을 때만 생긴다. 항상 두고 `[]` 를 넣으면 이 기능 이전의 옛 run 까지
+    "시도했고 다 성공" 으로 읽힌다 — `gate` 키를 항상 두지 않는 것과 같은 이유다.
+    """
+    doc.setdefault("run_record_errors", []).append(
+        {"at": at, "time": _now_iso(), "reason": reason})
+    _log.warning("run_records 기록 실패 [%s] run_id=%s: %s",
+                 at, doc.get("run_id"), reason)
+
+
 def reap_orphans() -> None:
     """서버가 죽어 중단된 run 을 failed 로 닫는다. **부팅 때 한 번만 부른다.**
 
@@ -330,6 +370,7 @@ def reap_orphans() -> None:
     """
     if not RUNS_ROOT.is_dir():
         return
+    reaped: list[dict] = []
     for sp in RUNS_ROOT.glob("*/status.json"):
         try:
             doc = json.loads(sp.read_text(encoding="utf-8"))
@@ -349,7 +390,21 @@ def reap_orphans() -> None:
         for s in doc.get("steps", []):
             if s.get("status") == "running":
                 s["status"] = "failed"
-        _write_status(doc["run_id"], doc)
+        reaped.append(doc)
+
+    # 🔴 DB 사본 갱신을 **파일 쓰기 전에, 한 번에** 한다(계층 ③).
+    #    ⓐ 한 번에 — 고아가 N개일 때 연결도 N번이면 DB 가 죽어 있을 때
+    #      `10초 × N` 만큼 lifespan 이 멈춘다(그동안 서버가 안 뜬다).
+    #    ⓑ 파일 쓰기 전에 — 실패 사유를 같은 문서에 담아 **한 번만** 쓰기 위해서다.
+    #      `_write_status` 는 터질 수 있으므로(WinError 5) 횟수를 늘리지 않는다.
+    if reaped:
+        reason = run_records.record_runs_end(
+            [(d, _read_params(d["run_id"]).get("user_input")) for d in reaped])
+        if reason:
+            for d in reaped:
+                note_run_record_error(d, "reap", reason)
+    for d in reaped:
+        _write_status(d["run_id"], d)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -385,7 +440,7 @@ def _load_fixture(domain: str) -> tuple[dict, Path]:
 #    (2026-08-10 실측). 즉 "안 주면 알아서 되겠지" 가 성립하지 않는 자리다.
 #    그래서 러너가 **명시적으로 선언하고**, 그 선언을 `runs/<id>/params.json` 에
 #    적어 산출물에서 되짚을 수 있게 한다(원칙 4).
-#    출처: `data_임시/흡연_FIX/기준값.json` 의 `조건` (2026-08-03 고정 기준선).
+#    출처: `datasets/흡연_FIX/기준값.json` 의 `조건` (2026-08-03 고정 기준선).
 _FULL_COND: dict = {
     "alpha": 0.3,
     "decay": {"func": "gaussian", "sigma_ratio": 1 / 3},
@@ -497,7 +552,7 @@ _LOADED_RE = re.compile(
 
 # 덮어쓰기로 **딸려 나간 것**을 알리는 줄. 같은 이유로 자식이 선언한다 —
 # 지운 뒤엔 셀 방법이 없고, 콘솔 출력은 사라진다.
-#   `[CASCADED] table=booth_candidates run_id=… conflict_simulations=1 debate_logs=14 …`
+#   `[CASCADED] table=booth_candidates run_id=… hearing_result_a=1 debate_logs=14 …`
 # 🔴 값이 0 이어도 자식이 찍는다. 줄이 **없는** 것은 「딸려 나간 게 없다」가 아니라
 #    「그 적재기가 세지 않았다」다 — status 에서도 둘을 섞지 않는다(원칙 4).
 _CASCADED_RE = re.compile(
@@ -535,11 +590,20 @@ def _proc_load_topn(domain: str, run_id: str) -> _Proc:
        고르는데, 그 목록의 출처가 이 테이블이기 때문이다. 다리가 CLI 한 줄이면
        프런트는 건널 방법이 없다.
 
-    🔴 왜 full 모드에만 붙나 — fixture·hitl 은 **정본 산출물의 재생**이고, 그 Top-N 은
-       이미 `run_id='정본'` 으로 DB 에 있다(2026-08-10 어휘 통일 전에는 STEP 폴더
-       이름 `'step4_output'` 이었다). 재생할 때마다 20행씩 더 쌓으면
-       시연용 예시 데이터가 실행 이력에 묻힌다. 값이 같은 행을 run 마다 복제하는 건
-       적재가 아니라 누적이다.
+    🔴 왜 세 모드 다 붙나 — 2026-08-11 까지는 **full 에만** 있었다. 그때 사유는
+       "fixture 는 정본 산출물의 재생이고 그 Top-N 은 이미 `run_id='정본'` 으로 DB 에
+       있다(2026-08-10 어휘 통일 전에는 STEP 폴더 이름 `'step4_output'` 이었다).
+       값이 같은 행을 run 마다 복제하는 건 적재가 아니라 누적이다" 였다.
+       그 말은 맞았지만 **결론이 틀렸다** — 그래서 fixture run 의 결과는 화면5 에서
+       볼 수가 없었다. `/candidates` 가 읽는 건 파일이 아니라 이 테이블이고,
+       run 폴더에 topN.geojson 이 있어도 프런트는 닿지 못한다.
+       시연 프리셋(업로드 건너뛰고 화면5까지)이 필요해져 fixture 에도 붙였고,
+       같은 날 hitl 에도 붙였다(사람 지시). hitl 을 뺐던 이유는 "게이트에서 사람을
+       기다리므로 프리셋이 아니다" 였는데 그건 **왜 fixture 에 넣는가**의 답이지
+       **왜 hitl 에서 빼는가**의 답이 아니다 — 게이트를 지나 완주한 run 은 사람이
+       값을 확정한 run 이고, 그 결과를 화면5 에서 못 보는 건 똑같은 구멍이다.
+       누적은 여기서 막는 게 아니라 `runs/` 정리 정책과 `/candidates` 의
+       "최신 적재분만" 규칙이 받는다.
 
     적재기는 같은 `(domain, run_id)` 만 지우고 다시 넣는다 — 새 run_id 라 지울 게
     없고, 다른 도메인·정본 행은 안 건드린다. `--run` 을 주므로 시설명도 **이 run 의**
@@ -652,9 +716,18 @@ def _proc_runpipe(domain: str, user_input: str) -> _Proc:
     이 스크립트의 CLI 는 argparse 가 아니라 **위치인자 2개**(도메인, 사용자 입력)이고
     `--` 로 시작하는 토큰만 플래그로 본다. 그래서 사용자 입력이 `--` 로 시작하면
     조용히 플래그로 먹힌다 — `start_run` 이 미리 막는다.
+
+    🔴 `--reprofile` 을 **항상** 넘긴다. 이 칸은 `full` 에만 있고, full 은 화면1 로
+       올린 원본을 도는 모드다 — `fixture/profiles.json` 은 그 `data/` 의 사본이라
+       원본이 바뀌면 같이 바뀌어야 한다. 없을 때만 만드는 기본 동작이면 낡은 사본이
+       계속 이기고, 감리 AI 는 **지운 데이터셋을 보고 새로 올린 것을 못 본다**
+       (2026-08-12 재활용 실측 — 예외가 안 나고 근거만 틀린다).
+       조건부로 넘기지 않는다: "언제 다시 프로파일링하나" 를 러너가 판단하기
+       시작하면 그 판단이 틀렸을 때 드러날 자리가 없다.
     """
     return _Proc(("0", "1"),
-                 [_python_exe(), _svc("gam2_run_pipeline.py"), domain, user_input],
+                 [_python_exe(), _svc("gam2_run_pipeline.py"), domain, user_input,
+                  "--reprofile"],
                  markers=_RUNPIPE_MARKERS)
 
 
@@ -874,20 +947,29 @@ def _refresh_artifacts(doc: dict) -> None:
         doc["artifacts"][name] = _artifact_url(run_id, name) if p.is_file() else None
 
 
-def _new_status(run_id: str, domain: str, mode: str = MODE_FIXTURE) -> dict:
+def _new_status(run_id: str, domain: str, mode: str = MODE_FIXTURE,
+                user_id: int | None = None) -> dict:
     # 🔴 `gate` 키는 여기 없다. 계약 7-3 — `awaiting_hitl` 일 때만 **키가 생긴다**.
     #    항상 두고 null 을 넣으면 "게이트가 있는데 질문이 없다"로 읽힌다.
+    #    같은 이유로 `run_record_errors` 도 여기 없다 — DB 사본 기록에 **실패했을 때만**
+    #    생긴다(`note_run_record_error`). 항상 두고 `[]` 를 넣으면 옛 run 까지
+    #    "시도했고 다 성공"으로 읽힌다.
     return {
         "run_id": run_id,
         "domain": domain,
         "mode": mode,
+        # 이 run 을 돌린 사람. **null 이 정상 상태다** — 로그인 없이 실행하는 경로가
+        # 설계상 살아 있다(2026-08-11 사람 결정, 4계층 문서). `run_records.user_id`
+        # 가 영구 nullable 인 것과 같은 이유다.
+        "user_id": user_id,
         "status": "queued",
         "steps": [{"id": i, "label": lb, "status": "idle", "sec": None}
                   for i, lb in step_labels(mode)],
         "artifacts": {k: None for k in ARTIFACTS},
         # 이 run 이 **DB 에 넣은 것**. 계약 3절.
-        #   null            = 아무것도 안 넣었다 (fixture·hitl 은 계획에 적재 칸이 없다.
-        #                     full 도 적재 칸에 닿기 전까지는 null 이다)
+        #   null            = 아무것도 안 넣었다 (세 모드 다 적재 칸이 있으므로,
+        #                     이제 null 은 "아직 그 칸에 닿지 않았다" 는 뜻이다.
+        #                     옛 run 은 키 자체가 없어 null 로 채워진다 — 계약 3-1)
         #   {run_id, …}     = 넣었다. `run_id` 는 프런트가 `/simulations/candidates`
         #                     의 `run_id` 파라미터에 그대로 넣을 값이다.
         # 🔴 프런트가 규칙("full 이면 run_id 와 같다")을 따로 들고 있지 않게 **값으로**
@@ -924,8 +1006,9 @@ def _step(doc: dict, step_id: str) -> dict:
 #       근거를 먼저 넣는다 — 순서상 의존은 없지만, 목록이 먼저 보이면 사람이
 #       고를 수 있는데 눌러도 안 되는 구간이 생긴다.
 _PLAN: dict[str, tuple[str, ...]] = {
-    MODE_FIXTURE: ("2", "3-1", "3-2", "4"),
-    MODE_HITL: ("gate:audit", "2", "3-1", "propose", "gate:weight", "3-2", "4"),
+    MODE_FIXTURE: ("2", "3-1", "3-2", "4", "load-audit", "load"),
+    MODE_HITL: ("gate:audit", "2", "3-1", "propose", "gate:weight", "3-2", "4",
+                "load-audit", "load"),
     MODE_FULL: ("0-1", "seed", "gate:audit", "2", "3-1", "propose",
                 "gate:weight", "3-2", "4", "load-audit", "load"),
 }
@@ -975,7 +1058,7 @@ def _validate_full_params(domain: str, user_input: str | None,
 
 
 def start_run(domain: str, mode: str, user_input: str | None = None,
-              topn: int | None = None) -> str:
+              topn: int | None = None, user_id: int | None = None) -> str:
     """검증 → run 폴더 준비 → 백그라운드 실행. run_id 를 돌려준다."""
     if mode not in MODES:
         raise RunRequestError(
@@ -1016,12 +1099,23 @@ def start_run(domain: str, mode: str, user_input: str | None = None,
         if params:
             # status 보다 **먼저** 쓴다. 실행 스레드가 곧바로 읽는다.
             _write_params(run_id, params)
-        doc = _new_status(run_id, domain, mode)
+        doc = _new_status(run_id, domain, mode, user_id)
         # fixture·hitl 은 `reviewed` 를 방금 _prepare_dirs 가 넣어서 **이미 있다.**
         # 여기서 안 갱신하면 첫 단계 전이까지 status 는 null 인데 엔드포인트는 200 을
         # 준다 — status 가 거짓말을 한다(원칙 4). 나머지 6개는 아직 없으므로 null 이다.
         # full 은 8개 전부 null 로 시작한다(감리를 이 run 이 지금부터 돈다) — 맞는 값이다.
         _refresh_artifacts(doc)
+        # 🔴 DB 사본(계층 ③)에 **발급 사실**을 먼저 적고, 그 결과까지 담아 파일을
+        #    한 번만 쓴다. 순서를 뒤집으면 실패 사유를 적으려고 `_write_status` 를
+        #    두 번 부르게 되는데, 그 함수는 터질 수 있다(WinError 5).
+        #    ⚠ 여기서 실패해도 **run 은 그대로 시작한다.** 정본은 `status.json` 이고
+        #      DB 는 사본이다. 대신 사유를 남긴다(원칙 1·4) — 종료 때 UPSERT 가
+        #      같은 행을 다시 만들 기회를 갖는다.
+        #    ⚠ DB 가 죽어 있으면 이 한 줄이 `DB_CONNECT_TIMEOUT`(기본 10초)만큼
+        #      run 시작을 **늦춘다.** 느려지는 것이지 죽지 않는다.
+        reason = run_records.record_run_start(doc, params.get("user_input"))
+        if reason:
+            note_run_record_error(doc, "start", reason)
         _write_status(run_id, doc)
     except Exception:
         with _LOCK:
@@ -1124,6 +1218,17 @@ def _execute(run_id: str, domain: str, mode: str, start: int = 0) -> None:
             with _LOCK:
                 if _ACTIVE.get(domain) == run_id:
                     _ACTIVE.pop(domain, None)
+            # 🔴 DB 사본(계층 ③) 갱신도 `_write_status` **앞**이다. 위와 같은 이유로
+            #    자원 반납보다는 뒤, 파일 쓰기보다는 앞에 둔다 — 실패 사유를 같은
+            #    문서에 담아 한 번만 쓴다.
+            #    ⚠ 이 호출은 **UPSERT** 다. 발급 INSERT 가 실패했으면 여기서 행이
+            #      생긴다 — 「행이 없는 상태」가 정상 경로에 있으므로 단순 UPDATE 면
+            #      완주한 run 이 이력에서 통째로 사라진다(원칙 4).
+            #    ⚠ 게이트에서 멈춘 run 은 여기 안 온다. `awaiting_hitl`·`running` 은
+            #      DB 에 안 적는다(진행률은 status.json 담당) — 계약 §3-2.
+            reason = run_records.record_run_end(doc, params.get("user_input"))
+            if reason:
+                note_run_record_error(doc, "end", reason)
             _write_status(run_id, doc)
 
 

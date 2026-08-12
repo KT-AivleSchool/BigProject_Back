@@ -8,10 +8,11 @@
 - geom(4326) + geom_5186(GENERATED), invalid 는 ST_MakeValid 처리
 - 멱등 가드: 해당 시군구코드가 이미 있으면 skip
 
-원본: data_임시/region_data/LSMD_CONT_LDREG_<시군구코드>_<YYYYMM>.shp
+원본: datasets/region_data/LSMD_CONT_LDREG_<시군구코드>_<YYYYMM>.shp
 사용:
-  python scripts/load_cadastral.py            # DRY-RUN
-  python scripts/load_cadastral.py --commit    # DDL + 적재
+  python scripts/load_cadastral.py                       # DRY-RUN
+  python scripts/load_cadastral.py --commit               # DDL + 적재
+  python scripts/load_cadastral.py --sigungu 11200 --commit
 """
 import os
 import sys
@@ -45,7 +46,7 @@ from app.config import DB_CONNECT_TIMEOUT, settings  # noqa: E402
 
 DSN = settings.DATABASE_URL
 SA_DSN = DSN.replace("postgresql://", "postgresql+psycopg://")
-SRC = ROOT / "data_임시" / "region_data"
+SRC = ROOT / "datasets" / "region_data"
 DDL = ROOT / "schema_cadastral.sql"
 COMMIT = "--commit" in sys.argv
 STAGE = "_cad_stage"
@@ -54,13 +55,36 @@ STAGE = "_cad_stage"
 os.environ.setdefault("SHAPE_RESTORE_SHX", "YES")
 
 
-def find_shp():
-    hits = sorted(SRC.glob("LSMD_CONT_LDREG_*.shp"))
+def find_shp(want: str | None = None):
+    """지적도 SHP 를 고른다.
+
+    🔴 예전엔 `SRC.glob(...)` 이었다 — **한 겹만** 훑는다. 2026-08 에 region_data 가
+       지자체별 하위폴더(`용산구/`·`성동구/`)로 갈리면서 이 로더는 **아무것도 못 찾게
+       됐다**(`[중단] LSMD SHP 없음`). 용산 44,459행은 파일이 평평하던 시절에 들어간
+       것이라 DB 만 보면 멀쩡해 보인다 — 그래서 안 걸렸다.
+    🔴 그리고 `hits[0]` 을 그냥 쓰면 **어느 구인지 모르고 지나간다**(마포구 사건과 같은
+       구조). 후보가 둘 이상이면 `--sigungu` 로 지목받고, 없으면 멈춘다.
+    """
+    hits = sorted(SRC.glob("**/LSMD_CONT_LDREG_*.shp"))
+    if want:
+        hits = [h for h in hits if want in h.stem]
+        if not hits:
+            print(f"[중단] 시군구 {want} 지적도 SHP 없음: {SRC}")
+            sys.exit(1)
+    if len(hits) > 1:
+        print("[중단] 지적도 SHP 후보가 여러 개다 — 어느 구인지 확정할 수 없다.")
+        for h in hits:
+            print("   ", h.relative_to(ROOT))
+        print("  → --sigungu <시군구코드> 로 지목할 것")
+        sys.exit(1)
     return hits[0] if hits else None
 
 
 def main():
-    shp = find_shp()
+    want = None
+    if "--sigungu" in sys.argv:
+        want = sys.argv[sys.argv.index("--sigungu") + 1]
+    shp = find_shp(want)
     if not shp:
         print(f"[중단] LSMD SHP 없음: {SRC}")
         sys.exit(1)
@@ -130,11 +154,23 @@ def main():
         cur.execute(f"DROP TABLE IF EXISTS {STAGE}")
         conn.commit()
         # 검증
-        cur.execute("""SELECT count(*), count(geom_5186),
-                       count(*) FILTER (WHERE NOT ST_IsValid(geom)) FROM cadastral_lands""")
+        # 🔴 전체가 아니라 **이번에 넣은 시군구**를 센다. 전체를 세면 다른 구가 이미
+        #    들어 있을 때 "적재됐다"가 항상 참이 되어 아무것도 확인하지 못한다.
+        cur.execute(
+            """SELECT count(*), count(geom_5186),
+                      count(*) FILTER (WHERE NOT ST_IsValid(geom))
+               FROM cadastral_lands WHERE sigungu_cd=%s""",
+            (sigungu_cd,),
+        )
         n, g5, inv = cur.fetchone()
-        print(f"\n=== 검증 === cadastral_lands rows={n} geom_5186={g5} invalid={inv}")
-        cur.execute("SELECT pnu,jibun,sigungu_cd FROM cadastral_lands LIMIT 1")
+        print(
+            f"\n=== 검증 === cadastral_lands[{sigungu_cd}] rows={n} "
+            f"geom_5186={g5} invalid={inv}"
+        )
+        cur.execute(
+            "SELECT pnu,jibun,sigungu_cd FROM cadastral_lands WHERE sigungu_cd=%s LIMIT 1",
+            (sigungu_cd,),
+        )
         print("  샘플:", cur.fetchone())
 
 

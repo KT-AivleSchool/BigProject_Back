@@ -7,7 +7,7 @@
 
 동작:
   - `Base.metadata.create_all(checkfirst=True)` — **이미 있는 테이블은 건드리지 않는다.**
-    즉 컬럼이 다른 기존 테이블(`conflict_simulations` 등)을 고치지 않는다. 그건 별건이다.
+    즉 컬럼이 다른 기존 테이블(`hearing_result_a` 등)을 고치지 않는다. 그건 별건이다.
   - 실행 전에 무엇을 만들지 **먼저 출력**한다. `--yes` 없이는 만들지 않는다.
 
 사용:
@@ -41,8 +41,8 @@ async def main() -> int:
             await conn.run_sync(lambda sync_conn: inspect(sync_conn).get_table_names())
         )
 
-        # ORM 이 FK 로 가리키는데 ORM 에 선언은 없는 테이블(dong_boundaries·
-        # transit_stations)이 있다. SQLAlchemy 는 DB 가 아니라 **metadata** 에서
+        # ORM 이 FK 로 가리키는데 ORM 에 선언은 없는 테이블(dong_boundaries)이 있다.
+        # SQLAlchemy 는 DB 가 아니라 **metadata** 에서
         # FK 대상을 찾으므로, 없으면 create_all 이 NoReferencedTableError 로 죽는다.
         # 실 DB 에 이미 있는 것만 골라 metadata 로 읽어들인다(생성은 안 한다).
         fk_targets = {

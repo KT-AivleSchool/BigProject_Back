@@ -75,7 +75,7 @@ with TestClient(app) as c:
                 if h["is_latest_for_parcel"]
             ),
         )
-        # B 는 조회 키가 `hearing_results_b.id` 단건이라 **옛 건도 자기 URL** 을 갖는다.
+        # B 는 조회 키가 `hearing_result_b.id` 단건이라 **옛 건도 자기 URL** 을 갖는다.
         chk("B 는 result_url 전건 채워짐", all(h.get("result_url") for h in B), f"n={len(B)}")
         chk(
             "B result_url 이 200",
@@ -190,7 +190,7 @@ with TestClient(app) as c:
         "engine=C 400",
         c.get(BASE, params={"run_id": "정본", "engine": "C"}).status_code == 400,
     )
-    # 🔴 2026-08-11 이전엔 **501**("저장 경로가 없다")이었다. 이제 `hearing_results_b`
+    # 🔴 2026-08-11 이전엔 **501**("저장 경로가 없다")이었다. 이제 `hearing_result_b`
     #    가 있으므로 200 이고, B 토론이 없으면 **빈 배열**이 참인 진술이다.
     rB = c.get(BASE, params={"run_id": "정본", "engine": "B"})
     chk("engine=B 200 (501 아님)", rB.status_code == 200, f"-> {rB.status_code}")

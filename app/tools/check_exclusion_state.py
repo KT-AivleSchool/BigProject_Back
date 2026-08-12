@@ -44,10 +44,10 @@ try:
         domain_prefix,
     )
 except Exception:
-    DOMAIN_ROOT = "data_임시"
-    STEP1_OUTPUT_DIR = os.path.join("data_임시", "step1_output")
-    STEP2_OUTPUT_DIR = os.path.join("data_임시", "step2_output")
-    REGION_DATA_DIR = os.path.join("data_임시", "region_data")
+    DOMAIN_ROOT = "datasets"
+    STEP1_OUTPUT_DIR = os.path.join("datasets", "step1_output")
+    STEP2_OUTPUT_DIR = os.path.join("datasets", "step2_output")
+    REGION_DATA_DIR = os.path.join("datasets", "region_data")
 
     def domain_prefix(d):
         return d

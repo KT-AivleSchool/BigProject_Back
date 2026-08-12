@@ -200,6 +200,18 @@ def attach_ownership(
             print("  ⚠ 국유부동산이 필지 안에 하나도 안 떨어짐 — 좌표계 확인 필요")
         return parcels
 
+    # 🔴 면적 컬럼이 **문자열일 수 있다.** 성동 원본 .xls 는 `'112.00'` 처럼
+    #    작은따옴표로 감싼 텍스트 서식이었다 — 그러면 `sum()` 이 문자열 연결이
+    #    되고 아래 나눗셈이 `TypeError` 로 터진다(r_20260812_012). 여기서 터진 건
+    #    운이 좋았던 것이다: 나눌 상대가 없었으면 **이어붙인 문자열이 면적인 척**
+    #    그대로 흘러갔다. 못 읽는 값은 0 이 아니라 NaN 으로 두고 개수를 알린다.
+    if ar:
+        _a = pd.to_numeric(j[ar], errors="coerce")
+        _bad = int(_a.isna().sum() - j[ar].isna().sum())
+        if _bad and verbose:
+            print(f"  ⚠ 국유 대장면적을 숫자로 못 읽음 {_bad:,}건 — 지분면적에서 제외")
+        j = j.assign(**{ar: _a})
+
     grp = j.groupby("index_right")
     p["국유_건수"] = grp.size().reindex(p.index).fillna(0).astype(int)
     p["국유_지분면적"] = grp[ar].sum().reindex(p.index).fillna(0.0) if ar else 0.0

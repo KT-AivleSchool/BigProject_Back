@@ -14,7 +14,7 @@ from app.core.sim_ai.graph import build_discussion_graph
 from app.api.deps import get_db, get_redis
 from app.db.models.simulation import (
     Parcel,
-    ConflictSimulation,
+    HearingResultA,
     DebateLog,
     HearingResultB,
 )
@@ -55,7 +55,7 @@ router = APIRouter()
 # uvicorn 콘솔로 나가는 로거. `print` 는 백그라운드 태스크에서 묻힌다.
 logger = logging.getLogger("uvicorn.error")
 
-# 시나리오 코드 → conflict_simulations 의 어느 칸에 넣을지.
+# 시나리오 코드 → hearing_result_a 의 어느 칸에 넣을지.
 # 근거는 `app/templates/default/reporter.txt` 다 — 수용도 0.8↑ A(원만한 타결),
 # 0.4~0.8 B(조건부 타결), 0.4↓ C(협상 결렬). 여기서 새로 정한 대응이 아니다.
 _SCENARIO_COLUMN = {
@@ -121,9 +121,9 @@ async def _persist_simulation(
     scenarios: list[dict],
     debate_logs: list[dict],
 ) -> int:
-    """STEP5 산출물을 `conflict_simulations` + `debate_logs` 에 적재하고 id 를 돌려준다.
+    """STEP5 산출물을 `hearing_result_a` + `debate_logs` 에 적재하고 id 를 돌려준다.
 
-    🔴 2026-08-09 신설(B안). 예전엔 `ConflictSimulation(parcel_id, facility_type,
+    🔴 2026-08-09 신설(B안). 예전엔 `HearingResultA(parcel_id, facility_type,
        result_json)` 3필드를 그대로 넣었는데 **실 DB 에 그 셋이 다 없어서** 항상
        `UndefinedColumnError` 였다. 지금은 실 DB 컬럼까지 같이 채운다.
 
@@ -134,7 +134,7 @@ async def _persist_simulation(
     # 값을 만들어 넣는 게 아니라 booth_candidates.land_id 에서 **유도**한다.
     land_id = await db.scalar(select(Parcel.land_id).where(Parcel.id == parcel_id))
 
-    sim = ConflictSimulation(
+    sim = HearingResultA(
         parcel_id=parcel_id,
         candidate_land_id=land_id,
         facility_type=facility_type,
@@ -272,7 +272,7 @@ async def run_debate_and_publish(
             # 이 토론이 **무엇을 근거로 했는지**를 결과에 박아둔다(원칙 4).
             # 「나중에 다시 조회하면 나온다」는 전제는 실제로 깨진다 —
             # `load_audit_data.py` 는 같은 `(domain, run_id)` 의 audit_rules 를 교체하는데
-            # `conflict_simulations` 와는 FK 가 없어서 **토론은 남고 근거만 바뀐다.**
+            # `hearing_result_a` 와는 FK 가 없어서 **토론은 남고 근거만 바뀐다.**
             # 조립은 A·B 공용 함수 한 곳에 있다(두 엔진의 근거를 비교하려면 모양이 같아야 한다).
             basis = basis_snapshot(
                 domain=domain,
@@ -479,7 +479,7 @@ async def run_debate_and_publish(
                                 },
                             }
 
-                            # 최종 JSON을 DB에 저장 (ConflictSimulation)
+                            # 최종 JSON을 DB에 저장 (HearingResultA)
                             try:
                                 sim_id = await _persist_simulation(
                                     db=db,
@@ -502,7 +502,7 @@ async def run_debate_and_publish(
                                 # 대신 **반드시 보이게** 남긴다 — 예전엔 `print` 라
                                 # 백그라운드 태스크 stdout 에 묻혀 아무 데도 안 남았다(원칙 1·4).
                                 logger.error(
-                                    "[simulations] conflict_simulations 저장 실패 "
+                                    "[simulations] hearing_result_a 저장 실패 "
                                     f"(parcel_id={parcel_id}): {e}",
                                     exc_info=True,
                                 )
@@ -800,7 +800,7 @@ async def list_hearings(
 ):
     """이 **실행(run)** 에서 열린 공청회 목록.
 
-    🔴 `conflict_simulations` 에는 **`run_id` 컬럼이 없다.** 연결 경로는
+    🔴 `hearing_result_a` 에는 **`run_id` 컬럼이 없다.** 연결 경로는
        `parcel_id → booth_candidates.id → booth_candidates.run_id` **조인 하나뿐**이라
        "이 run 의 토론" 은 여기서만 물을 수 있다. 프런트는 `status.json` 의
        `loaded.run_id` 를 그대로 넘기면 된다.
@@ -823,7 +823,7 @@ async def list_hearings(
        옛 건에는 가리킬 URL 이 없다. 없는 걸 채우면 프런트가 **다른 토론 결과**를 그
        토론의 결과로 표시한다 — 안 터지고 값만 틀린다. 그래서 `is_latest_for_parcel`
        를 같이 준다. (같은 필지 재토론 정책은 프런트 회신 대기 중)
-       ⚠ **B 는 이 문제가 없다** — 조회가 `hearing_results_b.id` 단건이라 옛 건도
+       ⚠ **B 는 이 문제가 없다** — 조회가 `hearing_result_b.id` 단건이라 옛 건도
          자기 URL 을 갖는다. A 만 「필지 최신 1건」 조회라서 생기는 제약이다.
 
     🔴 **행의 키 집합은 `engine` 에 따라 다르다.** A 는 `simulation_id`·`css_score`·
@@ -843,31 +843,31 @@ async def list_hearings(
 
     hearings: list[dict] = []
 
-    # ── A 대립 토론 (conflict_simulations) ──────────────────────────────
+    # ── A 대립 토론 (hearing_result_a) ──────────────────────────────
     a_stmt = (
         select(
-            ConflictSimulation.id.label("simulation_id"),
-            ConflictSimulation.parcel_id,
-            ConflictSimulation.facility_type,
-            ConflictSimulation.css_score,
-            ConflictSimulation.candidate_land_id,
-            ConflictSimulation.created_at,
+            HearingResultA.id.label("simulation_id"),
+            HearingResultA.parcel_id,
+            HearingResultA.facility_type,
+            HearingResultA.css_score,
+            HearingResultA.candidate_land_id,
+            HearingResultA.created_at,
             # 시나리오는 **매 실행 1칸만** 채워진다. 본문 대신 어느 칸인지만 가져온다
             # (목록 응답에 Text 3칸을 실을 이유가 없다).
-            ConflictSimulation.optimal_scenario.isnot(None).label("has_a"),
-            ConflictSimulation.normal_scenario.isnot(None).label("has_b"),
-            ConflictSimulation.worst_scenario.isnot(None).label("has_c"),
+            HearingResultA.optimal_scenario.isnot(None).label("has_a"),
+            HearingResultA.normal_scenario.isnot(None).label("has_b"),
+            HearingResultA.worst_scenario.isnot(None).label("has_c"),
             Parcel.rank,
             Parcel.domain,
             Parcel.run_id,
             Parcel.jibun,
             func.count(DebateLog.id).label("debate_log_count"),
         )
-        .join(Parcel, Parcel.id == ConflictSimulation.parcel_id)
-        .outerjoin(DebateLog, DebateLog.simulation_id == ConflictSimulation.id)
+        .join(Parcel, Parcel.id == HearingResultA.parcel_id)
+        .outerjoin(DebateLog, DebateLog.simulation_id == HearingResultA.id)
         .where(Parcel.run_id == run_id)
-        .group_by(ConflictSimulation.id, Parcel.id)
-        .order_by(Parcel.rank.asc().nullslast(), ConflictSimulation.id.asc())
+        .group_by(HearingResultA.id, Parcel.id)
+        .order_by(Parcel.rank.asc().nullslast(), HearingResultA.id.asc())
     )
     if domain is not None:
         a_stmt = a_stmt.where(Parcel.domain == domain)
@@ -892,7 +892,7 @@ async def list_hearings(
                 {
                     "simulation_id": r.simulation_id,
                     # 🔴 상수 "A" 다 — 추정이 아니라 **이 쿼리가 읽는 테이블이
-                    #    `conflict_simulations` 하나**라서다. B 는 `hearing_results_b`
+                    #    `hearing_result_a` 하나**라서다. B 는 `hearing_result_b`
                     #    를 읽는 아래 블록이 따로 만든다(엔진을 안 합쳤으므로 조회도
                     #    안 합친다).
                     "engine": "A",
@@ -920,10 +920,10 @@ async def list_hearings(
                 }
             )
 
-    # ── B 다인 토론 (hearing_results_b) ─────────────────────────────────
+    # ── B 다인 토론 (hearing_result_b) ─────────────────────────────────
     # 🔴 2026-08-11 이전엔 이 자리가 **501** 이었다("저장 경로가 없다"). 이제 있다.
     #    A 와 달리 `result_url` 이 **항상** 채워진다 — 조회 키가 필지가 아니라
-    #    `hearing_results_b.id` 라 옛 건도 자기 자신을 가리킬 수 있다.
+    #    `hearing_result_b.id` 라 옛 건도 자기 자신을 가리킬 수 있다.
     if engine != "A":
         b_stmt = (
             select(
@@ -994,7 +994,7 @@ async def get_hearing_b(hearing_id: int, db: AsyncSession = Depends(get_db)):
     """B 다인 토론 결과 **1건**.
 
     A 의 `/results/{parcel_id}`(필지의 **최신 1건**)와 키가 다르다 — 여기는
-    `hearing_results_b.id` 단건이다. 그래서 같은 필지를 여러 번 토론해도 옛 건이
+    `hearing_result_b.id` 단건이다. 그래서 같은 필지를 여러 번 토론해도 옛 건이
     자기 URL 을 갖는다(`/hearings` 의 `result_url` 이 B 는 항상 채워지는 이유).
 
     🔴 `result_json` 은 **통짜로 그대로** 내보낸다. B 산출물 모양이 아직 움직이고
@@ -1074,13 +1074,13 @@ async def get_simulation_results(parcel_id: int, db: AsyncSession = Depends(get_
     """
     [동현 AI 메인 & 장천명 풀스택] 모의 심의 토론 종결 후 최종 도출된 3대 시나리오 예측치 조회 API
     - 시점: 프론트엔드가 /stream SSE 커넥션을 닫은 직후, 최종 통계 데이터를 단독 로드하기 위해 호출합니다.
-    - 구현: 실제 데이터베이스(conflict_simulations 테이블) 조회 결과에 따라 최신 이력을 동적으로 로드합니다.
+    - 구현: 실제 데이터베이스(hearing_result_a 테이블) 조회 결과에 따라 최신 이력을 동적으로 로드합니다.
     """
     # DB에서 가장 최신의 시뮬레이션 결과를 쿼리합니다.
     result = await db.execute(
-        select(ConflictSimulation)
-        .where(ConflictSimulation.parcel_id == parcel_id)
-        .order_by(ConflictSimulation.id.desc())
+        select(HearingResultA)
+        .where(HearingResultA.parcel_id == parcel_id)
+        .order_by(HearingResultA.id.desc())
     )
     # 🔴 `scalar_first()` 는 SQLAlchemy 에 없는 메서드다(2026-08-09 수정).
     #    호출되는 순간 AttributeError → 500. `scalars().first()` 가 맞다.
@@ -1174,9 +1174,9 @@ async def download_feasibility_report_pdf(
     """
     # 1. DB에서 가장 최신의 시뮬레이션 결과 획득
     result = await db.execute(
-        select(ConflictSimulation)
-        .where(ConflictSimulation.parcel_id == parcel_id)
-        .order_by(ConflictSimulation.id.desc())
+        select(HearingResultA)
+        .where(HearingResultA.parcel_id == parcel_id)
+        .order_by(HearingResultA.id.desc())
     )
     # 🔴 `scalar_first()` → `scalars().first()` (2026-08-09 수정). 위 :649 와 같은 건.
     sim_data = result.scalars().first()

@@ -48,7 +48,7 @@ try:
         domain_prefix,
     )
 except Exception:  # 단독 실행 폴백
-    DOMAIN_ROOT = "data_임시"
+    DOMAIN_ROOT = "datasets"
     STEP1_OUTPUT_DIR = os.path.join(DOMAIN_ROOT, "step1_output")
     STEP2_OUTPUT_DIR = os.path.join(DOMAIN_ROOT, "step2_output")
     STEP3_OUTPUT_DIR = os.path.join(DOMAIN_ROOT, "step3_output")

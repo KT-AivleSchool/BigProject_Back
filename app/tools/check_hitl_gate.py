@@ -88,17 +88,23 @@ R.run_dir = lambda rid: Path(tmp) / rid  # type: ignore[assignment]
 try:
     # ── [1] 계획·재개 위치 ─────────────────────────────────────────
     print("\n[1] 계획·재개 위치")
+    # 🔴 뒤 두 칸은 2026-08-11 에 붙였다(사람 결정). fixture 도 결과를 DB 에 넣어야
+    #    화면5 에서 볼 수 있다 — 시연 프리셋의 요점이다. 게이트는 여전히 없다.
     chk(
         "fixture 계획",
-        R._PLAN["fixture"] == ("2", "3-1", "3-2", "4"),
+        R._PLAN["fixture"] == ("2", "3-1", "3-2", "4", "load-audit", "load"),
         R._PLAN["fixture"],
     )
+    # 🔴 hitl 도 같은 날 붙였다(사람 지시). 게이트를 지나 완주한 run 은 사람이 값을
+    #    확정한 run 이고, 그 결과를 화면5 에서 못 보는 건 fixture 와 똑같은 구멍이다.
     chk(
         "hitl 계획",
         R._PLAN["hitl"]
-        == ("gate:audit", "2", "3-1", "propose", "gate:weight", "3-2", "4"),
+        == ("gate:audit", "2", "3-1", "propose", "gate:weight", "3-2", "4",
+            "load-audit", "load"),
         R._PLAN["hitl"],
     )
+    # 적재 칸은 **꼬리에** 붙였다. 게이트 앞에 끼면 아래 재개 위치가 조용히 밀린다.
     chk("audit 재개=1", R._resume_index("hitl", "audit") == 1)
     chk("weight 재개=5", R._resume_index("hitl", "weight") == 5)
     # 재개 칸이 게이트면 답을 받자마자 같은 게이트로 다시 멈춘다 = 무한 대기.
