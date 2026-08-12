@@ -1,5 +1,5 @@
 # 1. Builder Stage
-FROM mcr.microsoft.com/playwright/python:v1.44.0-jammy AS builder
+FROM mcr.microsoft.com/playwright/python:v1.48.0-noble AS builder
 
 WORKDIR /code
 
@@ -9,7 +9,7 @@ COPY requirements.txt constraints.txt ./
 RUN pip install uv && uv venv /opt/venv && VIRTUAL_ENV=/opt/venv uv pip install --no-cache -r requirements.txt -c constraints.txt
 
 # 2. Runner Stage
-FROM mcr.microsoft.com/playwright/python:v1.44.0-jammy AS runner
+FROM mcr.microsoft.com/playwright/python:v1.48.0-noble AS runner
 
 WORKDIR /code
 
