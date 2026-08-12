@@ -20,9 +20,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.config import BASE_DIR, settings
-from app.db.base import User
-from app.db.models.post import Post
+from app.db.base import Post, User
 from app.schemas.post import PostListItem, PostListResponse, PostResponse
+
 
 router = APIRouter()
 
