@@ -15,9 +15,33 @@ import bcrypt
 router = APIRouter()
 
 
+@router.get("/check-email")
+async def check_email(email: str, db: AsyncSession = Depends(get_db)):
+    """
+    [Cj(찬진) 파트] 회원가입 시 이메일 실시간 중복 여부 확인 API
+    """
+    if not email or "@" not in email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="올바른 이메일 형식이 아닙니다.",
+        )
+
+    stmt = select(User).where(User.email == email)
+    result = await db.execute(stmt)
+    existing_user = result.scalars().first()
+
+    return {
+        "exists": existing_user is not None,
+        "email": email,
+        "available": existing_user is None,
+        "message": "이미 사용 중인 이메일입니다." if existing_user else "사용 가능한 이메일입니다.",
+    }
+
+
 @router.post(
     "/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED
 )
+
 async def register_user(user: UserRegister, db: AsyncSession = Depends(get_db)):
     """
     [Cj(찬진) 파트] 신규 구정 관리자 및 실무자 회원가입
