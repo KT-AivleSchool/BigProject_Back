@@ -65,6 +65,8 @@ WHERE GeometryType(geom) = 'GEOMETRYCOLLECTION';
 -- 단일 Polygon 컬럼엔 삽입 실패함(실측 6,524건 중 10건이 MULTIPOLYGON).
 -- MultiPolygon으로 확장하면 전 지오메트리를 손실 없이 보존하고
 -- ST_Area/ST_OrientedEnvelope 등 공간연산도 그대로 정확함.
+-- 🔴 멱등 보장: geom_5186 이 이미 있으면 geom 타입 변경 시 FeatureNotSupported 에러가 나므로 임시로 드랍한다.
+ALTER TABLE candidate_lands DROP COLUMN IF EXISTS geom_5186;
 ALTER TABLE candidate_lands
   ALTER COLUMN geom TYPE geometry(MultiPolygon, 4326) USING ST_Multi(geom);
 
@@ -161,7 +163,7 @@ COMMENT ON COLUMN candidate_lands.width_m IS
 -- `CASCADE` 를 붙였으면 조용히 같이 쓸려 나가고 **지웠다는 사실조차 안 남았을 것**이다.
 -- 파괴적 DDL 에서 `CASCADE` 는 편의가 아니라 **탐지기를 끄는 스위치**다(원칙 1).
 --
--- 배제구역은 이제 DB 뷰가 아니라 STEP1 감리 산출물(`audit_rules` 의 `hard_exclusion`)과
+-- 배제구역은 이제 DB 뷰가 전면 삭제되고, STEP1 감리 산출물(`audit_rules` 의 `hard_exclusion`)과
 -- STEP2 정제본 파일에서 온다. 조례가 바뀌면 `REFRESH` 가 아니라 **파이프라인을 다시 돈다.**
 -- =============================================================================
 
@@ -201,6 +203,21 @@ CREATE TABLE IF NOT EXISTS booth_candidates (
       GENERATED ALWAYS AS (ST_Transform(geom, 5186)) STORED,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 기존 DB(또는 이전 시드)에 테이블은 있으나 신규 칼럼이 없는 경우를 위한 추가 구문
+ALTER TABLE booth_candidates
+    ADD COLUMN IF NOT EXISTS land_id INTEGER REFERENCES candidate_lands(id),
+    ADD COLUMN IF NOT EXISTS area_m2 DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS width_m DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS is_national BOOLEAN,
+    ADD COLUMN IF NOT EXISTS shops_150m INTEGER,
+    ADD COLUMN IF NOT EXISTS dist_transit DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS dist_litter DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS dist_existing DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS score DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS rank INTEGER,
+    ADD COLUMN IF NOT EXISTS geom GEOMETRY(Point, 4326),
+    ADD COLUMN IF NOT EXISTS geom_5186 GEOMETRY(Point, 5186) GENERATED ALWAYS AS (ST_Transform(geom, 5186)) STORED;
 
 CREATE INDEX IF NOT EXISTS idx_booth_candidates_geom  ON booth_candidates USING GIST (geom_5186);
 CREATE INDEX IF NOT EXISTS idx_booth_candidates_score ON booth_candidates (score DESC);
