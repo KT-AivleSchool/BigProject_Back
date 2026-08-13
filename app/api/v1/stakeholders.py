@@ -18,9 +18,11 @@
      조용히 버리면 프런트는 "보낸 값이 반영됐다" 로 읽는다(원칙 4).
 """
 
+import asyncio
+import contextlib
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -43,6 +45,61 @@ from app.services.candidate_context import (
 )
 
 router = APIRouter()
+
+# SSE keepalive 간격(초). A 엔진이 쓰는 sse-starlette 의 기본값과 같게 뒀다 —
+# 두 엔진이 다른 주기로 숨쉬면 프런트 타임아웃을 엔진별로 따로 재야 한다.
+_KEEPALIVE_SEC = 15
+
+
+async def _with_keepalive(
+    source: AsyncIterator[str], interval: float = _KEEPALIVE_SEC
+) -> AsyncIterator[str]:
+    """상류가 조용한 동안 SSE 주석(`: ping`)을 흘려보낸다.
+
+    🔴 **이게 없으면 배포 nginx 가 60초에 끊는다.** `proxy_read_timeout` 기본값
+       60초는 총 시간이 아니라 **무응답 시간**이라 아무 바이트나 흐르면 초기화된다
+       (이슈 #264 의 504). 실측 2026-08-13 `api.omnisite.o-r.kr` — 첫 이벤트까지
+       42.4초, 중간에 7.6초 공백. LLM 이 조금만 느려도 60초를 넘긴다.
+       주석 줄은 프런트가 이미 건너뛴다(`dynamic-hearing/page.tsx`
+       `if (trimmed.startsWith(":")) continue;`) — 그리고 그 앞에서 `arm()` 을
+       부르므로 **클라이언트 유휴 타이머도 같이 초기화된다.**
+
+    ⚠ 예외를 삼키지 않는다 — 상류가 터지면 그대로 다시 던진다(원칙 1).
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+    end = object()
+
+    async def pump() -> None:
+        try:
+            async for item in source:
+                await queue.put(item)
+        except Exception as exc:
+            await queue.put(exc)
+        finally:
+            await queue.put(end)
+
+    task = asyncio.create_task(pump())
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=interval)
+            except asyncio.TimeoutError:
+                yield ": ping\n\n"
+                continue
+            if item is end:
+                break
+            if isinstance(item, Exception):
+                raise item
+            yield item
+    finally:
+        # 클라이언트가 먼저 끊으면 여기로 온다. 펌프를 안 거두면 LLM 그래프가
+        # 계속 돌면서 아무도 안 읽는 큐에 쌓는다.
+        if not task.done():
+            task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
 logger = logging.getLogger("uvicorn.error")
 
 
@@ -548,4 +605,18 @@ async def stream_dynamic_discussion(
 
         yield "data: [DONE]\n\n"
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    # 🔴 `X-Accel-Buffering: no` 가 없으면 nginx 가 응답을 **모아뒀다가** 한꺼번에
+    #    보낸다. 배포 nginx 는 `proxy_buffering`·`proxy_read_timeout` 을 한 줄도
+    #    안 적어 전부 기본값(`on` · 60초)이다 — 즉 앱이 헤더로 꺼야 한다.
+    #    실측 2026-08-13: 같은 nginx·같은 분에 A 는 235조각으로 흘러오는데
+    #    (sse-starlette 가 이 헤더를 자동으로 붙인다) B 는 42.4초 침묵 뒤
+    #    31개가 3밀리초 안에 왔다. 갈린 것은 이 헤더 하나뿐이었다.
+    return StreamingResponse(
+        _with_keepalive(event_generator()),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

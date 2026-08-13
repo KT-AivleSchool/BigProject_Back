@@ -1062,6 +1062,21 @@ async def stream_ai_discussion(
             yield {"event": "message", "data": json.dumps(data, ensure_ascii=False)}
 
     # sse_starlette 라이브러리의 EventSourceResponse를 반환하여 비동기 HTTP 청크 전송 스트림 활성화
+    #
+    # 🔴 **여기에 `X-Accel-Buffering: no` 를 손으로 적지 않는다 — 이미 붙어 있다.**
+    #    `sse_starlette/sse.py` 가 사용자가 넘긴 headers 를 반영한 **뒤에**
+    #    `_headers["X-Accel-Buffering"] = "no"` 를 무조건 덮어쓴다(+ `Connection:
+    #    keep-alive`, `Cache-Control: no-store`, 15초 ping). 그래서 이 줄을 더해도
+    #    효과가 없고, 있으면 "이게 있어야 도는구나" 로 읽혀 지웠을 때 원인을 못 찾는다.
+    #
+    #    실측 2026-08-13 `api.omnisite.o-r.kr` — 같은 nginx·같은 분에
+    #    A(여기)는 첫 데이터 0.727초 · recv 235조각 · 총 14.2초로 정상 스트리밍인데,
+    #    B(`stakeholders.py`, 맨 StreamingResponse)는 42.4초 침묵 뒤 31개가
+    #    3밀리초 안에 왔다. **갈린 것은 이 헤더 하나뿐이다**(이슈 #264).
+    #    ⚠ 그러므로 `Back_deploy`(대문자) 의 `f8062f1`
+    #      「X-Accel-Buffering 을 빼면 스트림이 돌아온다」는 **거꾸로다.** 그건
+    #      로컬에서 본 증상인데 로컬엔 nginx 가 없어 이 헤더는 아무 일도 안 한다.
+    #    ⚠ 이 엔드포인트를 `StreamingResponse` 로 바꾸면 그 순간 B 와 같은 병에 걸린다.
     headers = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Credentials": "true",
