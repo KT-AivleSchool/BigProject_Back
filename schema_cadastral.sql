@@ -17,6 +17,10 @@ CREATE TABLE IF NOT EXISTS cadastral_lands (
     geom_5186  geometry(MultiPolygon, 5186)
                GENERATED ALWAYS AS (ST_Transform(geom, 5186)) STORED
 );
+
+-- 기존 DB(또는 이전 시드)에 테이블은 있으나 geom_5186 칼럼이 없는 경우를 위한 추가 구문
+ALTER TABLE cadastral_lands ADD COLUMN IF NOT EXISTS geom_5186 geometry(MultiPolygon, 5186) GENERATED ALWAYS AS (ST_Transform(geom, 5186)) STORED;
+
 CREATE INDEX IF NOT EXISTS idx_cadastral_geom    ON cadastral_lands USING GIST(geom);
 CREATE INDEX IF NOT EXISTS idx_cadastral_5186    ON cadastral_lands USING GIST(geom_5186);
 CREATE INDEX IF NOT EXISTS idx_cadastral_pnu     ON cadastral_lands(pnu);
