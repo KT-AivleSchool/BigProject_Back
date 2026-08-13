@@ -23,47 +23,38 @@ BigProject_Planning/
 # 폴더는 유지, 내부 파일은 제외
 
 # 데이터들
-datasets/*/data/*
-!datasets/*/data/.gitkeep
-datasets/*/fixture/*
-!datasets/*/fixture/.gitkeep
-datasets/*/law/*
-!datasets/*/law/.gitkeep
+data_임시/*/data/*
+!data_임시/*/data/.gitkeep
+data_임시/*/fixture/*
+!data_임시/*/fixture/.gitkeep
+data_임시/*/law/*
+!data_임시/*/law/.gitkeep
 *.zip
 
 # V4 대조 데이터 (데이터팀 전달본 · issue #198). 원본 60MB+ 라 저장소에 올리지 않는다.
-datasets/_v4/
+data_임시/_v4/
 
 # 공공 데이터, 캐시
-datasets/region_data/*
-!datasets/region_data/.gitkeep
-datasets/search_cache/*
-!datasets/search_cache/.gitkeep
+data_임시/region_data/*
+!data_임시/region_data/.gitkeep
+data_임시/search_cache/*
+!data_임시/search_cache/.gitkeep
 
 # 산출물
-datasets/step1_output/*
-!datasets/step1_output/.gitkeep
-datasets/step2_output/*
-!datasets/step2_output/.gitkeep
-datasets/step3_output/*
-!datasets/step3_output/.gitkeep
-datasets/step4_output/*
-!datasets/step4_output/.gitkeep
+data_임시/step1_output/*
+!data_임시/step1_output/.gitkeep
+data_임시/step2_output/*
+!data_임시/step2_output/.gitkeep
+data_임시/step3_output/*
+!data_임시/step3_output/.gitkeep
+data_임시/step4_output/*
+!data_임시/step4_output/.gitkeep
 
 # Local Dev Tests
 tests/test_geocoder.py
 
 # Dynamic Uploads & Media Files
 uploads/
-
-# Claude Code 로컬 설정
-.claude/
-
-# DB 덤프 (대용량, 각자 로컬 생성분)
-omnisite_backup.sql
-
-# 적재 제외 문서 보관함 (지침류 등 — 임베딩 부적합)
-seeds_excluded/
 
 # 순수 일회성 스크립트만 남은 로컬 폴더 (analyze_clean_perf.py 하나).
 # 🔴 회귀 대조기·진단기 9개는 2026-08-05 에 `app/tools/` 로 옮겨 **추적한다.**
@@ -78,29 +69,34 @@ seeds_excluded/
 # 파이프라인 run 산출물 (run 하나가 25MB+ · 로컬 전용)
 runs/
 
-# 서버 실행 로그. 추적하면 커밋마다 수백 줄 diff 가 끼어 진짜 변경을 가린다
-# (2026-08-08: 273줄 변경으로 코드 diff 를 덮고 있었다).
-uvicorn.out
-uvicorn.out.log
-uvicorn.err.log
-# 🔴 위 세 줄은 **파일명 고정**이라 포트를 붙인 이름(`uvicorn_8000.log`)이 그대로
-#    untracked 로 샜다(2026-08-10). 이름을 바꿔 띄우는 사람이 있으므로 패턴으로 받는다.
-uvicorn_*.log
-*.out
-
 # 백업 사본. 기준선을 되돌릴 일이 생기면 git 이력에서 꺼낸다 —
 # 저장소 안에 "이전 기준값"이 하나 더 있으면 어느 쪽이 기준인지 흐려진다.
 *.bak
 
-# 관통 실행에 쓴 요청 본문·응답·PDF/HWPX 산출물 보관함 (2026-08-12).
-# 🔴 대조기가 아니다 — `app/tools/check_*.py` 와 달리 **한 번 치고 버리는 것**이고
-#    도메인·run_id·parcel_id 가 그날 실행에 박혀 있어 다시 못 돌린다.
-#    남길 값이 있으면 파일이 아니라 **작업일지에 실측치로** 옮겨 적는다.
-_e2e/
+# Temporary sync/editor files
+.!*
+.*.swp
+*~
 
-# DB 에서 지운 테이블의 삭제 직전 덤프 (2026-08-11 — 흡연 도메인 데이터셋 8개).
-# 🔴 `parks`·`public_wifi_locations`·`smoking_areas` 는 디스크에 다른 원본이 없어
-#    이 CSV 가 유일한 사본이다. 추적하지 않는 이유는 「없어도 되니까」가 아니라
-#    **파이프라인이 안 읽는 자료라 리포에 둘 것이 아니기 때문**이다 —
-#    지우기 전에 Teams/감리팀 공유로 옮길 것.
-datasets/_db_dump_*/
+# Scratch scripts and one-off SQL files
+run_sql.py
+schema_*.sql
+
+# 개인 메모 및 일회성 문서 파일들 (메모장 등)
+*.pdf
+*.pptx
+*.docx
+*.html
+
+# 서버 로그
+*.log
+*.out
+
+# txt, md 중 핵심 프로젝트 파일 제외
+*.txt
+!requirements.txt
+!CMakeLists.txt
+*.md
+!README.md
+!AGENTS.md
+!SKILL.md
