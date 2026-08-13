@@ -40,6 +40,21 @@
       「같은 이름의 다른 스키마」가 날 자리라 컬럼 집합을 실제로 댔다 —
       ORM 선언은 DB 의 **부분집합**이고 ORM 에만 있는 컬럼은 0개다(=쿼리는 다 돈다).
 
+종료코드 (🔴 CI 가 `set -e` 로 읽는다 — 뜻을 바꾸면 배포가 같이 바뀐다)
+  0  할 일을 다 했거나, 건너뛴 단계가 **이미 전부 있어 할 일이 없던 것**뿐이다
+  1  건너뛴 단계에 **아직 없는 것이 남아 있다**(스키마가 반쪽) 또는 실제 실패
+  2  DB 에 못 붙었다
+
+  🔴 「건너뛴다」에는 뜻이 둘이라 한 덩어리로 세면 안 된다.
+     ⓐ 이미 다 있어서 안 해도 된다   → 스키마는 완성이다. 배포를 막을 이유가 없다
+     ⓑ 아직 없는데 DROP 때문에 못 한다 → 반쪽 스키마다. 반드시 멈춰야 한다
+     2026-08-13 에 실제로 났다: 앞선 배포가 `national_properties` 를 만들어놓자
+     그 존재가 5번을 영구히 막았고, ⓐ 하나 때문에 rc=1 이 나가 **그 뒤 모든 푸시가
+     빨간불**이 됐다. 그렇다고 전부 rc=0 으로 접으면 이번엔 ⓑ 가 조용히 통과한다.
+  ⚠ ⓐ 판정은 `expect_tables`·`expect_cols` 로만 한다 — **선언한 만큼만 본다.**
+     `.sql` 에 `ADD COLUMN` 을 더하면 `expect_cols` 에도 더할 것. 안 더하면
+     테이블은 있으니 「이미 있음」이 되고, 없는 컬럼이 **초록불 아래** 남는다.
+
 접속
   `settings.DATABASE_URL`(= `.env`) 을 쓴다. `docker exec … psql` 이 아니다 —
   그 형태는 `-i` 를 빠뜨리면 **stdin 이 무시되고 출력도 없이 exit 0** 이 되는
@@ -131,6 +146,33 @@ STEPS: tuple[Step, ...] = (
         "sql",
         "schema_cleaned_data_add.sql",
         expect_tables=("national_properties", "booth_candidates"),
+        # 🔴 테이블 2개만 선언해두면 「이미 있음」이 거짓말이 된다. 이 파일은 테이블을
+        #    만드는 데서 안 끝나고 ALTER 로 컬럼 18개를 가산한다 — 테이블만 보고
+        #    「이미 있음」이라 말하면, 나중에 이 파일에 ADD COLUMN 이 하나 붙었을 때
+        #    테이블은 있으니 계속 건너뛰면서 **초록불**이 뜬다. 안 터지고 컬럼만 없다.
+        #    아래 목록은 이 파일의 `ADD COLUMN` 전수다(2026-08-13 실측 대조).
+        #    ⚠ 이 파일에 컬럼을 더하면 **여기도 같이 더한다.** 안 더하면 그 컬럼은
+        #      「있어야 하는 것」에서 빠져 영원히 확인되지 않는다.
+        expect_cols=(
+            ("national_properties", "geom_5186"),
+            ("national_properties", "sigungu_cd"),
+            ("candidate_lands", "geom_5186"),
+            ("candidate_lands", "area_m2"),
+            ("candidate_lands", "width_m"),
+            ("candidate_lands", "sigungu_cd"),
+            ("booth_candidates", "land_id"),
+            ("booth_candidates", "area_m2"),
+            ("booth_candidates", "width_m"),
+            ("booth_candidates", "is_national"),
+            ("booth_candidates", "shops_150m"),
+            ("booth_candidates", "dist_transit"),
+            ("booth_candidates", "dist_litter"),
+            ("booth_candidates", "dist_existing"),
+            ("booth_candidates", "score"),
+            ("booth_candidates", "rank"),
+            ("booth_candidates", "geom"),
+            ("booth_candidates", "geom_5186"),
+        ),
         drops=("national_properties",),
         note="🔴 이 파일 20행에 `DROP TABLE IF EXISTS national_properties CASCADE;` 가 있다",
     ),
@@ -300,11 +342,21 @@ def main() -> int:
 
     # ── 1. 계획 ──────────────────────────────────────────────────────────
     blocked: list[Step] = []
+    # 🔴 「건너뛴다」에는 뜻이 둘이다. 이 둘을 한 덩어리로 세면 **아무것도 안 해도
+    #    되는 상태**가 **해야 하는데 못 한 상태**와 같은 종료코드를 받는다.
+    #    ⓐ 이미 다 있어서 안 해도 된다  → 스키마는 완성이다. 배포를 막을 이유가 없다
+    #    ⓑ 아직 없는데 DROP 때문에 못 한다 → 반쪽 스키마다. 반드시 멈춰야 한다
+    #    갈라놓지 않으면 ⓐ 하나 때문에 rc=1 이 나가고, `set -e` 인 배포가 매번
+    #    빨간불이 된다(2026-08-13 실제 사고). 그렇다고 전부 rc=0 으로 접으면
+    #    이번엔 ⓑ 가 조용히 통과한다 — 그게 더 나쁘다(원칙 1).
+    satisfied: set[str] = set()
     for s in STEPS:
         # 「이미 있음」은 그 단계가 **확인하겠다고 선언한 것 전부**를 봐야 한다.
         # 테이블만 보면 컬럼만 가산하는 단계(6번)가 영원히 「만든다」로 찍힌다 —
         # 멱등이라 실제로는 아무 일도 안 일어나는데 계획이 거짓말을 한다(원칙 4).
         done = bool(s.expect_tables or s.expect_cols) and not _verify(s)
+        if done:
+            satisfied.add(s.no)
         mark = "이미 있음" if done else "만든다"
         print(f"[{s.no}] {s.what}")
         print(f"     {s.target}  →  {mark}")
@@ -320,7 +372,16 @@ def main() -> int:
                 print(f"     🔴 `{t}` 가 이미 있다 — 이 단계는 그걸 **지우고 다시 만든다**")
                 print(f"        지금 {n}행. CASCADE 로 딸려 나갈 후보: {deps or '없음'}")
                 if not a.force:
-                    print("        → --force 없이는 이 단계를 건너뛴다")
+                    if s.no in satisfied:
+                        print(
+                            "        → --force 없이는 이 단계를 건너뛴다 "
+                            "(이 단계가 만들 것이 **이미 전부 있어** 할 일이 없다)"
+                        )
+                    else:
+                        print(
+                            "        → --force 없이는 이 단계를 건너뛴다 "
+                            "🔴 아직 없는 것이 있는데 못 만든다 — 스키마가 반쪽이 된다"
+                        )
                     blocked.append(s)
         print()
 
@@ -335,11 +396,12 @@ def main() -> int:
         return 0
 
     # ── 2. 적용 ──────────────────────────────────────────────────────────
-    skipped: list[str] = []
+    skipped: list[str] = []  # 할 일이 없어서 건너뛴 것 (ⓐ)
+    unfinished: list[str] = []  # 할 일이 남았는데 못 한 것 (ⓑ)
     for s in STEPS:
         if s in blocked:
             print(f"[{s.no}] 건너뜀 — {s.drops} 를 지우게 되어 있고 --force 가 없다")
-            skipped.append(s.no)
+            (skipped if s.no in satisfied else unfinished).append(s.no)
             continue
         print(f"[{s.no}] {s.target} …")
         try:
@@ -370,14 +432,24 @@ def main() -> int:
     print(f"테이블 {len(before)} → {len(after)}개")
     print(f"새로 생긴 것 {len(created)}개: {created or '없음'}")
     if skipped:
-        print(f"🔴 건너뛴 단계 {skipped} — 위 사유를 읽고 --force 를 붙일지 정할 것")
+        print(
+            f"건너뛴 단계 {skipped} — 만들 것이 이미 전부 있어 할 일이 없었다. "
+            "다시 만들려면 --force (기존 행이 사라진다)"
+        )
+    if unfinished:
+        print(
+            f"🔴 건너뛴 단계 {unfinished} — **아직 없는 것이 있는데** 못 만들었다. "
+            "위 사유를 읽고 --force 를 붙일지 정할 것"
+        )
     print()
     print("이 스크립트가 **안 한 것** (필요하면 따로):")
     print("  · 경계 3종 행 적재  python scripts/load_region_boundaries.py --commit")
     print("  · 지적도 행 적재    python scripts/load_cadastral.py [--sigungu <코드>] --commit")
     print("    (둘 다 원본 SHP 가 필요하다 — .gitignore 라 clone 에 안 들어온다)")
     print("=" * 88)
-    return 1 if skipped else 0
+    # 🔴 `skipped`(ⓐ)는 rc 에 안 넣는다 — 스키마가 완성인데 실패로 알리면 배포가
+    #    매번 빨간불이고, 그러면 아무도 이 종료코드를 안 본다. `unfinished`(ⓑ)만 남긴다.
+    return 1 if unfinished else 0
 
 
 if __name__ == "__main__":
