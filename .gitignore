@@ -23,6 +23,32 @@ BigProject_Planning/
 # 폴더는 유지, 내부 파일은 제외
 
 # 데이터들
+#
+# 🔴 아래 세 규칙은 그대로 두지만, **프리셋 원본은 이미 추적 중이다**(2026-08-14).
+#    ignore 규칙은 **추적 중인 파일에는 아무 효력이 없다** — 그래서 규칙을 풀지 않고
+#    `git add -f` 로 한 번 넣었다. 즉 「커밋돼 있으면서 새 파일은 계속 막힌다」.
+#    ⚠ 그러므로 프리셋에 파일을 **더할 때는** `git add -f` 를 다시 써야 한다.
+#      그냥 add 하면 조용히 무시된다(에러가 안 난다).
+#
+#    왜 넣었나 — 로컬과 EC2 가 실제로 갈려 있었다(2026-08-14 실측):
+#      · `재활용/law/` 로컬 **비어 있음** ↔ EC2 폐기물관리 조례 PDF+txt
+#        (= 로컬에서 재활용을 돌리면 STEP1 이 조례 없이 간다)
+#      · `흡연/law/*.pdf.txt`(추출 캐시) 로컬만 있음
+#      · EC2 `재활용/fixture/profiles.json` 이 9개 데이터셋인데 `data/` 는 7개
+#        → 화면3 이 **KeyError**. 파생물이 원본을 이긴 사고다
+#
+#    🔴 `fixture/profiles.json` 은 **일부러 안 넣는다.** `data/` 의 파생물이고,
+#       커밋하면 배포마다 낡은 사본이 되살아나 위 KeyError 가 영구화된다.
+#       원본을 추적하므로 `--reprofile` 이 매번 다시 만든다(계약 `full` 첫 칸).
+#
+#    🔴 `흡연/data` 의 **3개는 못 넣었다** — GitHub 파일당 상한 100MB 초과다:
+#       소상공인 상가정보 292.6MB · BUS_STATION_BOARDING 148.4MB ·
+#       LOCAL_PEOPLE_DONG 112.0MB (합 527.5MB). 이 셋은 **여전히 수동 배치**이고,
+#       Git LFS 를 도입하지 않는 한 방법이 없다. 넣은 것은 20개 12.3MB 다.
+#
+#    ⚠ 줄바꿈 변환은 `.gitattributes` 가 막는다(`datasets/*/{data,law}/** -text`).
+#      Windows `core.autocrlf=true` 가 CSV 를 CRLF 로 바꾸면 **감리 입력 sha256** 이
+#      달라져 회귀 대조기만 빨간불이 된다 — 값은 안 틀리는 자리라 찾기 어렵다.
 datasets/*/data/*
 !datasets/*/data/.gitkeep
 datasets/*/fixture/*
