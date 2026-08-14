@@ -134,25 +134,30 @@ datasets/*/.upload_ledger.json
 #    그렇게 읽는다. 그 상태로는 이 파일의 데이터 규칙이 **아무것도 안 가린다**
 #    (`datasets/흡연/data` 536MB 가 그대로 untracked 로 샌다). 병합하며 되살렸다.
 
-# Scratch scripts and one-off SQL files
-run_sql.py
-schema_*.sql
+# 🔴 2026-08-14 — 확장자 전역 규칙 7줄(`schema_*.sql`·`*.md`·`*.txt`·`*.html`·`*.pdf`·
+#    `*.pptx`·`*.docx`)을 **지웠다.** 「안 쓰니까」가 아니라 **증상이 없는 채로 새 파일만
+#    가리기 때문**이다 — 이미 추적 중인 파일은 ignore 규칙의 영향을 안 받으므로 지금
+#    사라지는 것이 하나도 없고, 그래서 **아무도 못 본다.** 다음에 파일을 하나 더 만드는
+#    사람에게만 터진다. 실측(추적 파일 수, 118d414 기준):
+#    schema_*.sql **7** · *.md 16 · *.txt 26 · *.html 1 · *.pdf 9 · pptx/docx/log/out 0.
+#    무엇을 가리고 있었나 — 셋이 특히 위험했다:
+#    ⓐ 루트 `schema_*.sql` **7개는 `scripts/bootstrap_db.py` 가 순서대로 부르는 정본 DDL**
+#       이다. 새 스키마 파일이 조용히 안 올라가면 배포 DB 에 그 테이블만 없는 채로
+#       뒤이은 `create_all(checkfirst=True)` 이 「이미 있다」며 넘어간다 — **에러가 안 난다**
+#       (CLAUDE.md 「부트스트랩 문서가 낡은 DDL 을 실행시킨다」와 같은 모양).
+#    ⓑ `app/templates/default/*.txt` **9개는 LLM 프롬프트 정본**이다(evaluator·css_*·*_role…).
+#       새 프롬프트를 더하면 로컬에선 되고 배포에선 없는 채로 돈다.
+#    ⓒ `app/templates/report_template.html` 은 화면6 PDF 템플릿이고 **추적 중인 유일한 html**
+#       이다. `seeds/*.pdf` 6개도 RAG 조례 시드 원본이다.
+#    🔴 루트 앵커(`/*.md`)로는 안 풀린다 — 가려지는 것들이 **바로 그 루트**에 있다
+#       (CLAUDE.md · pipeline_run_contract.md · schema_*.sql 7개). 그래서 지웠다.
+#    ⚠ `merge_Back` 의 .gitignore 엔 이 7줄이 **애초에 없고** 거기서 새는 것도 없다 —
+#      두 브랜치의 .gitignore 가 갈려 있는 것 자체가 병합 때마다 조용히 뒤집히는 자리다.
+#    원래 의도는 다른 줄이 이미 받고 있다: 개인 메모 → 위쪽 `메모장/`,
+#    조례·데이터 원본 → `datasets/*/{data,law}/*`, 산출물 → `datasets/step*_output/*`.
 
-# 개인 메모 및 일회성 문서 파일들 (메모장 등)
-*.pdf
-*.pptx
-*.docx
-*.html
+# Scratch scripts (루트 직속만 — 하위 경로의 같은 이름까지 가리지 않는다)
+/run_sql.py
 
-# 서버 로그
+# 서버 로그 (`*.out`·`uvicorn_*.log` 는 위쪽에 이미 있다)
 *.log
-*.out
-
-# txt, md 중 핵심 프로젝트 파일 제외
-*.txt
-!requirements.txt
-!CMakeLists.txt
-*.md
-!README.md
-!AGENTS.md
-!SKILL.md
