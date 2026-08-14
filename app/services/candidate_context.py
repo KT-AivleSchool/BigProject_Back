@@ -139,6 +139,11 @@ async def _fetch_and_parse_audit_rules_from_db(
         source = r.source or "출처 불명"
         if source == "human_confirmed":
             source = "담당자 확정(HITL)"
+        elif source == "llm_auto_approved":
+            # 🔴 「고속 자동 분석」이 게이트를 AI 제안값으로 채운 자리다
+            #    (`pipeline_runner.AUTO_APPROVE_SRC`). 사람 확정과 **같은 낱말로
+            #    접지 않는다** — 토론 LLM 이 근거의 무게를 다르게 읽어야 한다(원칙 4).
+            source = "AI 제안값 자동승인(사람 미확인)"
 
         if r.role_type == "positive_factor":
             positive.add(f"- {rationale}")

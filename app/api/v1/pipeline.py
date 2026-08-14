@@ -57,6 +57,11 @@ class RunRequest(BaseModel):
     #              화면4 목록의 길이이자 화면5 가 고를 수 있는 후보의 수다.
     user_input: str | None = None
     topn: int | None = None
+    # ↓ 「고속 자동 분석 모드」. 게이트를 **계획에서 빼는 게 아니라** 그 자리에서 AI
+    #   제안값으로 답한다 — 질문도 검증기도 사람 경로와 한 글자도 다르지 않고, 무엇을
+    #   승인했는지는 `hitl/<gate>.json` 과 산출물 `source` 에 남는다(원칙 4).
+    #   `mode="fixture"` 는 게이트가 없어 400 이다(판정은 `runner.start_run` 한 곳).
+    auto_approve: bool = False
 
 
 @router.post("/runs", status_code=202)
@@ -79,7 +84,8 @@ def create_run(
     try:
         run_id = runner.start_run(req.domain, req.mode,
                                   user_input=req.user_input, topn=req.topn,
-                                  user_id=user.id if user else None)
+                                  user_id=user.id if user else None,
+                                  auto_approve=req.auto_approve)
     except runner.RunRequestError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except runner.RunConflict as e:
