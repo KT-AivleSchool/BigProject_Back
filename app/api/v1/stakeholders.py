@@ -548,4 +548,16 @@ async def stream_dynamic_discussion(
 
         yield "data: [DONE]\n\n"
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        # 🔴 A 엔진(`simulations.py`)과 **같은 헤더를 단다.** 여기엔 아예 없었다 —
+        #    그래서 B 는 프록시 뒤에서 A 와 똑같이 「끝나고 한꺼번에」가 된다.
+        #    `no-transform` 이 핵심이다: 중간 압축기가 스트림을 끝까지 모았다가
+        #    한 번에 내보내는 것을 막는다(경위는 A 쪽 주석에 실측과 함께 있다).
+        #    `X-Accel-Buffering` 은 nginx 전용이라 그것만으로는 못 막는다.
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )
