@@ -35,3 +35,43 @@ openai==2.53.0
 # langgraph-sdk 가 websockets<16 을 요구해 17.0.1 → 15.0.1 로 내려갔다.
 # uvicorn[standard] 는 >=13.0 이라 충돌은 없다. 다시 안 움직이게 고정한다.
 websockets==15.0.1
+
+# 🔴 2026-08-15 추가 — 이 핀은 "취향"이 아니라 **Dockerfile 과 짝**이다.
+#
+# playwright 는 파이썬 패키지와 브라우저 바이너리가 따로이고, 패키지 버전마다
+# 기대하는 브라우저 리비전 경로가 박혀 있다. 브라우저를 굽는 쪽은
+# `Dockerfile:2,12` 의 `FROM mcr.microsoft.com/playwright/python:v1.48.0-noble`
+# 이고 그 이미지에는 `/ms-playwright/chromium-1140` 만 있다.
+#
+# 그런데 `requirements.txt:23` 은 `playwright>=1.40.0` 으로 **상한이 없었고**
+# 이 파일에 항목이 없어 `-c` 가드가 이 패키지를 안 덮었다 → 2026-08-14 09:58
+# 재빌드에서 pip 이 1.62.0 을 끌어왔다. headless shell 이 별도 다운로드로
+# 분리된 건 1.49 부터라 1.48 이미지엔 그 폴더가 **존재할 수 없다**:
+#   Executable doesn't exist at /ms-playwright/chromium_headless_shell-1234/...
+# 화면6 PDF 가 500 이 됐고, 빌드도 기동도 성공해서 **첫 launch() 까지 안 보인다.**
+#
+# 🔴 이 값을 올리려면 **Dockerfile 의 베이스 이미지 태그를 같이 올린다.**
+#    한쪽만 바꾸면 같은 사고가 그대로 재발한다.
+playwright==1.48.0
+# ⚠ greenlet·pyee 는 여기 안 적는다 — playwright 1.48.0 이 `==3.1.1`·`==12.0.0` 으로
+#   **자기가 정확히 못박는다**. 여기 또 적으면 위 줄을 올릴 때 같이 안 고쳐 충돌한다.
+
+# 🔴 2026-08-15 추가 — 위 재빌드에서 **덤으로 같이 올라간** 넷이다.
+#
+# playwright 만 고치려고 돌린 `docker-compose build api` 의 `pip freeze` 전체 diff 가
+# 112개 중 7개였는데, 그중 넷이 이것이다:
+#   langchain-core 1.5.4→1.5.5 · langchain-openai 1.5.0→1.5.1
+#   langsmith 0.10.18→0.11.0(마이너) · orjson 3.11.9→3.12.0(마이너)
+# `requirements.txt` 에 상한이 없고 이 파일에도 항목이 없어서 **아무도 안 막았다** —
+# playwright 사고와 **같은 구조**다. 감시 목록(pandas·starlette·openai 등)은 안 움직여서
+# 5개만 봤으면 못 봤다.
+#
+# 🔴 이 값들은 "고른" 게 아니라 **지금 운영에서 도는 값**이다(2026-08-15 재빌드 후
+#    기동 로그 오류 0건 · import 연막 통과 · 화면6 PDF 200). 되돌리지 않고 **그 자리에
+#    고정**한다 — 되돌리면 검증 안 한 조합이 된다.
+# ⚠ 올릴 때는 LLM 경로(감리 STEP1 · 화면5 토론)를 실제로 한 번 돌려보고 올린다.
+#    픽스처 회귀(mode=fixture)는 LLM 을 안 불러서 **여기 회귀를 못 잡는다.**
+langchain-core==1.5.5
+langchain-openai==1.5.1
+langsmith==0.11.0
+orjson==3.12.0
