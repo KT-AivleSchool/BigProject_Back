@@ -300,11 +300,26 @@ def _seed_magnitude(w, did: str = "", role: str = "") -> float:
 
 def define_indicators(reviewed: dict, report: dict) -> list:
     """positive/negative role 데이터셋을 지표로. WR 있으면 좌표레이어(+)통계표 병합."""
+    # 🔴 `whitelist_resolved` 는 **성공·실패가 섞인** 목록이다(gam2_clean_data.py:509~578):
+    #   순환참조 기록 {"whitelist","reason"} · 해결실패 기록 {"reason","whitelist",...} ·
+    #   성공 기록 {"from_dataset","from_column","key_col","normalize",...}.
+    #   `wr[0]` 만 보면 ⓐ 0번이 실패 기록일 때 아래 `wr["from_dataset"]` 이 KeyError 이고
+    #   ⓑ 뒤쪽에 있는 진짜 병합 관계가 조용히 버려진다. 생산자 쪽(clean_data:608)은
+    #   이미 전량을 순회하며 `.get("from_dataset")` 으로 고른다 — 소비자만 어긋나 있었다.
     wr_by_id = {}
     for r in report.get("results", []):
-        wr = r.get("whitelist_resolved")
-        if wr and "from_dataset" in wr[0]:
-            wr_by_id[r["dataset_id"]] = wr[0]
+        usable = [w for w in (r.get("whitelist_resolved") or []) if w.get("from_dataset")]
+        if not usable:
+            continue
+        if len(usable) > 1:
+            # 어느 좌표레이어에 붙일지 코드가 고를 수 없다 — 고르면 나머지가 소리 없이 사라진다.
+            raise ValueError(
+                f"[{r['dataset_id']}] 병합 대상 좌표레이어가 {len(usable)}개입니다 "
+                f"({', '.join(w['from_dataset'] for w in usable)}).\n"
+                f"  지표를 하나로 정할 수 없습니다 — clean_report.json 의 해당 데이터셋 "
+                f"whitelist_resolved 를 확인하세요."
+            )
+        wr_by_id[r["dataset_id"]] = usable[0]
 
     pos = {}
     for r in reviewed.get("results", []):
