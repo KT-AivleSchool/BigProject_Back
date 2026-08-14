@@ -17,7 +17,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        # 🔴 v4 는 Node.js 20 을 지목하는데 러너가 이미 Node 24 로 **강제 실행**하고
+        #    deprecation 경고를 낸다(2026-08-14 실행 로그). 지금은 경고지만 러너에서
+        #    Node 20 이 걷히면 그날 배포가 통째로 멈춘다 — 경고일 때 올린다.
+        uses: actions/checkout@v5
 
       - name: Deploy to EC2 using SSH
         uses: appleboy/ssh-action@v1.0.3
