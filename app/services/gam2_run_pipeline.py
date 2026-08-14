@@ -196,6 +196,14 @@ def run(
         print(f"  ⚠ 입력↔데이터 불일치: {fac.get('mismatch_reason', '')}")
     print("  ※ 확정 아님 — HITL에서 확인/수정")
 
+    # 🔴 감리(수백 초) 앞에서 시설·지역만 먼저 내보낸다. 같은 값이 아래
+    #    `save_results(…, facility_info=fac)` 로 `audit_result.json` 에도 들어가지만
+    #    그건 감리 뒤라, 화면2 의 「선정 대상」이 볼 게 없어 통째로 대기 화면이었다.
+    #    러너는 다음 줄(`▶ STEP 1 `)에서 산출물을 다시 훑으므로 여기 쓰면 그때 공개된다 —
+    #    STEP 0.5 는 마커가 아니라 칸 "0" 에 흡수되고, 공개 시점은 STEP 1 시작이다.
+    paths["facility"] = A.save_facility_inference(fac)
+    print(f"[저장] {paths['facility']}")
+
     domain = {
         "facility": fac["facility"],
         # 🔴 예전엔 `or A.DOMAIN["region"]`(="용산구") 였다. 지역이 안 잡히면
