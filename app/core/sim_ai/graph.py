@@ -237,9 +237,32 @@ async def evaluator_node(state: AgentState) -> dict:
     history_text = _format_chat_history(state.get("messages", []))
     round_count = state.get("round_count", 0) + 1
 
-    prev_evals = state.get("evaluations", {})
-    prev_pro_acc = prev_evals.get("pro_acceptance", 0.0)
-    prev_con_acc = prev_evals.get("con_acceptance", 0.0)
+    prev_evals = state.get("evaluations") or {}
+    # 🔴 「이전 점수 0.0」과 「이전 점수 없음」은 다르다. 1라운드엔 이전 라운드가
+    #    아예 없는데 예전엔 `.get(..., 0.0)` 이 0.0 을 만들어 넣었고, 그 0.0 이
+    #    프롬프트에 **기준점**으로 실려 나갔다. evaluator.txt 에서 0.00 은
+    #    「전혀 수용하지 않고 평행선」이고 기본 판정은 「유지(±0.02)」이며 점수는
+    #    음수로 못 간다 — 즉 0.0 은 **흡착 바닥**이다. 실측(2026-08-13): 저장된
+    #    토론 8건 중 찬성측이 3라운드 내내 0.0 에 붙은 것이 6건, 반대측 3건이었다.
+    #    없는 값을 지어내지 않고, 1라운드엔 「이전 없음」이라고 사실대로 적는다.
+    has_prev = isinstance(prev_evals.get("pro_acceptance"), (int, float)) and isinstance(
+        prev_evals.get("con_acceptance"), (int, float)
+    )
+    prev_pro_acc = prev_evals.get("pro_acceptance") if has_prev else None
+    prev_con_acc = prev_evals.get("con_acceptance") if has_prev else None
+
+    if has_prev:
+        baseline_block = (
+            f"[이전 라운드 수용도 점수]\n- 찬성측: {prev_pro_acc}\n- 반대측: {prev_con_acc}\n\n"
+            "위 점수를 기준점으로 삼아, 가장 최근 발언에서 실제로 일어난 변화만 반영하세요."
+        )
+    else:
+        baseline_block = (
+            "[이전 라운드 없음 — 이번이 첫 평가입니다]\n"
+            "기준점이 될 이전 점수가 없습니다. 0.00 을 기준점으로 가정하지 마십시오.\n"
+            "지침 [2] 의 변화폭(±0.05~±0.20) 규칙은 이번 평가에 적용되지 않습니다.\n"
+            "지금까지의 모두발언만 보고 [1] 의 절대 척도(0.00~1.00) 위에 양측을 각각 놓으십시오."
+        )
 
     llm = get_persona_llm("evaluator")
     llm_json = llm.bind(response_format={"type": "json_object"})
@@ -253,19 +276,41 @@ async def evaluator_node(state: AgentState) -> dict:
                 #    시나리오 A/B/C 는 이 점수로 갈리므로(reporter.txt) 결과까지 밀린다.
                 #    지금은 상향·하향·유지 판단을 evaluator.txt 에 맡기고, 여기서는
                 #    기준점(이전 점수)과 대화만 넘긴다.
-                content=f"[이전 라운드 수용도 점수]\n- 찬성측: {prev_pro_acc}\n- 반대측: {prev_con_acc}\n\n이전 대화:\n{history_text}\n\n위 대화 내용 중 '가장 최근 발언'에서 실제로 일어난 변화만 반영해 평가 JSON을 반환하세요. 양측을 각각 판단하고, 움직인 이유를 그 발언의 구체적 대목으로 밝히세요."
+                content=f"{baseline_block}\n\n이전 대화:\n{history_text}\n\n양측을 각각 판단하고, 그렇게 판단한 이유를 발언의 구체적 대목으로 밝혀 평가 JSON을 반환하세요."
             ),
         ]
     )
 
+    parse_error: str | None = None
     try:
         evals = _extract_json(response.content)
     except Exception as e:
-        print(f"JSON Parsing Error: {e}")
+        parse_error = f"{type(e).__name__}: {e}"
         evals = {}
 
-    pro_acc = evals.get("pro_acceptance", 0.0)
-    con_acc = evals.get("con_acceptance", 0.0)
+    # 🔴 실패를 0.0 으로 **렌더하지 않는다**(원칙 1·4). 예전엔 파싱이 깨져도
+    #    `.get(..., 0.0)` 이 0.0/0.0 을 내보냈는데, 그 값은 「완전 평행선」이라는
+    #    정상 판정과 화면에서 **구분이 안 된다** — 그래서 이 결함이 안 보였다.
+    missing = [
+        k
+        for k in ("pro_acceptance", "con_acceptance")
+        if not isinstance(evals.get(k), (int, float))
+    ]
+    eval_error = parse_error or (f"응답에 {', '.join(missing)} 없음" if missing else None)
+
+    if eval_error:
+        if not has_prev:
+            # 유지할 직전 값도 없다. 여기서 지어내면 그 숫자가 시나리오까지 정한다.
+            raise RuntimeError(f"수용도 평가 실패(1라운드, 기준점 없음): {eval_error}")
+        # 직전 라운드 값을 **유지**하고, 유지했다는 사실을 산출물에 남긴다.
+        pro_acc, con_acc = float(prev_pro_acc), float(prev_con_acc)
+        evals = {**prev_evals, "eval_error": eval_error, "carried_from_round": round_count - 1}
+    else:
+        pro_acc = float(evals["pro_acceptance"])
+        con_acc = float(evals["con_acceptance"])
+        evals.pop("eval_error", None)
+        evals.pop("carried_from_round", None)
+
     avg_acc = (pro_acc + con_acc) / 2.0
 
     # 프롬프트 의존성을 제거하고, 파이썬 코드 레벨에서 수용도 점수를 기반으로 CSS를 강제 매핑
@@ -284,8 +329,11 @@ async def evaluator_node(state: AgentState) -> dict:
     if round_count >= 3 or avg_acc >= 0.8:
         next_phase = "intervention"
 
-    reason = evals.get("reason", "평가 사유 없음")
-    msg_text = f"💡 [라운드 {round_count} 분석] 찬성측 수용도: {pro_acc * 100}%, 반대측 수용도: {con_acc * 100}%\n👉 (현재 CSS) 찬성: {new_css_pro} / 반대: {new_css_con}\n📝 사유: {reason}"
+    if eval_error:
+        reason = f"⚠ 이번 라운드 평가에 실패해 직전 라운드 점수를 유지했습니다 (사유: {eval_error})"
+    else:
+        reason = evals.get("reason", "평가 사유 없음")
+    msg_text = f"💡 [라운드 {round_count} 분석] 찬성측 수용도: {pro_acc * 100:.1f}%, 반대측 수용도: {con_acc * 100:.1f}%\n👉 (현재 CSS) 찬성: {new_css_pro} / 반대: {new_css_con}\n📝 사유: {reason}"
 
     return {
         "evaluations": evals,

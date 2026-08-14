@@ -36,7 +36,14 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from app.config import BASE_DIR, DOMAIN_ROOT, domain_prefix, settings
+from app.config import (
+    BASE_DIR,
+    DATA_ROOT,
+    DOMAIN_ROOT,
+    USER_INPUT_ROOT,
+    domain_prefix,
+    settings,
+)
 from app.services import run_records
 
 _log = logging.getLogger(__name__)
@@ -85,6 +92,30 @@ _REPLACE_BACKOFF_S = 0.025
 #   409 판정을 파일이 아니라 이걸로 한다. 서버가 죽으면 비므로,
 #   죽은 서버가 남긴 status.json 이 새 실행을 영원히 막지 않는다.
 _ACTIVE: dict[str, str] = {}
+
+# 취소(계약 3-4). 장부가 **셋** 필요하다 — 하나로는 부족하다.
+#   _CANCELLED : 취소가 접수된 run_id. 실행 스레드가 다음 갈림길에서 이걸 보고 멈춘다.
+#   _CHILDREN  : 지금 돌고 있는 자식 프로세스(run_id → Popen).
+#                🔴 이게 없으면 취소는 status.json 만 고쳐 쓰고 **자식은 계속 돈다** —
+#                   화면은 멈췄다는데 정본 캐시·산출물 디렉터리는 계속 갈린다(원칙 4).
+#                   자식 핸들은 여기 말고 어디에도 남지 않으므로 죽일 방법이 없어진다.
+#   _WORKERS   : 실행 스레드(run_id → Thread). 취소가 **뒷정리를 직접 해야 하는지**
+#                (게이트 대기·서버 재시작처럼 스레드가 이미 없는 경우) 아니면
+#                **스레드에 맡기고 기다릴지**를 추측하지 않고 `is_alive()` 로 정한다.
+_CANCELLED: set[str] = set()
+_CHILDREN: dict[str, subprocess.Popen] = {}
+_WORKERS: dict[str, threading.Thread] = {}
+
+# 취소된 run 의 `error`. 실패 사유와 **같은 자리**에 적는다 — 취소도 종료 사유다.
+_CANCEL_MSG = "사용자가 실행을 취소했습니다."
+# 자식에게 terminate 를 주고 기다리는 유예. 지나면 kill 한다.
+_TERM_GRACE_S = 5.0
+# 취소 요청이 실행 스레드의 뒷정리(= `_ACTIVE` 반납)를 기다리는 상한.
+# 🔴 여기서 안 기다리면 204 를 받은 프런트가 곧바로 같은 도메인을 다시 돌리려다
+#    409 를 맞는다 — 「초기화」가 초기화가 아니게 된다.
+_CANCEL_JOIN_S = 20.0
+# 아직 끝나지 않은 run. 이 셋만 취소 대상이다.
+_LIVE_STATUSES = ("queued", "running", "awaiting_hitl")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -181,6 +212,12 @@ ARTIFACTS: dict[str, tuple[str, str]] = {
     # 그래서 run 생성 직후부터 200 이다. 정본 step1_output/ 이 아니라 **run 안의
     # 사본**을 가리켜야 한다 — 정본을 가리키면 run 격리가 깨진다.
     "reviewed": ("step1", "_audit_result_reviewed.json"),
+    # 화면2 STEP1「선정 대상」. `reviewed.facility_inference` 와 **같은 값**인데
+    # 나오는 시점이 다르다 — 이건 STEP 0.5 직후(칸 "0", 실측 ~15초)이고 저건 감리
+    # (실측 238초) 뒤다. 화면이 시설·지역 한 줄 때문에 감리를 기다릴 이유가 없다.
+    # 🔴 `full` 에만 생긴다. fixture·hitl 은 STEP0-1 을 안 돌아 **항상 null** 이므로
+    #    프런트는 반드시 `reviewed.facility_inference` 로 되짚을 것.
+    "facility": ("step1", "_facility_inference.json"),
     "clean_report": ("step2", "_clean_report.json"),
     "candidates": ("step3", "_후보_지적도필지.gpkg"),
     "weight_set": ("step3", "_weight_set.json"),
@@ -411,6 +448,8 @@ def reap_orphans() -> None:
 # 4. 픽스처 — 실행 조건의 출처
 # ══════════════════════════════════════════════════════════════════
 def _fixture_dir(domain: str) -> Path:
+    # 🔴 여기는 **항상 프리셋 루트**다(`_domain_root` 를 쓰지 않는다). 기준선은 사용자
+    #    업로드물이 아니라 저장소가 들고 있는 회귀 기준이고, full 은 픽스처를 안 읽는다.
     return Path(str(DOMAIN_ROOT)) / f"{domain}_FIX"
 
 
@@ -732,7 +771,8 @@ def _proc_runpipe(domain: str, user_input: str) -> _Proc:
 
 
 def _proc_of(stage: str, domain: str, base: dict,
-             radius: str | None = None, weight: str | None = None) -> _Proc:
+             radius: str | None = None, weight: str | None = None,
+             value_source: str | None = None) -> _Proc:
     """단계 하나의 커맨드. **조립은 여기 한 곳뿐이다.**
 
     fixture 와 hitl 이 같은 함수를 쓴다. 모드별로 따로 짜면 "픽스처는 되는데
@@ -750,11 +790,15 @@ def _proc_of(stage: str, domain: str, base: dict,
         return _Proc(("3-1",), [py, _svc("make_parcel_candidates.py"), domain])
     if stage == "3-2":
         # 출처는 **모드 이름이 아니라 값을 어디서 가져왔는지**로 정한다.
-        # `radius` 가 있다 = `_stage_args` 가 게이트B 답을 넘겼다(= hitl 모드).
+        # `radius` 가 있다 = `_stage_args` 가 게이트B 답을 넘겼다(= 게이트를 거친 run).
         # 없으면 픽스처에서 조립한다 — 사람 개입 0회다.
+        # 🔴 게이트를 거쳤다고 **사람이 답한 것은 아니다** — 자동승인(`llm`)이면 그 답을
+        #    AI 제안값으로 채웠다. 그래서 호출자(`_execute`)가 라벨을 넘긴다.
+        #    여기서 `"human" if radius else "fixture"` 로 단정하면 사람이 본 적 없는
+        #    값이 `human_confirmed` 로 남는다(원칙 4).
+        src = value_source or ("human" if radius else "fixture")
         return _Proc(("3-2",), [py, _svc("run_weight_model.py"), domain]
-                     + _weight_args(base, radius or _radius_arg(base), weight,
-                                    "human" if radius else "fixture"))
+                     + _weight_args(base, radius or _radius_arg(base), weight, src))
     if stage == "4":
         # STEP4 위치 선정. 한 프로세스가 4-1·4-2·4-3 을 전부 담당한다.
         argv = [py, _svc("gam4_site_select.py"), domain,
@@ -783,11 +827,29 @@ def _proc_propose(domain: str, base: dict, run_id: str) -> _Proc:
 # ══════════════════════════════════════════════════════════════════
 # 6. run 준비 — 격리 (계약 5절)
 # ══════════════════════════════════════════════════════════════════
-def _validate_domain(domain: str) -> None:
+def _domain_root(mode: str | None) -> Path:
+    """도메인 폴더의 **부모**. `full` 만 사용자 업로드 루트다(2026-08-14 사람 결정).
+
+    🔴 프리셋(`datasets/흡연`)과 업로드(`datasets/user_input/흡연`)는 **루트가 다르다.**
+       같은 이름을 써도 서로 닿을 수 없다 — 문지기로 막는 게 아니라 자리를 가른다.
+       (2026-08-13 에 업로드 화면에서 프리셋 `datasets/흡연/data` 536MB 가 지워졌다.)
+    ⚠ `fixture`·`hitl` 은 프리셋 재생이므로 `DOMAIN_ROOT` 그대로다. 비대칭이 정상이다.
+    """
+    return Path(str(USER_INPUT_ROOT)) if mode == MODE_FULL else Path(str(DOMAIN_ROOT))
+
+
+def _validate_domain(domain: str, mode: str | None = None) -> None:
+    """이름 검증 + 폴더 존재. `mode` 를 주면 그 모드가 실제로 읽을 루트에서 본다.
+
+    🔴 `mode` 를 안 주면 프리셋 루트를 본다 — 업로드 API 처럼 사용자 폴더를 뜻하는
+       호출자는 **`MODE_FULL` 을 명시**해야 한다. 기본값에 기대면 「업로드는 통과했는데
+       실행은 400」 이 되고, 더 나쁘게는 프리셋 폴더가 있다는 이유로 통과한다.
+    """
     if not domain or Path(domain).name != domain or domain in (".", ".."):
         raise RunRequestError(f"도메인 이름이 잘못됐습니다: {domain!r}")
-    if not (Path(str(DOMAIN_ROOT)) / domain).is_dir():
-        raise RunRequestError(f"도메인 폴더가 없습니다: {DOMAIN_ROOT}/{domain}")
+    root = _domain_root(mode)
+    if not (root / domain).is_dir():
+        raise RunRequestError(f"도메인 폴더가 없습니다: {root}/{domain}")
 
 
 def _read_seq_ledger() -> dict[str, int]:
@@ -887,7 +949,9 @@ def _prepare_dirs(run_id: str, domain: str, mode: str = MODE_FIXTURE) -> None:
     # 정본 step1_output 의 나머지 감리 산출물도 복사해 둔다. 파이프라인이 읽는 것은
     # reviewed 하나지만(실측), 폴백 체인(reviewed > enriched > audit_result)이 있어
     # 한 파일만 두면 나중에 폴백이 조용히 다른 경로를 타게 된다.
-    live_step1 = Path(str(DOMAIN_ROOT)) / "step1_output"
+    # `step1_output` 은 도메인 폴더가 아니라 **공용 산출물**이다 → `DATA_ROOT` 다.
+    # (`DOMAIN_ROOT` 로 두면 그 값을 옮긴 프로세스에서 조용히 못 찾는다.)
+    live_step1 = Path(str(DATA_ROOT)) / "step1_output"
     if live_step1.is_dir():
         for src in live_step1.glob(f"{pre}_*"):
             if src.is_file():
@@ -913,9 +977,18 @@ def _prepare_dirs(run_id: str, domain: str, mode: str = MODE_FIXTURE) -> None:
             print(f"[{run_id}] hitl — 배제 {n}건을 제안값으로 되돌림(사람 재확인 대상)")
 
 
-def _child_env(run_id: str) -> dict:
+def _child_env(run_id: str, mode: str) -> dict:
     env = os.environ.copy()
     d = run_dir(run_id)
+    # 🔴 full 자식만 도메인 루트를 사용자 업로드 쪽으로 바꾼다. `OMNISITE_DATA_ROOT` 가
+    #    아니라 **`OMNISITE_DOMAIN_ROOT`** 다 — 지오코딩·지목 캐시(`search_cache`)와
+    #    `region_data`·`step*_output` 은 도메인 무관 공용이라 `DATA_ROOT` 아래 남아야
+    #    한다. 같이 옮기면 캐시가 갈라져 LLM·지오코딩 호출이 폭증한다.
+    #    argv 의 도메인 이름은 **그대로 `흡연`** 이다: DB `audit_rules.domain` 컬럼과
+    #    `<도메인>_audit_result_reviewed.json` 파일명이 그 값에서 나온다(경로를 넘기면
+    #    둘 다 조용히 오염된다).
+    if mode == MODE_FULL:
+        env["OMNISITE_DOMAIN_ROOT"] = str(USER_INPUT_ROOT)
     env["OMNISITE_STEP1_DIR"] = str(d / "step1")
     env["OMNISITE_STEP2_DIR"] = str(d / "step2")
     env["OMNISITE_STEP3_DIR"] = str(d / "step3")
@@ -948,7 +1021,7 @@ def _refresh_artifacts(doc: dict) -> None:
 
 
 def _new_status(run_id: str, domain: str, mode: str = MODE_FIXTURE,
-                user_id: int | None = None) -> dict:
+                user_id: int | None = None, auto_approve: bool = False) -> dict:
     # 🔴 `gate` 키는 여기 없다. 계약 7-3 — `awaiting_hitl` 일 때만 **키가 생긴다**.
     #    항상 두고 null 을 넣으면 "게이트가 있는데 질문이 없다"로 읽힌다.
     #    같은 이유로 `run_record_errors` 도 여기 없다 — DB 사본 기록에 **실패했을 때만**
@@ -962,6 +1035,13 @@ def _new_status(run_id: str, domain: str, mode: str = MODE_FIXTURE,
         # 설계상 살아 있다(2026-08-11 사람 결정, 4계층 문서). `run_records.user_id`
         # 가 영구 nullable 인 것과 같은 이유다.
         "user_id": user_id,
+        # 「고속 자동 분석」으로 돌렸는가. 🔴 **`mode` 와 다른 축이다** — `full` 이라고
+        # 자동이 아니고 `hitl` 이라고 대화형이 아니다. 이 값이 없으면 화면은 둘을
+        # 구분할 방법이 없어 `mode` 로 유추하게 되고, 그러면 게이트에 멈춰 선
+        # 맞춤형 full run 이 "자동"으로 표시된다(실제로 그렇게 표시됐다).
+        # 값은 `params.json` 에도 있지만 그건 프런트가 못 읽는다.
+        # ⚠ 옛 run 은 **키 자체가 없다**(그때는 이 기능이 없었으므로 없는 게 맞다).
+        "auto_approve": auto_approve,
         "status": "queued",
         "steps": [{"id": i, "label": lb, "status": "idle", "sec": None}
                   for i, lb in step_labels(mode)],
@@ -1015,6 +1095,14 @@ _PLAN: dict[str, tuple[str, ...]] = {
 
 GATE_IDS = ("audit", "weight")
 
+# 「고속 자동 분석」이 STEP1 산출물에 적는 출처. `human_confirmed` 자리에 들어간다.
+# 🔴 `human` 도 `llm` 도 아닌 **따로 만든 낱말**인 이유 — 이 자리의 기존 값은
+#    「조항 문자열」이거나 리터럴 `human_confirmed` 둘뿐이라(audit.py:70),
+#    `llm` 처럼 짧은 낱말을 넣으면 조례 출처처럼 읽힌다. STEP3 쪽 어휘
+#    (`run_weight_model.SRC_RADIUS["llm"]`)와 굳이 같게 맞추지 않는다:
+#    두 자리는 뜻이 다르다(여긴 배제반경의 근거, 저긴 값의 출처).
+AUTO_APPROVE_SRC = "llm_auto_approved"
+
 
 def _resume_index(mode: str, gate_id: str) -> int:
     """`gate.id` 로 이어갈 위치를 계획에서 되찾는다.
@@ -1050,7 +1138,9 @@ def _validate_full_params(domain: str, user_input: str | None,
         raise RunRequestError(f"topn 범위는 1~{TOPN_MAX} 입니다: {n}")
 
     # 프로파일링 대상이 없으면 STEP0 이 빈 fixture 로 진행한다 — 여기서 멈춘다(원칙 1).
-    data_dir = Path(str(DOMAIN_ROOT)) / domain / "data"
+    # 🔴 **자식이 볼 루트와 같은 곳을 본다.** 여기서 `DOMAIN_ROOT` 를 보면 서버는
+    #    프리셋을 보고 자식은 빈 `user_input` 을 보는 「가짜 초록불」이 된다.
+    data_dir = _domain_root(MODE_FULL) / domain / "data"
     if not data_dir.is_dir() or not any(p.is_file() for p in data_dir.iterdir()):
         raise RunRequestError(
             f"원본 데이터가 없습니다: {data_dir} — 화면1(업로드)로 먼저 올리세요.")
@@ -1058,12 +1148,26 @@ def _validate_full_params(domain: str, user_input: str | None,
 
 
 def start_run(domain: str, mode: str, user_input: str | None = None,
-              topn: int | None = None, user_id: int | None = None) -> str:
-    """검증 → run 폴더 준비 → 백그라운드 실행. run_id 를 돌려준다."""
+              topn: int | None = None, user_id: int | None = None,
+              auto_approve: bool = False) -> str:
+    """검증 → run 폴더 준비 → 백그라운드 실행. run_id 를 돌려준다.
+
+    `auto_approve` 는 「고속 자동 분석」이다 — 게이트를 **없애는 게 아니라** 그 자리에
+    AI 제안값을 그대로 넣고 지나간다. 그래서 계획(`_PLAN`)은 그대로이고 산출물에는
+    `value_source: "llm"` 이 남는다(사람이 확정한 run 과 구분된다 — 원칙 4).
+    """
     if mode not in MODES:
         raise RunRequestError(
             f"지원하지 않는 mode 입니다: {mode!r} (가능: {', '.join(MODES)})")
-    _validate_domain(domain)
+    _validate_domain(domain, mode)
+
+    # 🔴 fixture 는 계획에 게이트가 없다. 받아놓고 안 쓰면 호출자는 「자동승인으로
+    #    돌았다」고 읽는데 실제로는 승인할 게 없었다 — 뜻이 다른 두 실행이 같은
+    #    응답을 준다(원칙 4). fixture 자체가 이미 사람 개입 0회다.
+    if auto_approve and mode == MODE_FIXTURE:
+        raise RunRequestError(
+            "auto_approve 는 게이트가 있는 mode(hitl·full)에서만 씁니다 — "
+            "fixture 는 계획에 게이트가 없어 승인할 대상이 없습니다.")
 
     if mode == MODE_FULL:
         params = _validate_full_params(domain, user_input, topn)
@@ -1084,6 +1188,11 @@ def start_run(domain: str, mode: str, user_input: str | None = None,
         params = {}
         _load_fixture(domain)      # 픽스처가 없으면 여기서 400
         build_commands(domain)     # 커맨드 조립도 미리 해본다(실패를 실행 전에 낸다)
+
+    if auto_approve:
+        # 🔴 게이트에서 스레드가 끝났다가 새 스레드가 이어받으므로 메모리에 둘 수 없다.
+        #    hitl 은 여기까지 `params` 가 `{}` 라 `_write_params` 가 아예 안 불렸다.
+        params["auto_approve"] = True
     # 여기서 `reap_orphans()` 를 부르지 않는다(2026-08-09). 부팅 때 이미 돌았고,
     # 그 뒤 생긴 run 은 전부 `started_at >= _SERVER_BOOT` 라 **판정 대상이 아니다** —
     # 무조건 no-op 인 전수 스캔을 요청 경로에 두면 os.replace 경합만 늘린다.
@@ -1099,7 +1208,7 @@ def start_run(domain: str, mode: str, user_input: str | None = None,
         if params:
             # status 보다 **먼저** 쓴다. 실행 스레드가 곧바로 읽는다.
             _write_params(run_id, params)
-        doc = _new_status(run_id, domain, mode, user_id)
+        doc = _new_status(run_id, domain, mode, user_id, auto_approve)
         # fixture·hitl 은 `reviewed` 를 방금 _prepare_dirs 가 넣어서 **이미 있다.**
         # 여기서 안 갱신하면 첫 단계 전이까지 status 는 null 인데 엔드포인트는 200 을
         # 준다 — status 가 거짓말을 한다(원칙 4). 나머지 6개는 아직 없으므로 null 이다.
@@ -1126,9 +1235,144 @@ def start_run(domain: str, mode: str, user_input: str | None = None,
     return run_id
 
 
+def _is_cancelled(run_id: str) -> bool:
+    with _LOCK:
+        return run_id in _CANCELLED
+
+
+def _terminate(child: subprocess.Popen) -> None:
+    """자식을 끝낸다 — terminate → 유예 → kill.
+
+    🔴 `child.wait()` 를 쓰지 않는다. 실행 스레드가 같은 객체로 `wait()` 중이라
+       두 스레드가 같은 자식을 기다리게 된다. `poll()` 은 이미 반납된 뒤에도
+       종료 코드를 그대로 돌려주므로 누가 먼저 거둬가든 판정이 안 갈린다.
+    """
+    if child.poll() is not None:
+        return
+    try:
+        child.terminate()
+    except OSError:
+        return                      # 그 사이에 스스로 끝났다
+    deadline = time.monotonic() + _TERM_GRACE_S
+    while child.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if child.poll() is None:
+        child.kill()
+
+
+def _close_cancelled(run_id: str, doc: dict) -> dict:
+    """실행 스레드가 **없는** 취소를 여기서 닫는다(게이트 대기·서버 재시작 뒤).
+
+    스레드가 살아 있으면 이 함수를 부르면 안 된다 — 스레드는 자기 메모리의 `doc` 을
+    들고 있어서 단계 전이마다 `_write_status` 를 다시 쓴다. 밖에서 쓴 상태는
+    **다음 전이에 조용히 덮인다**(그게 원래 PR 이 `running` run 을 못 멈춘 이유다).
+    """
+    # 🔴 여기서 한 번 더 읽는다. `cancel_run` 이 상태를 본 뒤 스레드가 마지막
+    #    한 칸을 끝내고 `succeeded` 로 닫았을 수 있다 — 그 좁은 틈에서 이 함수가
+    #    돌면 **완주한 run 을 취소로 적는다**(원칙 4). 그건 취소가 아니라 위조다.
+    fresh = read_status(run_id)
+    if fresh is not None:
+        doc = fresh
+        if doc.get("status") not in _LIVE_STATUSES:
+            with _LOCK:
+                _CANCELLED.discard(run_id)
+            raise RunConflict(
+                f"취소를 접수하는 사이에 run 이 끝났습니다 "
+                f"(status={doc.get('status')!r}) — 상태를 덮어쓰지 않았습니다.")
+    domain = doc.get("domain")
+    doc["status"] = "failed"
+    doc["error"] = _CANCEL_MSG
+    doc["finished_at"] = _now_iso()
+    doc.pop("gate", None)           # 계약 7-3 — 끝난 run 에 gate 키는 없다
+    for s in doc.get("steps", []):
+        if s.get("status") == "running":
+            s["status"] = "failed"
+    _refresh_artifacts(doc)
+    # 자원 반납이 상태 기록보다 **먼저**다 — `_execute` 의 finally 와 같은 이유다
+    # (2026-08-08 WinError 5: `_write_status` 가 터지면 도메인이 409 로 잠긴다).
+    with _LOCK:
+        if domain and _ACTIVE.get(domain) == run_id:
+            _ACTIVE.pop(domain, None)
+        _CANCELLED.discard(run_id)
+    reason = run_records.record_run_end(doc,
+                                        _read_params(run_id).get("user_input"))
+    if reason:
+        note_run_record_error(doc, "end(취소)", reason)
+    _write_status(run_id, doc)
+    return doc
+
+
+def cancel_run(run_id: str) -> dict:
+    """실행을 취소한다 — **자식 프로세스를 실제로 죽인다**(계약 3-4).
+
+    🔴 status.json 만 고쳐 쓰는 것은 취소가 아니다. 두 가지가 같이 안 되면
+       「멈췄다고 말하는 화면」과 「계속 도는 파이프라인」이 동시에 존재한다:
+         ① 자식 프로세스를 죽인다(`_CHILDREN`). 안 죽이면 정본 캐시·산출물
+            디렉터리를 계속 갈아엎고, 실행 스레드가 다음 단계 전이에서
+            `_write_status` 로 취소 상태를 **덮어쓴다**.
+         ② `_ACTIVE` 를 반납한다. 안 하면 그 도메인은 재시작 전까지 409 다.
+            반납은 **스레드가 실제로 끝난 뒤**여야 한다 — 스레드가 살아 있는데
+            먼저 풀면 같은 도메인으로 새 run 이 시작돼 두 실행이 같은 정본
+            데이터를 동시에 건드린다.
+
+    끝난 뒤 `status` 는 `failed` 이고 `error` 가 취소 사유다. 취소용 상태값을
+    새로 만들지 않는다 — 계약 3절의 상태 어휘가 늘면 프런트의 폴링 종료 조건이
+    모든 화면에서 갈린다. **왜 끝났는지는 `error` 가 말한다.**
+
+    없는 run_id 는 `KeyError`(→404), 이미 끝난 run 은 `RunConflict`(→409)다.
+    조용히 204 로 답하면 「취소했다」가 되는데 실제로는 아무 일도 안 일어났다(원칙 4).
+    """
+    doc = read_status(run_id)
+    if doc is None:
+        raise KeyError(run_id)
+    status = doc.get("status")
+    if status not in _LIVE_STATUSES:
+        raise RunConflict(
+            f"이미 끝난 run 입니다 (status={status!r}) — 취소할 것이 없습니다.")
+
+    with _LOCK:
+        _CANCELLED.add(run_id)
+        child = _CHILDREN.get(run_id)
+        worker = _WORKERS.get(run_id)
+
+    if child is not None:
+        _terminate(child)
+
+    # 🔴 `is_alive()` 를 여기 조건에 넣지 않는다(2026-08-12 실측으로 고쳤다).
+    #    방금 `_terminate` 로 자식을 죽였으므로 실행 스레드는 **그 자리에서 끝난다** —
+    #    운이 나쁘면 이 줄에 닿기 전에 이미 죽어 있다. 그때 `is_alive()` 로 갈라
+    #    아래 `_close_cancelled` 로 보내면, 그 함수가 다시 읽은 status 는 스레드가
+    #    이미 `failed` 로 닫아둔 값이라 **정상 취소가 409 로 나간다.** 타이밍에 따라
+    #    갈리는 자리라 한 번 돌려보고 "된다"고 말할 수 없다.
+    #    장부에 스레드가 있다 = 이 run 은 스레드가 돌린 것 = **뒷정리 주체는 그쪽**이다
+    #    (`_execute` 의 finally 하나뿐). 살아 있으면 기다리고, 끝났으면 이미 끝났다.
+    if worker is not None:
+        if worker.is_alive():
+            worker.join(_CANCEL_JOIN_S)
+            if worker.is_alive():
+                # 🔴 끝난 척하지 않는다. 스레드가 살아 있다 = `_ACTIVE` 가 아직 안
+                #    풀렸다 = 같은 도메인 재실행은 여전히 409 다.
+                raise RunConflict(
+                    f"취소 요청은 접수했고 자식 프로세스는 정리했지만, 실행 스레드가 "
+                    f"{_CANCEL_JOIN_S:.0f}초 안에 끝나지 않았습니다. "
+                    f"GET /runs/{run_id} 로 상태를 확인하고 다시 시도하세요.")
+        with _LOCK:
+            _CANCELLED.discard(run_id)   # 스레드가 이미 지웠으면 no-op
+        return read_status(run_id) or doc
+
+    # 스레드가 없다 — 게이트 대기 중이거나(스레드는 게이트에서 끝난다) 서버가
+    # 재시작된 뒤다. 그러면 아무도 뒷정리를 안 하므로 여기서 닫는다.
+    return _close_cancelled(run_id, doc)
+
+
 def _spawn(run_id: str, domain: str, mode: str, start: int) -> None:
-    threading.Thread(target=_execute, args=(run_id, domain, mode, start),
-                     daemon=True).start()
+    t = threading.Thread(target=_execute, args=(run_id, domain, mode, start),
+                         daemon=True)
+    # 등록은 `start()` **앞**이다. 뒤에 두면 그 사이에 들어온 취소가 스레드를
+    # 못 보고 `_close_cancelled` 로 가서, 스레드와 취소가 같은 문서를 같이 쓴다.
+    with _LOCK:
+        _WORKERS[run_id] = t
+    t.start()
 
 
 def _execute(run_id: str, domain: str, mode: str, start: int = 0) -> None:
@@ -1140,6 +1384,9 @@ def _execute(run_id: str, domain: str, mode: str, start: int = 0) -> None:
 
     base = _load_conditions(domain, mode, run_id)
     params = _read_params(run_id)
+    # 🔴 게이트를 사람이 답하면 **그 스레드는 끝난다** — 재개는 다른 스레드다.
+    #    그래서 이 값은 인자로 못 받는다. `params.json` 이 유일한 운반 수단이다.
+    auto_approve = bool(params.get("auto_approve"))
     plan = _PLAN[mode]
     log_path = run_dir(run_id) / "run.log"
     paused = False
@@ -1148,13 +1395,34 @@ def _execute(run_id: str, domain: str, mode: str, start: int = 0) -> None:
         # 프런트가 게이트 화면에서 보던 로그가 답변 순간 증발한다(원칙 4).
         with open(log_path, "a" if start else "w", encoding="utf-8") as log:
             for i in range(start, len(plan)):
+                # 🔴 칸과 칸 **사이**에서도 본다. 자식이 없는 칸(`seed`)이나 자식이
+                #    막 끝난 순간에 들어온 취소는 `_run_one` 이 못 잡는다 — 여기서
+                #    안 보면 그 run 은 취소를 접수하고도 다음 칸을 시작한다.
+                if _is_cancelled(run_id):
+                    raise _Cancelled()
                 stage = plan[i]
                 if stage.startswith("gate:"):
                     gate_id = stage.split(":", 1)[1]
+                    gate = build_gate(gate_id, run_id, domain)
+                    if auto_approve:
+                        # 🔴 게이트를 **건너뛰는 게 아니라** 그 자리에서 답한다.
+                        #    질문은 똑같이 만들고(위 `build_gate`) 검증기도 똑같이
+                        #    탄다 — 계획에서 게이트를 빼버리면 「자동 모드에서만
+                        #    통과하는 값」이 생기고, 그때 무엇을 승인했는지가
+                        #    산출물 어디에도 안 남는다(원칙 4).
+                        #    멈추지 않으므로 스레드도 안 갈아탄다 — `continue` 다.
+                        ans = _run_auto_gate(run_id, domain, gate_id, gate)
+                        log.write(f"\n[게이트 {gate_id}] AI 제안값 자동승인 — "
+                                  f"질문 {len(gate.get('questions') or [])}건 · "
+                                  f"{json.dumps(ans, ensure_ascii=False)}\n")
+                        log.flush()
+                        _refresh_artifacts(doc)
+                        _write_status(run_id, doc)
+                        continue
                     log.write(f"\n[게이트 {gate_id}] 사람 확정 대기\n")
                     log.flush()
                     doc["status"] = "awaiting_hitl"
-                    doc["gate"] = build_gate(gate_id, run_id, domain)
+                    doc["gate"] = gate
                     _refresh_artifacts(doc)
                     _write_status(run_id, doc)
                     paused = True
@@ -1173,7 +1441,8 @@ def _execute(run_id: str, domain: str, mode: str, start: int = 0) -> None:
                         else _proc_load_topn(domain, run_id) if stage == "load"
                         else _proc_propose(domain, base, run_id) if stage == "propose"
                         else _proc_of(stage, domain, base,
-                                      *_stage_args(run_id, mode, stage)))
+                                      *_stage_args(run_id, mode, stage),
+                                      value_source="llm" if auto_approve else None))
                 _run_one(run_id, doc, proc, log)
                 if proc.loaded or proc.cascaded:
                     # 적재 칸이 둘이라 두 번 합류한다. `run_id` 는 _run_one 이
@@ -1191,9 +1460,19 @@ def _execute(run_id: str, domain: str, mode: str, start: int = 0) -> None:
                             **(doc["loaded"].get("cascaded") or {}), **proc.cascaded}
                     _write_status(run_id, doc)
                 if stage == "3-2":
-                    _assert_provenance(run_id, mode)
+                    _assert_provenance(run_id, mode, auto_approve)
         if not paused:
             doc["status"] = "succeeded"
+    except _Cancelled:
+        # 취소도 **종료 사유**다 — 실패와 같은 자리에 적는다. 취소 전용 상태값을
+        # 새로 만들지 않는 이유는 `cancel_run` 독스트링에 있다(폴링 종료 조건이 갈린다).
+        doc["status"] = "failed"
+        doc["error"] = _CANCEL_MSG
+        for s in doc.get("steps", []):
+            if s.get("status") == "running":
+                # 🔴 done 으로 적지 않는다. 중간에 끊긴 칸이다 — done 이면
+                #    산출물이 다 나온 것처럼 읽힌다(원칙 4).
+                s["status"] = "failed"
     except _StepFailed as e:
         doc["status"] = "failed"
         doc["error"] = str(e)
@@ -1201,6 +1480,14 @@ def _execute(run_id: str, domain: str, mode: str, start: int = 0) -> None:
         doc["status"] = "failed"
         doc["error"] = f"{type(e).__name__}: {e}"
     finally:
+        # 🔴 취소 장부 정리는 게이트 정지·완주·실패를 **가리지 않는다.** 스레드가
+        #    끝났다는 사실 자체가 여기서 참이 되므로, 게이트에서 멈춘 run 도
+        #    `_WORKERS` 에서 빠져야 한다 — 안 빼면 나중 취소가 죽은 Thread 객체를
+        #    보고 `join()` 으로 가서, 실제로는 아무도 뒷정리를 하지 않는다.
+        #    (`is_alive()` 가 False 라 통과는 하지만 그때 상태를 닫는 코드가 없다.)
+        with _LOCK:
+            _WORKERS.pop(run_id, None)
+            _CANCELLED.discard(run_id)
         if doc["status"] != "awaiting_hitl":
             # 🔴 게이트에서 멈춘 run 은 **끝난 게 아니다.** finished_at 을 찍지 않고
             #    _ACTIVE 에서 빼지도 않는다 — 빼면 같은 도메인으로 새 run 을 시작할 수
@@ -1236,7 +1523,13 @@ class _StepFailed(Exception):
     pass
 
 
-def _assert_provenance(run_id: str, mode: str) -> None:
+class _Cancelled(Exception):
+    """사용자 취소. `_StepFailed` 와 나누는 이유는 **사유가 다르기 때문**이다 —
+    파이프라인이 틀린 게 아니라 사람이 그만두게 한 것이고, 그 둘을 한 예외로 묶으면
+    자식의 종료 코드(-15 등)가 실패 사유로 적힌다."""
+
+
+def _assert_provenance(run_id: str, mode: str, auto_approve: bool = False) -> None:
     """STEP3-2 산출물의 `hitl` 블록이 **이 run 에 실제로 있었던 사람 개입**과 맞는지 본다.
 
     자식 프로세스는 자기가 받은 값이 어디서 왔는지 모른다 — `--radius 07+02=150` 만
@@ -1251,6 +1544,10 @@ def _assert_provenance(run_id: str, mode: str) -> None:
          · fixture 모드 = 사람 개입 0회 (`stdin=DEVNULL` · 값은 전부 픽스처)
          · hitl 모드    = 게이트B 에서 사람이 답했다
                           (답이 없으면 `_stage_args` 가 이미 RuntimeError 다)
+         · 자동승인     = 게이트B 를 **띄우긴 했고** 그 답을 AI 제안값으로 채웠다.
+                          사람이 아니므로 `llm` 이고 `*_confirmed` 는 전부 False 여야
+                          한다 — 여기가 초록불이면 「고속 모드로 돌렸는데 사람이
+                          확정했다고 적힌」 산출물을 잡을 자리가 사라진다.
 
     어긋나면 run 을 `failed` 로 닫는다. 숫자는 맞을 수 있지만 **그 숫자를 누가 정했는지가
     틀린 산출물**이고, 그건 뒤따르는 모든 판단의 근거가 된다.
@@ -1274,6 +1571,12 @@ def _assert_provenance(run_id: str, mode: str) -> None:
                 f"fixture 재생인데 산출물이 사람 확정을 주장합니다: "
                 f"value_source={vs!r} · {confirmed or '확정없음'}. "
                 f"러너가 --value-source 를 제대로 넘겼는지 확인하세요.")
+    elif auto_approve:
+        if vs != "llm" or confirmed:
+            raise _StepFailed(
+                f"자동승인 run 인데 산출물이 다른 출처를 주장합니다: "
+                f"value_source={vs!r} · {confirmed or '확정없음'}. "
+                f"사람이 본 적 없는 값이 사람 확정으로 남습니다.")
     elif vs != "human":
         # 게이트B 를 거쳐 왔는데 사람 출처가 아니다. 반대 방향(과소기록)이지만
         # 역시 사실과 다르다. 실측된 경로 하나 — 답변의 `radius` 가 비면
@@ -1282,6 +1585,36 @@ def _assert_provenance(run_id: str, mode: str) -> None:
         raise _StepFailed(
             f"게이트B 를 거친 run 인데 값 출처가 사람이 아닙니다: value_source={vs!r}. "
             f"사람이 답했다는 사실이 산출물에서 사라집니다.")
+
+
+def _fail_reason(tail: list[str], rc: int) -> str:
+    """자식이 남긴 마지막 줄들에서 **실패 사유**를 고른다.
+
+    🔴 예전엔 `tail[-1]` 하나였다. 파이프라인의 중단 메시지는 여러 줄이고
+       **마지막 줄이 대개 「이렇게 고치세요」 안내**라서, 실제로 프런트에 나간
+       error 가 이랬다 —
+
+           python app\\services\\gam2_audit_judgment_test.py hitl <도메인>
+
+       사유가 아니라 **명령어**다. 화면은 「무엇이 왜 실패했는지」를 못 말하고,
+       읽는 사람은 그 명령을 치라는 뜻으로 읽는다(원칙 4).
+
+       파이프라인은 중단을 전부 `[중단]` 으로 시작하는 블록으로 찍는다
+       (`gam4_site_select` · `make_parcel_candidates` · `gam2_clean_data` ·
+       `gam2_run_pipeline`). 그 마커부터 끝까지를 사유로 삼는다 — 안내 줄까지
+       같이 나가는 건 손해가 아니다. 잘라내면 남는 게 진단뿐이라 좋아 보이지만,
+       그 안내가 사람이 다음에 할 일이다.
+
+    마커가 없으면 마지막 줄로 되돌아간다. **지어내지 않는다** — 못 찾았을 때
+    그럴듯한 문장을 합성하면 없는 사유가 기록된다.
+    """
+    for i in range(len(tail) - 1, -1, -1):
+        if tail[i].startswith("[중단]"):
+            block = tail[i:]
+            if len(block) > 12:            # 트레이스백이 통째로 붙는 경우
+                block = block[:12] + [f"… (이하 {len(tail) - i - 12}줄은 run.log)"]
+            return "\n".join(block)
+    return tail[-1] if tail else f"종료 코드 {rc}"
 
 
 def _run_one(run_id: str, doc: dict, proc: _Proc, log) -> None:
@@ -1302,57 +1635,75 @@ def _run_one(run_id: str, doc: dict, proc: _Proc, log) -> None:
     child = subprocess.Popen(
         proc.argv,
         cwd=str(BASE_DIR),
-        env=_child_env(run_id),
+        env=_child_env(run_id, doc["mode"]),
         stdin=subprocess.DEVNULL,   # 🔴 HITL 이 새로 생기면 EOFError 로 즉시 터진다.
         stdout=subprocess.PIPE,     #    조용히 멈추는 것보다 시끄럽게 죽는 게 낫다.
         stderr=subprocess.STDOUT,
         text=True, encoding="utf-8", errors="replace", bufsize=1,
     )
-    assert child.stdout is not None
-    for line in child.stdout:
-        log.write(line)
-        s = line.strip()
-        if s:
-            tail.append(s)
-            del tail[:-40]
-        if (m := _LOADED_RE.match(s)):
-            # run_id 도 같이 본다. 적재기가 `--run` 을 무시하고 정본에 넣었다면
-            # 여기서 드러나야 한다 — 이 run 의 성과로 status 에 적히면 프런트가
-            # `/candidates?run_id=` 로 조회했을 때 0건이 나온다(원칙 4).
-            # 🔴 여기서 바로 raise 하지 않는다. 파이프를 읽다 말고 나가면 자식이
-            #    write 에서 막힌 채 남는다. 아래 wait() 뒤에 던진다.
-            if m["run_id"] != run_id:
-                mismatch = (f"적재기가 다른 run_id 로 넣었습니다: "
-                            f"기대 {run_id!r} ≠ 실제 {m['run_id']!r} "
-                            f"(table={m['table']})")
-            else:
-                proc.loaded[m["table"]] = int(m["rows"])
-        elif (m := _CASCADED_RE.match(s)) and m["run_id"] == run_id:
-            # run_id 가 어긋나면 위 `[LOADED]` 대조가 어차피 잡는다.
-            # 여기서 또 던지면 같은 사실을 두 곳에서 판정하게 된다.
-            for kv in m["pairs"].split():
-                k, _, v = kv.partition("=")
-                if v.isdigit():
-                    proc.cascaded[k] = int(v)
-        for sid, marker in proc.markers.items():
-            if sid != cur and s.startswith(marker):
-                _step(doc, cur).update(
-                    status="done", sec=round(time.perf_counter() - started, 2))
-                cur = sid
-                _step(doc, cur)["status"] = "running"
-                started = time.perf_counter()
-                _refresh_artifacts(doc)
-                _write_status(run_id, doc)
-                break
-    log.flush()
+    # 🔴 핸들을 장부에 남긴다. 여기 말고는 자식에 닿을 방법이 없다 — 없으면 취소는
+    #    status.json 만 고쳐 쓰고 자식은 끝까지 돈다(원칙 4).
+    #    등록은 `Popen` **직후**다. 뒤로 미루면 그 사이에 들어온 취소가 자식을 못 본다.
+    with _LOCK:
+        _CHILDREN[run_id] = child
+    try:
+        assert child.stdout is not None
+        for line in child.stdout:
+            log.write(line)
+            s = line.strip()
+            if s:
+                tail.append(s)
+                del tail[:-40]
+            if (m := _LOADED_RE.match(s)):
+                # run_id 도 같이 본다. 적재기가 `--run` 을 무시하고 정본에 넣었다면
+                # 여기서 드러나야 한다 — 이 run 의 성과로 status 에 적히면 프런트가
+                # `/candidates?run_id=` 로 조회했을 때 0건이 나온다(원칙 4).
+                # 🔴 여기서 바로 raise 하지 않는다. 파이프를 읽다 말고 나가면 자식이
+                #    write 에서 막힌 채 남는다. 아래 wait() 뒤에 던진다.
+                if m["run_id"] != run_id:
+                    mismatch = (f"적재기가 다른 run_id 로 넣었습니다: "
+                                f"기대 {run_id!r} ≠ 실제 {m['run_id']!r} "
+                                f"(table={m['table']})")
+                else:
+                    proc.loaded[m["table"]] = int(m["rows"])
+            elif (m := _CASCADED_RE.match(s)) and m["run_id"] == run_id:
+                # run_id 가 어긋나면 위 `[LOADED]` 대조가 어차피 잡는다.
+                # 여기서 또 던지면 같은 사실을 두 곳에서 판정하게 된다.
+                for kv in m["pairs"].split():
+                    k, _, v = kv.partition("=")
+                    if v.isdigit():
+                        proc.cascaded[k] = int(v)
+            for sid, marker in proc.markers.items():
+                if sid != cur and s.startswith(marker):
+                    _step(doc, cur).update(
+                        status="done", sec=round(time.perf_counter() - started, 2))
+                    cur = sid
+                    _step(doc, cur)["status"] = "running"
+                    started = time.perf_counter()
+                    _refresh_artifacts(doc)
+                    _write_status(run_id, doc)
+                    break
+        log.flush()
+        rc = child.wait()
+    finally:
+        # 자식이 어떻게 끝났든(정상·실패·취소·러너 예외) 장부에서 뺀다.
+        # 안 빼면 죽은 프로세스 핸들이 남아, 나중 취소가 이미 없는 자식을
+        # 죽이려 든다 — 그때 `terminate()` 가 남의 PID 를 칠 수 있다.
+        with _LOCK:
+            _CHILDREN.pop(run_id, None)
 
-    if child.wait() != 0 or mismatch:
+    # 🔴 종료 코드보다 **취소 여부를 먼저** 본다. 취소로 죽은 자식은 rc≠0 이라
+    #    여기를 안 지나면 「종료 코드 -15」가 실패 사유로 적힌다 — 사용자가 누른
+    #    취소가 파이프라인 오류로 기록되는 것이다(원칙 4).
+    if _is_cancelled(run_id):
+        raise _Cancelled()
+
+    if rc != 0 or mismatch:
         if cur:
             _step(doc, cur)["status"] = "failed"
         _refresh_artifacts(doc)
         _write_status(run_id, doc)
-        raise _StepFailed(
-            mismatch or (tail[-1] if tail else f"종료 코드 {child.returncode}"))
+        raise _StepFailed(mismatch or _fail_reason(tail, rc))
 
     if cur:
         _step(doc, cur).update(status="done",
@@ -1387,14 +1738,20 @@ def _answer_path(run_id: str, gate_id: str) -> Path:
     return _hitl_dir(run_id) / f"{gate_id}_answer.json"
 
 
-def _save_answer(run_id: str, gate_id: str, payload: dict) -> None:
-    """사람이 무엇을 답했는지 원본 그대로 남긴다.
+def _save_answer(run_id: str, gate_id: str, payload: dict,
+                 by: str = "human") -> None:
+    """누가 무엇을 답했는지 원본 그대로 남긴다.
 
     규약 '값마다 누가 정했는지 남긴다' 의 게이트판이다. reviewed.json 에는
     적용 **결과**만 남고 '무엇을 건너뛰었는지'는 안 남는다 — 그건 여기 있다.
+
+    🔴 `by` 를 같이 적는다. 「고속 자동 분석」이 넣은 답은 모양이 사람 답과 똑같아서
+       (같은 검증기를 타므로 당연히 그렇다) 이 필드가 없으면 파일만 보고는 구분할
+       방법이 없다 — 나중에 「사람이 이렇게 답했다」로 읽힌다(원칙 4).
     """
     _hitl_dir(run_id).mkdir(parents=True, exist_ok=True)
-    doc = {"gate": gate_id, "answered_at": _now_iso(), "answer": payload}
+    doc = {"gate": gate_id, "answered_at": _now_iso(),
+           "answered_by": by, "answer": payload}
     _answer_path(run_id, gate_id).write_text(
         json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -1452,28 +1809,82 @@ def build_gate(gate_id: str, run_id: str, domain: str) -> dict:
 
 
 # ── 게이트A 질문 ───────────────────────────────────────────────────
-#  🔴 확정분도 **보여준다. 단 수정은 못 한다**(`editable: false`). (사람 결정 2026-08-05)
-#     HITL 전에 confirmed 가 되는 건 조례에서 근거를 확실히 찾았을 때뿐이라
-#     고칠 이유가 없다. 그렇다고 감추면 사람은 "무엇이 이미 정해졌는지" 를 모른 채
-#     남은 것만 답하게 된다 — 화면이 사실의 일부만 보여주는 것이다(원칙 4).
+#  확정분도 **보여준다.** 감추면 사람은 "무엇이 이미 정해졌는지" 를 모른 채 남은 것만
+#  답하게 된다 — 화면이 사실의 일부만 보여주는 것이다(원칙 4).
+#
+#  🔴 **확정분도 이제 고칠 수 있다**(`editable` 은 항상 true). 2026-08-05 에는
+#     `false` 였다 — 「HITL 전 confirmed 는 조례에서 근거를 확실히 찾았을 때뿐이라
+#     고칠 이유가 없다」가 근거였다. 그 근거가 무너졌다: 조례 대조는 2026-08-10 에
+#     **확정에서 제안으로 강등**됐고(함정표 「자동 확정이 flag 를 안 남겨…」),
+#     자동 확정 경로 둘을 없앤 지금 남은 confirmed 는 **앞선 게이트 답변** 뿐이다.
+#     자기가 방금 넣은 값을 못 고치면 화면은 「다시 시작」 말고는 길이 없다.
+#
+#  🔴 그래서 **`confirmed` 를 따로 싣는다.** `editable` 을 true 로 바꾸는 것만으로
+#     끝내면 「이미 확정된 항목」이라는 사실이 산출물에서 **사라진다** — 그 사실을
+#     들고 있던 필드가 `editable` 하나뿐이었기 때문이다(원칙 4). 화면은 이 값으로
+#     「확정됨 · 수정 가능」을 표시한다. 두 값은 뜻이 다르다:
+#       editable  = 지금 고칠 수 있는가   ·  confirmed = 이미 정해진 값인가
+def _source_geometry(domain: str) -> dict[str, dict]:
+    """STEP0 프로파일에서 **원본 형태**를 읽는다. dataset_id → `{geometry, rows, why}`.
+
+    🔴 **`exclusion_type` 을 쓰지 않는 이유.** 그 필드는 감리 AI 의 판정이고,
+       CLAUDE.md 함정표 「exclusion_type 오판」이 가리키는 바로 그 값이다 —
+       S9(`gam4_exclusion_shape.resolve`)가 존재하는 이유가 그걸 뒤집기 위해서다.
+       반면 **원본이 점이냐**는 추측이 아니라 파일에서 읽히는 사실이다
+       (좌표 컬럼이 있는 csv/xlsx 는 점, `.shp`·`.gpkg` 는 면일 수 있다).
+
+    🔴 **판정이 아니라 사실만 싣는다.** 여기서 「반경 없음은 안 된다」까지 정하지
+       않는다 — 점 레이어라도 지목 배수 판정으로 면 필지가 잡히면 반경 없이도
+       배제 면적이 나온다(`resolve` 의 `parts.append(...g...)` 갈래). 그래서
+       게이트는 **막지 않고 알린다**. 못 읽으면 `unknown` 이다(지어내지 않는다).
+    """
+    try:
+        from app.config import domain_paths
+        p = Path(domain_paths(domain)["profiles"])
+        if not p.is_file():
+            return {}
+        prof = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:                      # 프로파일은 부가정보다 — 게이트를 죽이지 않는다
+        return {}
+
+    out: dict[str, dict] = {}
+    for did, pr in (prof or {}).items():
+        if not isinstance(pr, dict):
+            continue
+        ext = str(pr.get("extension") or "").lower().lstrip(".")
+        if ext in ("shp", "gpkg", "geojson", "json"):
+            geom, why = "unknown", f"공간 파일(.{ext}) — 점/면은 레이어를 열어야 안다"
+        elif pr.get("has_coord_col"):
+            geom, why = "point", f"좌표 컬럼 {pr.get('coord_cols')}"
+        elif pr.get("has_addr_col"):
+            geom, why = "point", "주소만 있음 — 지오코딩되어 점이 된다"
+        else:
+            geom, why = "unknown", "좌표·주소 컬럼이 없다"
+        out[str(did)] = {"geometry": geom, "rows": pr.get("row_count"), "why": why}
+    return out
+
+
 def _questions_audit(run_id: str, domain: str) -> list[dict]:
     p = _reviewed_path(run_id, domain)
     if not p.is_file():
         raise _StepFailed(f"감리 결과가 없습니다: {p}")
     doc = json.loads(p.read_text(encoding="utf-8"))
     region = (doc.get("facility_inference") or {}).get("region", "")
+    geo = _source_geometry(domain)
     out: list[dict] = []
 
     def _exclusion_q(did, summary, roles, idx, f):
         role = roles[idx] if idx < len(roles) else {}
+        g = geo.get(str(did)) or {}
         return {
             "kind": "exclusion",
             "dataset_id": did,
             "role_index": idx,
+            "editable": True,
             # flag 가 없는 배제 role 도 질문이 된다 → **role 쪽 확정도 본다.**
-            # flag 만 보면 flag 없는 확정 항목이 editable:true 로 나가 "확정분은
-            # 못 고친다" 규칙이 항목마다 달라진다.
-            "editable": not (f.get("confirmed") or role.get("confirmed")),
+            # flag 만 보면 flag 없는 확정 항목이 `confirmed:false` 로 나가
+            # 「이미 정해졌다」는 표시가 항목마다 달라진다.
+            "confirmed": bool(f.get("confirmed") or role.get("confirmed")),
             "summary": summary,
             "facility_type": role.get("facility_type"),
             "exclusion_type": role.get("exclusion_type"),
@@ -1486,6 +1897,13 @@ def _questions_audit(run_id: str, domain: str) -> list[dict]:
             "evidence": f.get("근거문장"),
             # False 면 "다른 시설 규정일 수 있다" — 화면에 경고로 띄울 것
             "evidence_matches_facility": f.get("근거_시설_일치"),
+            # 🔴 **감리 판정이 아니라 원본 파일에서 읽은 사실**이다(`_source_geometry`).
+            #    `point` 인데 「반경 없음」으로 확정하면 STEP4 에서 배제 면적 0 으로
+            #    run 이 죽을 수 있다 — 그 사실을 **게이트에서** 알리기 위한 값이다.
+            #    막지는 않는다: 지목 배수 판정이 면 필지를 잡으면 반경 없이도 배제가 생긴다.
+            "source_geometry": g.get("geometry", "unknown"),
+            "source_rows": g.get("rows"),
+            "source_geometry_why": g.get("why"),
         }
 
     for r in doc.get("results", []):
@@ -1504,7 +1922,8 @@ def _questions_audit(run_id: str, domain: str) -> list[dict]:
                 out.append({
                     "kind": "intent",
                     "dataset_id": did,
-                    "editable": not f.get("confirmed"),
+                    "editable": True,
+                    "confirmed": bool(f.get("confirmed")),
                     "summary": summary,
                     "message": f.get("message", ""),
                     "current_roles": [x.get("role") for x in roles],
@@ -1546,7 +1965,8 @@ def _questions_audit(run_id: str, domain: str) -> list[dict]:
                 # `cleaning_ops` **전체** 기준 인덱스다. filter_by_code_prefix 만
                 # 센 번호가 아니다 — 적용할 때 같은 방식으로 찾는다.
                 "op_index": oi,
-                "editable": not prm.get("prefix_confirmed"),
+                "editable": True,
+                "confirmed": bool(prm.get("prefix_confirmed")),
                 "summary": summary,
                 "col": prm.get("col"),
                 "prefix": prm.get("prefix", ""),
@@ -1702,11 +2122,65 @@ def _exclusion_flag(result: dict, role_index: int, message: str) -> dict:
     return flag
 
 
-def _apply_audit(run_id: str, domain: str, questions: list[dict], payload: dict) -> None:
+def _drop_exclusion(result: dict, q: dict, auto: bool) -> None:
+    """배제(hard_exclusion) 를 **적용하지 않기로** 확정한다 → role 을 `reference_only` 로.
+
+    `_guard_zero_area`(gam4_site_select) 가 직접 안내하는 두 선택지 중 하나다 —
+    「배제반경을 입력하거나, **그 레이어를 hard_exclusion 에서 빼세요**」. 반경 근거가
+    없는 점 레이어는 앞을 고르면 값을 지어내는 것이므로(원칙 2) 뒤가 유일한 답이다.
+
+    🔴 **버리는 게 아니라 강등**이다. `reference_only` 는 STEP2 가 정제는 그대로 하고
+       GIS 입력에서만 빼는 기존 어휘다(`gam2_clean_data:372`) — 데이터는 페르소나·참조로
+       계속 쓰인다. `roles: []`(제외)로 만들면 그 데이터셋이 통째로 사라진다.
+
+    🔴 배제를 **안 했다는 사실**을 세 곳에 남긴다: role(`배제_해제`·사유·이전 상태) ·
+       flag · `report.json` 의 gap(`배제_해제`, `gam4_export`). 한 곳만 적으면 그 한 곳을
+       안 보는 사람에게는 「배제가 원래 없었다」로 읽힌다(원칙 4).
+    """
+    idx = q.get("role_index", 0)
+    roles = result.get("roles") or []
+    if idx >= len(roles):
+        raise RunRequestError(f"[{q.get('dataset_id')}] roles[{idx}] 이 없습니다.")
+    role = roles[idx]
+    why = (
+        f"배제반경 근거가 없고 원본이 점 레이어입니다"
+        f"({q.get('source_geometry_why') or '좌표 컬럼'}) — 반경 없이 확정하면 배제 면적이"
+        f" 0 이라 STEP4 에서 멈춥니다. 배제를 적용하지 않고 참조용으로만 씁니다."
+    )
+    role["배제_해제_이전"] = {
+        "role": role.get("role"),
+        "exclusion_type": role.get("exclusion_type"),
+        "facility_type": role.get("facility_type"),
+        "배제반경_m": role.get("배제반경_m"),
+    }
+    role["role"] = "reference_only"
+    role["배제_해제"] = True
+    role["배제_해제_사유"] = why
+    role["confirmed"] = True
+    role["need_review"] = False
+    role["source"] = AUTO_APPROVE_SRC if auto else "human_confirmed"
+
+    flag = _exclusion_flag(result, idx, why)
+    flag["message"] = why
+    flag["배제_해제"] = True
+    flag["confirmed"] = True
+    flag["confirmed_by_human"] = not auto
+    if auto:
+        flag["자동승인"] = True
+
+
+def _apply_audit(run_id: str, domain: str, questions: list[dict], payload: dict,
+                 auto: bool = False) -> None:
     """게이트A 답을 reviewed.json 에 반영한다. **정본 함수를 그대로 부른다.**
 
     🔴 `radius_m` 은 `null`(반경 없음으로 확정)과 **키 생략**(건너뜀 — 미확정 유지)이
        다른 뜻이다. CLI 의 `n` 과 `s` 에 각각 대응한다.
+
+    🔴 `auto` 는 「고속 자동 분석」이 AI 제안값을 그대로 넣은 실행이다. **검증·적용
+       경로는 사람 답과 한 글자도 다르지 않다** — 갈라두면 자동 경로만 통과하는
+       값이 생긴다. 갈리는 것은 **누가 정했는가** 하나뿐이고, 그래서 산출물에
+       `human_confirmed`·`prefix_confirmed_by:"human"` 을 적지 않는다. 적으면
+       사람이 본 적 없는 값이 「사람이 확정함」으로 남는다(원칙 4).
     """
     # 늦은 import — 2,000행짜리 감리 모듈을 서버 기동 때 끌고 오지 않는다.
     # (이 모듈 자체는 DB·네트워크를 안 건드린다. 실측 확인함)
@@ -1724,28 +2198,49 @@ def _apply_audit(run_id: str, domain: str, questions: list[dict], payload: dict)
     # (배제반경 캐시는 2026-08-10 제거됐다 — 확정은 이 run 안에서만 유효하다)
     A.set_domain(domain)
 
+    def _radius_answer(result: dict, flag: dict, radius: int | None) -> None:
+        A.apply_radius_answer(
+            result, flag, radius,
+            source=AUTO_APPROVE_SRC if auto else "human_confirmed")
+        if auto:
+            # 🔴 정본 함수는 「사람이 확인함」을 무조건 켠다(:723) — 그 함수의
+            #    호출자가 여태 사람뿐이었기 때문이다. 자동승인은 사람이 본 적이
+            #    없으므로 여기서 되돌리고, 대신 **무슨 일이 있었는지**를 남긴다.
+            flag["confirmed_by_human"] = False
+            flag["자동승인"] = True
+
+    # 🔴 **「이미 확정됐으니 수정 불가」검사는 없다**(2026-08-12 제거). 예전엔 세 갈래
+    #    각각에 `if not q["editable"]: raise` 가 있었다. 두 가지 이유로 지웠다:
+    #      ⓐ `editable` 은 이제 **항상 true** 다(그 근거는 `_questions_audit` 위 주석).
+    #         남겨두면 영원히 안 도는 분기가 「그런 규칙이 아직 있다」고 말한다.
+    #      ⓑ 애초에 이 검사는 **우리가 방금 만든 질문 dict 를 우리가 되읽는** 것이라
+    #         재는 자와 재어지는 자가 같았다. 요청이 보낸 값을 막는 게 아니었다.
+    #    확정 여부는 이제 질문의 `confirmed` 로 **화면에 알리기만** 한다.
     for item in payload.get("exclusions") or []:
-        _only_keys(item, ("dataset_id", "role_index", "radius_m"), "exclusions")
+        _only_keys(item, ("dataset_id", "role_index", "radius_m", "drop"), "exclusions")
         q = _q(questions, "exclusion", dataset_id=item.get("dataset_id"),
                role_index=item.get("role_index"))
-        if not q["editable"]:
-            raise RunRequestError(
-                f"[{q['dataset_id']}] 배제반경은 이미 확정된 항목입니다(수정 불가).")
+        if item.get("drop"):
+            # 🔴 배제 해제도 **확정**이다(미확정 유지가 아니다). 반경과 같이 오면
+            #    「빼겠다」와 「이 반경으로 배제하겠다」가 동시에 참일 수 없다.
+            if "radius_m" in item:
+                raise RunRequestError(
+                    f"[{q['dataset_id']}] drop 과 radius_m 은 같이 못 씁니다 — "
+                    "배제를 빼거나 반경을 정하거나 하나입니다.")
+            _drop_exclusion(by_id[q["dataset_id"]], q, auto)
+            continue
         if "radius_m" not in item:
             continue                    # 건너뜀 = 미확정 유지. CLI 의 's'
         radius = item["radius_m"]
         if radius is not None:
             radius = _int_in(radius, 1, 5000, f"[{q['dataset_id']}] 배제반경(m)")
         r = by_id[q["dataset_id"]]
-        A.apply_radius_answer(
+        _radius_answer(
             r, _exclusion_flag(r, q["role_index"], "게이트A 에서 직접 확정"), radius)
 
     for item in payload.get("intents") or []:
         _only_keys(item, ("dataset_id", "choice", "weight", "radius_m"), "intents")
         q = _q(questions, "intent", dataset_id=item.get("dataset_id"))
-        if not q["editable"]:
-            raise RunRequestError(
-                f"[{q['dataset_id']}] 데이터 용도는 이미 확정된 항목입니다(수정 불가).")
         choice = _int_in(item.get("choice"), 1, 5, f"[{q['dataset_id']}] choice")
         weight = item.get("weight")
         if choice in (1, 2):
@@ -1774,7 +2269,10 @@ def _apply_audit(run_id: str, domain: str, questions: list[dict], payload: dict)
         #    여기서 안 받으면 그 run 은 **답할 자리가 없는 채** 죽는다.
         if choice == 3:
             # roles 를 통째로 갈아치웠으므로 옛 확정은 무효다. 지우지 않으면 게이트를
-            # 다시 열었을 때 `editable: false` 로 굳는다(실측).
+            # 다시 열었을 때 그 flag 가 `confirmed: true` 로 남아, 아무도 답하지 않은
+            # 반경이 「사람이 확정했다」로 읽힌다(원칙 4). 예전엔 같은 값이
+            # `editable: false` 로도 굳어 아예 답할 수가 없었다 — 그건 2026-08-12 에
+            # 없어졌지만, 거짓 확정 표시는 여전히 남으므로 이 정리는 그대로 둔다.
             flag = _exclusion_flag(r, 0, "게이트A 배제 승격 — 반경 확정")
             for k in ("confirmed", "confirmed_by_human", "제안값", "출처", "근거_시설_일치"):
                 flag.pop(k, None)
@@ -1782,15 +2280,12 @@ def _apply_audit(run_id: str, domain: str, questions: list[dict], payload: dict)
                 radius = item["radius_m"]
                 if radius is not None:
                     radius = _int_in(radius, 1, 5000, f"[{q['dataset_id']}] 배제반경(m)")
-                A.apply_radius_answer(r, flag, radius)
+                _radius_answer(r, flag, radius)
 
     for item in payload.get("code_prefixes") or []:
         _only_keys(item, ("dataset_id", "op_index", "prefix"), "code_prefixes")
         q = _q(questions, "code_prefix", dataset_id=item.get("dataset_id"),
                op_index=item.get("op_index"))
-        if not q["editable"]:
-            raise RunRequestError(
-                f"[{q['dataset_id']}] 지역 코드는 이미 확정된 항목입니다(수정 불가).")
         prefix = item.get("prefix")
         if not isinstance(prefix, str) or not prefix.strip():
             raise RunRequestError(f"[{q['dataset_id']}] prefix 가 비어 있습니다.")
@@ -1798,7 +2293,7 @@ def _apply_audit(run_id: str, domain: str, questions: list[dict], payload: dict)
         prm = op.setdefault("params", {})
         prm["prefix"] = prefix.strip()
         prm["prefix_confirmed"] = True
-        prm["prefix_confirmed_by"] = "human"
+        prm["prefix_confirmed_by"] = AUTO_APPROVE_SRC if auto else "human"
 
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1850,6 +2345,113 @@ def _validate_weight(questions: list[dict], payload: dict) -> None:
     if sum(abs(v or 0.0) for v in merged.values()) == 0:
         raise RunRequestError(
             "전 지표 슬라이더 절대값 합이 0 입니다 — 모든 후보 점수가 0 이 됩니다.")
+
+
+def _auto_answer(gate_id: str, questions: list[dict]) -> dict:
+    """게이트 질문을 **AI 제안값만으로** 채운 답을 만든다(「고속 자동 분석」).
+
+    🔴 여기서 값을 **지어내지 않는다.** 넣는 것은 질문이 이미 들고 있는 제안값뿐이고,
+       제안이 없으면 없는 대로 답한다. 없는 자리를 기본값으로 메우면 그건 자동승인이
+       아니라 **러너가 도메인 값을 정하는 것**이다(원칙 2·5).
+
+    갈래마다 「제안이 없다」의 뜻이 다르다 —
+      · exclusion  : 제안값 → 현재값 순으로 쓰고, 둘 다 없으면 `radius_m: null`.
+                     그건 **「반경 없음」 확정**이지 건너뜀이 아니다. 키를 빼면
+                     미확정으로 남아 STEP2 가 `assert_exclusions_confirmed` 로
+                     멈춘다 — 자동 모드가 게이트만 지나고 다음 칸에서 죽는다.
+                     🔴 **원본이 점인데 제안이 없으면 `drop`(배제 해제)으로 답한다.**
+                     `null` 로 확정하면 점들의 union 이라 배제 면적이 0 이고,
+                     STEP4 `_guard_zero_area` 가 몇 분 뒤에 죽인다(실측
+                     `r_20260813_005` — 재활용 03 도시공원, 게이트 통과 후
+                     94초 뒤 STEP4 에서 중단). 그 자리에서 반경을 **지어내면**
+                     러너가 도메인 값을 정하는 것이고(원칙 2), 예전처럼
+                     **거절하면** 「모두 자동승인」이 성립하지 않는다.
+                     남는 답은 하나다 — `_guard_zero_area` 가 스스로 안내하는
+                     「그 레이어를 hard_exclusion 에서 빼세요」. 배제를 **적용하지
+                     않았다는 사실**은 role·flag·gap(`배제_해제`) 세 곳에 남으므로
+                     조용히 사라지지 않는다(원칙 4). 데이터는 안 버린다 —
+                     `reference_only` 라 STEP2 정제는 그대로 돌고 GIS 입력에서만
+                     빠진다.
+                     ⚠ 사람 게이트는 같은 자리에서 막지 않는다: 화면에
+                     `source_geometry` 가 실려 있어 사람이 보고 반경을 정할 수
+                     있고, 지목 배수 판정이 면 필지를 잡으면 반경 없이도 배제가
+                     생기기 때문이다. `drop` 은 사람도 쓸 수 있다 — 자동 전용
+                     어휘를 만들면 「자동 경로에서만 통과하는 값」이 생긴다.
+                     ⚠ 판정 근거는 감리의 `exclusion_type`(폴리곤이라 우겼다)이
+                     아니라 원본 파일에서 읽은 `source_geometry` 다.
+      · intent     : **choice 4(위치선정 참조용)** 하나뿐이다. 1·2 는 AI 가 제안한
+                     적 없는 `weight` 숫자를 요구하고, 3 은 반경까지 지어내야 하며,
+                     5 는 데이터를 버린다. 4 는 감리에서만 빼고 데이터는 살린다 —
+                     이 flag 를 만드는 코드가 붙여 보내는 제안(「참조용이면 감리에서
+                     제외하고 위치선정 단계에서 사용」)과 같은 뜻이다.
+      · code_prefix: 대조기가 낸 `suggestion`, 없으면 감리가 쓰던 `prefix` 그대로.
+      · weight     : 반경이 필요한 지표는 전부 `radius_proposed` 로 채운다(빠지면
+                     자식이 [R] 대화형으로 내려가 stdin 없이 EOFError). 슬라이더는
+                     **제안이 있는 것만** 넣는다 — 안 넣으면 자식이 자기 제안값을
+                     쓰므로 같은 값이고, `null` 을 넣으면 검증에서 400 이다.
+                     방향 충돌 지표에 제안이 없으면 여기서 메우지 않는다:
+                     `_validate_weight` 의 `unresolved` 가 **시끄럽게** 막는다.
+    """
+    if gate_id == "audit":
+        exclusions, intents, prefixes = [], [], []
+        for q in questions:
+            if q["kind"] == "exclusion":
+                r = q.get("proposed_m")
+                if r is None:
+                    r = q.get("radius_m")
+                if r is None and q.get("source_geometry") == "point":
+                    exclusions.append({"dataset_id": q["dataset_id"],
+                                       "role_index": q["role_index"],
+                                       "drop": True})
+                    continue
+                exclusions.append({"dataset_id": q["dataset_id"],
+                                   "role_index": q["role_index"],
+                                   "radius_m": r})
+            elif q["kind"] == "intent":
+                intents.append({"dataset_id": q["dataset_id"], "choice": 4})
+            elif q["kind"] == "code_prefix":
+                prefixes.append({"dataset_id": q["dataset_id"],
+                                 "op_index": q["op_index"],
+                                 "prefix": q.get("suggestion") or q.get("prefix")})
+        return {"exclusions": exclusions, "intents": intents,
+                "code_prefixes": prefixes}
+
+    radius, slider = {}, {}
+    for q in questions:
+        if q["kind"] != "weight":
+            continue
+        iid = q["indicator_id"]
+        if q["radius_required"]:
+            radius[iid] = q.get("radius_proposed")
+        if q.get("slider_proposed") is not None:
+            slider[iid] = q["slider_proposed"]
+    return {"radius": radius, "slider": slider}
+
+
+def _run_auto_gate(run_id: str, domain: str, gate_id: str, gate: dict) -> dict:
+    """게이트를 사람 대신 AI 제안값으로 통과시킨다. 반환 = 실제로 적용한 답.
+
+    🔴 검증·적용은 `submit_gate` 와 **같은 함수**를 부른다. 자동 경로만 따로 짜면
+       사람 답이었으면 400 이었을 값이 조용히 통과한다.
+    """
+    questions = gate.get("questions") or []
+    try:
+        # 🔴 답을 **만드는 것**도 try 안이다. 「AI 제안값으로는 못 채운다」는
+        #    검증 실패와 같은 뜻이고, 같은 문구로 알려야 한다.
+        payload = _auto_answer(gate_id, questions)
+        if gate_id == "audit":
+            _apply_audit(run_id, domain, questions, payload, auto=True)
+        else:
+            _validate_weight(questions, payload)
+    except RunRequestError as e:
+        # 🔴 삼키지 않는다. AI 제안값으로 못 채우는 게이트는 **사람이 봐야 하는**
+        #    게이트다 — 조용히 넘기면 그 자리를 아무도 안 본 채 run 이 완주한다.
+        raise _StepFailed(
+            f"자동승인: AI 제안값으로 게이트 '{gate_id}' 를 채울 수 없습니다 — {e}. "
+            f"맞춤형 대화 분석 모드로 다시 돌리면 이 자리를 직접 확정할 수 있습니다."
+        ) from e
+    _save_answer(run_id, gate_id, payload, by=AUTO_APPROVE_SRC)
+    return payload
 
 
 def _stage_args(run_id: str, mode: str, stage: str) -> tuple[str | None, str | None]:

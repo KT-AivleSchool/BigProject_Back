@@ -241,6 +241,27 @@ def build_gap_report(
                     }
                 )
 
+    # ①-2 배제를 **적용하지 않기로 확정한** role (게이트A `drop` · 고속 자동 분석 포함)
+    #    role 이 `reference_only` 로 바뀌어 위 ① 도 `_guard_zero_area` 도 안 잡는다 —
+    #    여기서 안 적으면 산출물만 보고 「그 시설은 원래 배제 대상이 아니었다」로 읽힌다.
+    for r in reviewed.get("results", []):
+        did = r.get("dataset_id")
+        for role in r.get("roles") or []:
+            if not role.get("배제_해제"):
+                continue
+            prev = role.get("배제_해제_이전") or {}
+            gaps.append(
+                {
+                    "kind": "배제_해제",
+                    "target": f"dataset {did}",
+                    "detail": role.get("배제_해제_사유") or "배제를 적용하지 않음",
+                    "impact": (
+                        f"{prev.get('facility_type') or role.get('facility_type') or '해당 시설'}"
+                        f" 주변이 배제되지 않았습니다 (확정: {role.get('source') or '?'})"
+                    ),
+                }
+            )
+
     # ② 미해결 HITL 플래그
     #   ⚠ hitl_flags 는 HITL 로 확정한 뒤에도 지워지지 않는다(감리 파이프라인이
     #     플래그를 소거하지 않음). 플래그만 보면 이미 해결된 항목까지 잡힌다 —

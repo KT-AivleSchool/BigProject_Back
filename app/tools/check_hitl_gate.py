@@ -150,11 +150,23 @@ try:
         or got_radii == sorted(want_radii, key=lambda v: (v is None, v)),
         (got_radii, want_radii),
     )
-    # 픽스처는 사람이 이미 확정한 결과다 → 전부 읽기 전용이어야 한다.
+    # 🔴 2026-08-12 부로 `editable` 은 **항상 true** 다. 예전엔 여기서 "픽스처 질문은
+    #    전부 읽기 전용" 을 봤다 — 확정분을 못 고치게 하던 시절의 항목이다.
+    #    그 규칙이 없어졌으므로 항목을 **지우지 않고 뒤집는다**: 지우면 「확정됐다는
+    #    사실이 어딘가에 남는가」를 아무도 안 보게 된다(그 사실을 들고 있던 필드가
+    #    `editable` 하나였다 — 원칙 4).
     chk(
-        "픽스처 질문은 전부 읽기 전용",
-        all(not q["editable"] for q in qs),
-        [(q["kind"], q["dataset_id"]) for q in qs if q["editable"]],
+        "질문은 전부 수정 가능(editable)",
+        all(q["editable"] for q in qs),
+        [(q["kind"], q["dataset_id"]) for q in qs if not q["editable"]],
+    )
+    # 픽스처는 사람이 이미 확정한 결과다 → `confirmed` 가 그 사실을 들고 있어야 한다.
+    # 🔴 배제 06·07 은 **flag 가 없다**(role 만 있다). flag 만 보면 이 둘이
+    #    `confirmed:false` 로 나가 「이미 정해졌다」는 표시가 항목마다 갈린다.
+    chk(
+        "픽스처 질문은 전부 confirmed",
+        all(q["confirmed"] for q in qs),
+        [(q["kind"], q["dataset_id"]) for q in qs if not q["confirmed"]],
     )
     for cp in [q for q in qs if q["kind"] == "code_prefix"]:
         src = next(
@@ -166,28 +178,42 @@ try:
             cp["op_index"],
         )
 
-    # ── [3] 게이트A 답변 — 읽기 전용은 수정 못 한다 ──────────────────
+    # ── [3] 게이트A 답변 거부 규칙 ─────────────────────────────────────
     print("\n[3] 게이트A 답변 거부 규칙")
+    # 🔴 **뒤집힌 항목이다.** 예전엔 "확정분 수정 400" 이었다(2026-08-05).
+    #    2026-08-12 부로 확정분도 고칠 수 있다 — 자기가 방금 넣은 값을 못 고치면
+    #    화면은 「다시 시작」 말고는 길이 없다. 없어진 규칙을 대조기가 계속 요구하면
+    #    영원히 빨간불이거나, 지우면 **고쳐지는지 아무도 안 본다.**
+    #    별도 run 사본(`r_chk2`)에 친다 — `r_chk` 를 갈면 아래 항목들이 값을 잃는다.
     ex0 = next((q for q in qs if q["kind"] == "exclusion"), None)
     if ex0:
-        err(
-            "확정분 수정 400",
-            lambda: R._apply_audit(
-                "r_chk",
-                DOMAIN,
-                qs,
-                {
-                    "exclusions": [
-                        {
-                            "dataset_id": ex0["dataset_id"],
-                            "role_index": ex0["role_index"],
-                            "radius_m": 999,
-                        }
-                    ]
-                },
-            ),
-            "이미 확정된 항목",
+        make_run(copy.deepcopy(BASE_DOC), tmp, "r_chk2")
+        q_c2 = R._questions_audit("r_chk2", DOMAIN)
+        R._apply_audit(
+            "r_chk2",
+            DOMAIN,
+            q_c2,
+            {
+                "exclusions": [
+                    {
+                        "dataset_id": ex0["dataset_id"],
+                        "role_index": ex0["role_index"],
+                        "radius_m": 999,
+                    }
+                ]
+            },
         )
+        after = next(
+            q
+            for q in R._questions_audit("r_chk2", DOMAIN)
+            if q["kind"] == "exclusion"
+            and q["dataset_id"] == ex0["dataset_id"]
+            and q["role_index"] == ex0["role_index"]
+        )
+        chk("확정분도 고쳐진다 (값이 실제로 박힌다)", after["radius_m"] == 999, after)
+        # 고친 뒤에도 「정해진 값」이라는 사실은 남는다 — 확정을 지우는 게 아니라
+        # **사람이 다시 확정한 것**이다.
+        chk("고친 뒤에도 confirmed 유지", after["confirmed"] is True, after)
     err(
         "없는 대상 400",
         lambda: R._apply_audit(
@@ -241,8 +267,18 @@ try:
             break
     make_run(doc2, tmp, "r_syn")
     q2 = R._questions_audit("r_syn", DOMAIN)
-    editable = [(q["kind"], q["dataset_id"]) for q in q2 if q["editable"]]
-    chk("합성한 3건이 편집 가능", len(editable) == 3, editable)
+    # 🔴 이것도 뒤집힌 항목이다 — 예전엔 `editable` 로 셌다. 지금은 전부 editable 이라
+    #    그 셈은 **질문 전체 수**가 되어 아무것도 안 본다(가짜 초록불). 합성으로
+    #    미확정을 만들었으니 **`confirmed` 가 false 인 것**이 정확히 3건이어야 한다.
+    unconfirmed = [(q["kind"], q["dataset_id"]) for q in q2 if not q["confirmed"]]
+    chk("합성한 3건이 미확정(confirmed=false)", len(unconfirmed) == 3, unconfirmed)
+    # 개수만 세면 **다른 3건**이어도 통과한다. 어느 것인지까지 본다.
+    chk(
+        "미확정 3건이 합성한 바로 그것들",
+        set(unconfirmed)
+        == {("exclusion", ex_did), ("code_prefix", cp_did), ("intent", it_did)},
+        (unconfirmed, ex_did, cp_did, it_did),
+    )
 
     if it_did:
         err(
@@ -263,7 +299,12 @@ try:
             "크기가 0",
         )
     if ex_did:
-        ex_q = next(q for q in q2 if q["kind"] == "exclusion" and q["editable"])
+        # 🔴 예전엔 `q["editable"]` 로 골랐다. 지금은 전부 true 라 그건 **첫 배제**를
+        #    집을 뿐이다 — 합성으로 미확정을 만든 건 `ex_did` 다. 우연히 같더라도
+        #    고르는 근거가 되면 안 된다.
+        ex_q = next(
+            q for q in q2 if q["kind"] == "exclusion" and q["dataset_id"] == ex_did
+        )
         err(
             "반경 범위 400",
             lambda: R._apply_audit(
@@ -283,7 +324,9 @@ try:
             "범위는 1~5000",
         )
     if cp_did:
-        cp_q = next(q for q in q2 if q["kind"] == "code_prefix" and q["editable"])
+        cp_q = next(
+            q for q in q2 if q["kind"] == "code_prefix" and q["dataset_id"] == cp_did
+        )
         err(
             "prefix 빈값 400",
             lambda: R._apply_audit(
@@ -504,9 +547,12 @@ try:
     )
     make_run(doc3, tmp, "r_reset")
     q3 = [q for q in R._questions_audit("r_reset", DOMAIN) if q["kind"] == "exclusion"]
-    chk(f"되돌린 뒤 배제 {n_hard}건 전부 편집 가능",
-        len(q3) == n_hard and all(q["editable"] for q in q3),
-        [(q["dataset_id"], q["editable"]) for q in q3])
+    # 🔴 `editable` 로 보던 항목이다. 지금은 전부 true 라 그 셈은 아무것도 안 본다.
+    #    `reset_exclusion_confirmations` 가 실제로 되돌리는 건 **확정 표시**이므로
+    #    `confirmed` 로 본다 — 이게 false 여야 STEP2 가 미확정으로 멈춘다(아래 항목).
+    chk(f"되돌린 뒤 배제 {n_hard}건 전부 미확정",
+        len(q3) == n_hard and not any(q["confirmed"] for q in q3),
+        [(q["dataset_id"], q["confirmed"]) for q in q3])
 
     # 픽스처(확정 상태)는 통과, 되돌린 것은 STEP2 진입 차단.
     try:

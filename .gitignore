@@ -23,38 +23,47 @@ BigProject_Planning/
 # 폴더는 유지, 내부 파일은 제외
 
 # 데이터들
-data_임시/*/data/*
-!data_임시/*/data/.gitkeep
-data_임시/*/fixture/*
-!data_임시/*/fixture/.gitkeep
-data_임시/*/law/*
-!data_임시/*/law/.gitkeep
+datasets/*/data/*
+!datasets/*/data/.gitkeep
+datasets/*/fixture/*
+!datasets/*/fixture/.gitkeep
+datasets/*/law/*
+!datasets/*/law/.gitkeep
 *.zip
 
 # V4 대조 데이터 (데이터팀 전달본 · issue #198). 원본 60MB+ 라 저장소에 올리지 않는다.
-data_임시/_v4/
+datasets/_v4/
 
 # 공공 데이터, 캐시
-data_임시/region_data/*
-!data_임시/region_data/.gitkeep
-data_임시/search_cache/*
-!data_임시/search_cache/.gitkeep
+datasets/region_data/*
+!datasets/region_data/.gitkeep
+datasets/search_cache/*
+!datasets/search_cache/.gitkeep
 
 # 산출물
-data_임시/step1_output/*
-!data_임시/step1_output/.gitkeep
-data_임시/step2_output/*
-!data_임시/step2_output/.gitkeep
-data_임시/step3_output/*
-!data_임시/step3_output/.gitkeep
-data_임시/step4_output/*
-!data_임시/step4_output/.gitkeep
+datasets/step1_output/*
+!datasets/step1_output/.gitkeep
+datasets/step2_output/*
+!datasets/step2_output/.gitkeep
+datasets/step3_output/*
+!datasets/step3_output/.gitkeep
+datasets/step4_output/*
+!datasets/step4_output/.gitkeep
 
 # Local Dev Tests
 tests/test_geocoder.py
 
 # Dynamic Uploads & Media Files
 uploads/
+
+# Claude Code 로컬 설정
+.claude/
+
+# DB 덤프 (대용량, 각자 로컬 생성분)
+omnisite_backup.sql
+
+# 적재 제외 문서 보관함 (지침류 등 — 임베딩 부적합)
+seeds_excluded/
 
 # 순수 일회성 스크립트만 남은 로컬 폴더 (analyze_clean_perf.py 하나).
 # 🔴 회귀 대조기·진단기 9개는 2026-08-05 에 `app/tools/` 로 옮겨 **추적한다.**
@@ -69,14 +78,61 @@ uploads/
 # 파이프라인 run 산출물 (run 하나가 25MB+ · 로컬 전용)
 runs/
 
+# 서버 실행 로그. 추적하면 커밋마다 수백 줄 diff 가 끼어 진짜 변경을 가린다
+# (2026-08-08: 273줄 변경으로 코드 diff 를 덮고 있었다).
+uvicorn.out
+uvicorn.out.log
+uvicorn.err.log
+# 🔴 위 세 줄은 **파일명 고정**이라 포트를 붙인 이름(`uvicorn_8000.log`)이 그대로
+#    untracked 로 샜다(2026-08-10). 이름을 바꿔 띄우는 사람이 있으므로 패턴으로 받는다.
+uvicorn_*.log
+*.out
+
 # 백업 사본. 기준선을 되돌릴 일이 생기면 git 이력에서 꺼낸다 —
 # 저장소 안에 "이전 기준값"이 하나 더 있으면 어느 쪽이 기준인지 흐려진다.
 *.bak
+
+# 관통 실행에 쓴 요청 본문·응답·PDF/HWPX 산출물 보관함 (2026-08-12).
+# 🔴 대조기가 아니다 — `app/tools/check_*.py` 와 달리 **한 번 치고 버리는 것**이고
+#    도메인·run_id·parcel_id 가 그날 실행에 박혀 있어 다시 못 돌린다.
+#    남길 값이 있으면 파일이 아니라 **작업일지에 실측치로** 옮겨 적는다.
+_e2e/
+
+# DB 에서 지운 테이블의 삭제 직전 덤프 (2026-08-11 — 흡연 도메인 데이터셋 8개).
+# 🔴 `parks`·`public_wifi_locations`·`smoking_areas` 는 디스크에 다른 원본이 없어
+#    이 CSV 가 유일한 사본이다. 추적하지 않는 이유는 「없어도 되니까」가 아니라
+#    **파이프라인이 안 읽는 자료라 리포에 둘 것이 아니기 때문**이다 —
+#    지우기 전에 Teams/감리팀 공유로 옮길 것.
+datasets/_db_dump_*/
+
+# 화면1 업로드분 (2026-08-14 — 프리셋과 루트를 갈랐다).
+# 🔴 사용자가 올린 파일은 전부 여기 들어오고 24시간 뒤 폴더째 지워진다.
+#    프리셋(`datasets/<도메인>/`)과 **다른 폴더**라 삭제가 배포 원본에 안 닿는다
+#    (2026-08-13 에 삭제 버튼이 `datasets/흡연/data` 536MB 를 지운 사고의 처치).
+# 🔴 원장(`.upload_ledger.json`)도 여기 안이다 — 「이 파일을 사용자가 올렸나」를
+#    적는 런타임 상태다. 지우면 그 도메인 업로드분이 전부 배포 원본으로 보여
+#    삭제가 409 로 막힌다.
+# ⚠ 예전 규칙 `datasets/*/.upload_ledger.json` 은 원장이 한 단계 아래
+#   (`datasets/<도메인>/`)에 있던 시절 것이라 **지금 경로엔 안 걸린다.**
+#   같은 이유로 `datasets/*/{data,law}/*` 도 여기까지 못 온다 — 한 줄로 받는다.
+datasets/user_input/
+
+# 🔴 위 줄이 옛 자리를 대신하지 **못한다** — 루트를 가르기 전에 올린 도메인은
+#    원장이 아직 `datasets/<도메인>/.upload_ledger.json` 에 남아 있다(실측:
+#    `그늘막` 1개). 옛 줄을 지우면 그게 곧바로 untracked 로 샌다. 자리만 다를 뿐
+#    같은 런타임 상태이므로 **두 줄 다** 둔다 — 남은 원장이 0 이 되면 이 줄을 지운다.
+datasets/*/.upload_ledger.json
 
 # Temporary sync/editor files
 .!*
 .*.swp
 *~
+
+# 🔽 여기부터는 배포 브랜치(019576c)에서 온 규칙이다. 그대로 둔다.
+# ⚠ 같은 커밋이 위쪽 `datasets/…` 20줄을 `data_임시/…` 로 되돌려 놨었다 —
+#    폴더 이름은 2026-08-12 에 `datasets` 로 바뀌었고 `app/config.py:169` 도
+#    그렇게 읽는다. 그 상태로는 이 파일의 데이터 규칙이 **아무것도 안 가린다**
+#    (`datasets/흡연/data` 536MB 가 그대로 untracked 로 샌다). 병합하며 되살렸다.
 
 # Scratch scripts and one-off SQL files
 run_sql.py

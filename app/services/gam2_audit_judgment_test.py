@@ -1835,6 +1835,39 @@ def review_hitl(in_path: str | None = None, out_path: str | None = None) -> str:
     return out_path
 
 
+def facility_inference_doc(facility_info: dict) -> dict:
+    """`resolve_facility()` 결과 → 산출물에 실을 모양.
+
+    두 곳이 같은 모양을 써야 한다 — `audit_result.json` 의 `facility_inference` 키와
+    STEP 0.5 가 따로 내보내는 `facility_inference.json`. 모양이 갈리면 프런트가
+    「감리 전」과 「감리 후」에 다른 값을 그린다.
+    """
+    return {
+        "facility": facility_info.get("facility"),
+        "region": facility_info.get("region"),
+        "근거": facility_info.get("근거"),
+        "mismatch": facility_info.get("mismatch", False),
+        "mismatch_reason": facility_info.get("mismatch_reason", ""),
+        "source_input": facility_info.get("source_input", ""),
+        "confirmed": False,  # HITL 확인 대상
+        "_설명": "사용자 입력+데이터명으로 확정한 선정 시설. HITL에서 확인/수정 후 confirmed=true.",
+    }
+
+
+def save_facility_inference(facility_info: dict) -> str:
+    """STEP 0.5 직후 시설·지역만 먼저 내보낸다.
+
+    같은 값이 `audit_result.json` 에도 들어가지만 그건 감리(수백 초) **뒤**다.
+    화면2 의 「선정 대상」은 감리를 기다릴 이유가 없어서 여기서 한 번 더 쓴다.
+    ⚠ 사본이 아니라 **먼저 나오는 같은 값**이다 — 모양은 위 빌더 하나가 정한다.
+    """
+    path = _out_path("facility_inference.json")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(facility_inference_doc(facility_info), f, ensure_ascii=False, indent=2)
+    return path
+
+
 def save_results(
     judgments: list[Judgment],
     raw_preds: dict,
@@ -1892,16 +1925,7 @@ def save_results(
         "results": [raw_preds[j.dataset_id] for j in judgments],
     }
     if facility_info is not None:
-        doc["facility_inference"] = {
-            "facility": facility_info.get("facility"),
-            "region": facility_info.get("region"),
-            "근거": facility_info.get("근거"),
-            "mismatch": facility_info.get("mismatch", False),
-            "mismatch_reason": facility_info.get("mismatch_reason", ""),
-            "source_input": facility_info.get("source_input", ""),
-            "confirmed": False,  # HITL 확인 대상
-            "_설명": "사용자 입력+데이터명으로 확정한 선정 시설. HITL에서 확인/수정 후 confirmed=true.",
-        }
+        doc["facility_inference"] = facility_inference_doc(facility_info)
     path = _out_path("audit_result.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(doc, f, ensure_ascii=False, indent=2)

@@ -460,6 +460,24 @@ def clean_domain(domain_dir: str, csv_preview: bool = False, prune: bool = True)
     with open(A._DOMAIN["profiles"], encoding="utf-8") as f:
         profiles = json.load(f)
 
+    # 🔴 프로파일이 감리 결과의 데이터셋을 **하나도** 안 덮으면 여기서 멈춘다.
+    #    `profiles.json` 은 `data/` 의 **사본**이라 원본이 바뀌면 어긋난다(원본을 지웠다
+    #    다시 넣거나, 업로드로 파일이 늘거나). 그때 아래 루프는 전부 `no_profile` 로
+    #    건너뛰고 **rc=0 으로 끝난다** — 정제 산출물이 0개인 채 STEP3 로 넘어가고,
+    #    거기서 `KeyError: '02'`(가중치 레이어 부착)로 죽는다. 그 문구는 원인을
+    #    가리키지 않아 「가중치가 깨졌다」로 읽힌다(원칙 1: 조용한 오동작 금지).
+    #    한두 개만 없는 건 정상 경로다(참조용·미사용 데이터셋) — 전멸일 때만 막는다.
+    _want = [r["dataset_id"] for r in results]
+    if _want and not any(profiles.get(d) for d in _want):
+        raise SystemExit(
+            f"[중단] profiles.json 이 감리 결과의 데이터셋을 하나도 담고 있지 않습니다.\n"
+            f"  감리 결과: {len(_want)}개 {_want}\n"
+            f"  프로파일 : {len(profiles)}개 {sorted(profiles)}\n"
+            f"  → 원본(data/)이 바뀐 뒤 프로파일을 다시 만들지 않은 상태입니다.\n"
+            f"     재생성: python app\\services\\gam2_profile.py "
+            f"{os.path.dirname(os.path.dirname(A._DOMAIN['profiles']))}"
+        )
+
     wl: dict = {}  # 데이터셋 간 누적 공유 whitelist
     key_index: dict = {}  # {dataset_id: {컬럼: 값집합}} — 자동 연결용
     cleaned: dict = {}  # {dataset_id: (정제 df, out_base)} — prune 후처리용

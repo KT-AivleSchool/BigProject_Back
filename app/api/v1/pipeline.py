@@ -12,13 +12,13 @@
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
-
-from app.api.deps import get_current_user_optional, get_current_user, get_db
-from app.db.base import User
-from app.db.models.run_record import RunRecord
-from app.services import pipeline_runner as runner
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+
+from app.api.deps import get_current_user, get_current_user_optional
+from app.db.base import RunRecord, User
+from app.db.session import get_db
+from app.services import pipeline_runner as runner
 
 router = APIRouter()
 
@@ -57,6 +57,11 @@ class RunRequest(BaseModel):
     #              화면4 목록의 길이이자 화면5 가 고를 수 있는 후보의 수다.
     user_input: str | None = None
     topn: int | None = None
+    # ↓ 「고속 자동 분석 모드」. 게이트를 **계획에서 빼는 게 아니라** 그 자리에서 AI
+    #   제안값으로 답한다 — 질문도 검증기도 사람 경로와 한 글자도 다르지 않고, 무엇을
+    #   승인했는지는 `hitl/<gate>.json` 과 산출물 `source` 에 남는다(원칙 4).
+    #   `mode="fixture"` 는 게이트가 없어 400 이다(판정은 `runner.start_run` 한 곳).
+    auto_approve: bool = False
 
 
 @router.post("/runs", status_code=202)
@@ -79,7 +84,8 @@ def create_run(
     try:
         run_id = runner.start_run(req.domain, req.mode,
                                   user_input=req.user_input, topn=req.topn,
-                                  user_id=user.id if user else None)
+                                  user_id=user.id if user else None,
+                                  auto_approve=req.auto_approve)
     except runner.RunRequestError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except runner.RunConflict as e:
@@ -89,30 +95,71 @@ def create_run(
 
 @router.get("/runs")
 async def list_runs(
-    mine: bool = True,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    mine: str = Query(..., description="지금은 `true` 하나만 정의돼 있다"),
+    limit: int = Query(100, ge=1, le=500),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """내 실행 내역 조회"""
-    stmt = select(RunRecord).where(
-        (RunRecord.user_id == current_user.id) | (RunRecord.user_id.is_(None))
-    )
-    result = await db.execute(stmt)
-    records = result.scalars().all()
-    
-    runs = []
-    for r in records:
-        runs.append({
-            "run_id": r.run_id,
-            "domain": r.domain,
-            "mode": r.mode,
-            "status": r.last_known_status,
-            "started_at": r.started_at.isoformat() if r.started_at else None,
-            "finished_at": r.finished_at.isoformat() if r.finished_at else None,
-            "is_mine": r.user_id == current_user.id
-        })
-    
-    return {"runs": runs}
+    """마이페이지 run 이력 — **내 것 + 익명**을 최신순으로(계약 3-3).
+
+    🔴 **`mine=true` 인데 익명 행도 돌려준다.** 이름과 내용이 어긋나 보이지만 의도다 —
+       가르는 자리는 서버가 아니라 화면이고, 그러려면 **응답에 있어야** 센다.
+       실제 화면은 익명을 감추고 **감춘 수를 적는다**(「로그인 없이 실행된 19건은
+       표시하지 않습니다 — 지워진 것이 아니라 주인이 없는 기록입니다」).
+       `WHERE user_id = :me` 로 여기서 거르면 화면은 **감춘 사실조차 모르고**
+       20건이 1건으로 조용히 줄어든다(원칙 4). 이름이 아니라 계약 §3-3-1 을 따른다.
+       ⚠ **남의 행은 안 준다.** 「내 것 + 익명」이지 「전부」가 아니다 — 화면이 가르는
+       기준은 `is_mine` 뿐이라 남의 run 은 익명과 구분이 안 되고, 「주인이 없는
+       기록」으로 세어진다. 그건 화면이 사실이 아닌 말을 하는 것이다.
+
+    🔴 **인증은 필수다**(`POST /runs` 는 선택). 「내 것」이 뜻을 가지려면 내가 누구인지
+       알아야 한다. 토큰이 없거나 죽었으면 401 — 익명으로 떨어뜨리면 모든 행이
+       `is_mine: false` 가 되어 **로그인했는데 내 기록이 없는 화면**이 된다.
+
+    🔴 `status` 는 `run_records.last_known_status` **그대로**다. 값이 `queued`·
+       `succeeded`·`failed` 셋뿐인 것 자체가 정보다 — `running`·`awaiting_hitl` 을
+       여기서 지어내면 정본(`status.json`)이 둘이 된다(계약 3-3).
+
+    시각은 `.isoformat()` 그대로 내보낸다. `astimezone()` 같은 걸 태우지 않는다 —
+    컬럼이 TIMESTAMPTZ 라 이미 tz 가 붙어 있고, 한 번 더 돌리면 값이 아니라
+    **표기**만 바뀌어 읽는 쪽이 시차로 오해한다.
+
+    상한: 기본 100건(`?limit=`, 최대 500). 프런트에 페이지네이션이 없어 무한히 쌓이는
+    것을 그대로 부으면 화면이 죽는다. 🔴 자른 사실은 **응답에 적는다**(`total`·
+    `truncated`) — 안 적으면 사용자는 옛 run 이 **지워진 줄 안다**(원칙 4).
+    """
+    if mine != "true":
+        # 조용히 같은 응답을 주면 나중에 「거르는 줄 알았다」가 된다(원칙 1).
+        raise HTTPException(
+            status_code=400,
+            detail=f"mine 은 'true' 만 정의돼 있습니다: {mine!r}",
+        )
+
+    scope = or_(RunRecord.user_id == user.id, RunRecord.user_id.is_(None))
+    total = (await db.execute(select(func.count()).select_from(RunRecord).where(scope))).scalar_one()
+    rows = (
+        await db.execute(
+            select(RunRecord).where(scope).order_by(RunRecord.started_at.desc()).limit(limit)
+        )
+    ).scalars().all()
+
+    return {
+        "runs": [
+            {
+                "run_id": r.run_id,
+                "domain": r.domain,
+                "mode": r.mode,
+                "status": r.last_known_status,
+                "started_at": r.started_at.isoformat() if r.started_at else None,
+                "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+                "is_mine": r.user_id == user.id,
+            }
+            for r in rows
+        ],
+        "total": total,
+        "limit": limit,
+        "truncated": total > len(rows),
+    }
 
 
 @router.get("/runs/{run_id}")
@@ -126,6 +173,31 @@ def get_run(run_id: str):
     if doc is None:
         raise HTTPException(status_code=404, detail=f"없는 run_id 입니다: {run_id}")
     return doc
+
+
+@router.delete("/runs/{run_id}", status_code=204)
+def delete_run(run_id: str):
+    """실행 취소 → 204(본문 없음). 계약 3-4.
+
+    🔴 **자식 프로세스를 실제로 죽이고 나서** 응답한다. status.json 만 고쳐 쓰면
+       화면은 「멈췄다」고 하는데 파이프라인은 계속 돌아 정본 캐시·산출물
+       디렉터리를 갈아엎는다 — 그리고 실행 스레드가 다음 단계 전이에서 그
+       취소 상태를 **덮어쓴다**(원칙 4). 판단은 전부 `runner.cancel_run` 에 있다.
+
+    🔴 **인증이 없다.** `GET /runs/{id}`·`POST .../hitl/{gate}` 와 같다.
+       여기만 인증을 붙이면 **익명 run 은 영원히 취소할 수 없다** — 익명은
+       미구현이 아니라 의도된 정상 상태이고(4계층 ㉠) 나중에 주인을 채우는
+       경로도 없다. 즉 「나중에 로그인해서 지운다」가 성립하지 않는다.
+
+    이미 끝난 run 은 **409** 다. 204 로 답하면 「취소했다」는 말이 되는데
+    실제로는 아무 일도 안 일어났다. 없는 run_id 는 404.
+    """
+    try:
+        runner.cancel_run(run_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"없는 run_id 입니다: {run_id}")
+    except runner.RunConflict as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
 
 @router.post("/runs/{run_id}/hitl/{gate_id}")

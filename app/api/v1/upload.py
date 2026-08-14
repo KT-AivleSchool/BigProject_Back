@@ -36,6 +36,8 @@ import hashlib
 import json
 import logging
 import os
+import shutil
+import unicodedata
 import urllib.parse
 from datetime import datetime
 from pathlib import Path
@@ -55,7 +57,20 @@ from fastapi import (
 from pydantic import BaseModel, Field
 
 from app.api.deps import get_redis
-from app.config import DOMAIN_ROOT, domain_paths
+# 🔴 업로드가 쓰는 루트는 **`USER_INPUT_ROOT`**(`datasets/user_input`)다.
+#    `DOMAIN_ROOT`(`datasets`)는 프리셋 자리이고, 여기서 그걸 쓰면 사용자가 「흡연」을
+#    치는 순간 배포 원본이 목록에 뜨고 삭제 버튼이 붙는다 — 2026-08-13 에 실제로
+#    `datasets/흡연/data` 536MB 가 그렇게 지워졌다.
+#    `DATA_ROOT` 는 `step1_output` **두 자리에만** 쓴다 — 그건 도메인 폴더가 아니라
+#    도메인 무관 공용 산출물이라 사용자 루트로 따라가면 안 된다.
+from app.config import (
+    DATA_ROOT,
+    DOMAIN_ROOT,
+    USER_INPUT_ROOT,
+    USER_INPUT_SUBDIR,
+    domain_paths,
+    user_domain_paths,
+)
 from app.core.data_pipeline.statute_parser import extract_doc_meta, parse_statute
 from app.core.sim_ai.vector_db import get_vector_db
 from app.services.gam2_doc_extract import EXTRACTORS, TEXT_EXT, extract_text
@@ -66,9 +81,14 @@ from app.services.gam2_ordinance_select import (
 )
 from app.services.gam2_profile import DATA_EXTENSIONS, list_dataset_files
 
+# 초기화 버튼과 24시간 자동 정리는 **같은 판정·같은 삭제**를 쓴다. 여기서 따로 짜면
+# 손으로 지운 것과 자동으로 지워진 것이 서로 다른 잔재를 남긴다.
+from app.services import user_input_pruner
+
 # 도메인 이름 검증은 파이프라인 러너와 **같은 함수**를 쓴다. 여기서 다시 짜면
 # 한쪽만 고쳐졌을 때 업로드는 통과하는데 실행은 400 이 되는 상태가 생긴다.
 from app.services.pipeline_runner import (
+    MODE_FULL,
     _validate_domain,
     fixture_blocker,
     RunRequestError,
@@ -130,14 +150,16 @@ def _dirs(domain: str, create: bool = False) -> dict:
             detail=f"도메인 이름이 잘못됐습니다: {domain!r}",
         )
 
-    root = Path(str(DOMAIN_ROOT)) / domain
+    root = Path(str(USER_INPUT_ROOT)) / domain
     if create and not root.is_dir():
         for sub in ("data", "law"):
             (root / sub).mkdir(parents=True, exist_ok=True)
         logger.info(f"[upload] 새 도메인 폴더 생성: {root}")
 
     try:
-        _validate_domain(domain)
+        # 🔴 `MODE_FULL` 을 **명시**한다. 기본값(프리셋 루트)으로 두면 「흡연」이
+        #    프리셋 폴더가 있다는 이유로 통과하고, 정작 업로드는 빈 user_input 에 쌓인다.
+        _validate_domain(domain, MODE_FULL)
     except RunRequestError as e:
         # 오타 하나로 새 도메인이 조용히 생기면 안 된다 — 생성은 명시적 의사표시로만.
         raise HTTPException(
@@ -148,15 +170,19 @@ def _dirs(domain: str, create: bool = False) -> dict:
             ),
         )
 
-    paths = domain_paths(domain)
+    paths = user_domain_paths(domain)
     for key in ("data", "law"):
         os.makedirs(paths[key], exist_ok=True)
     return paths
 
 
 def _known_domains() -> List[str]:
-    """`datasets/` 아래 실제 도메인 폴더(= data/ 또는 law/ 를 가진 것)."""
-    root = Path(str(DOMAIN_ROOT))
+    """**업로드** 도메인 — `datasets/user_input/` 아래 (= data/ 또는 law/ 를 가진 것).
+
+    🔴 프리셋(`datasets/흡연` 등)은 **여기 안 뜬다.** 그게 이 분리의 목적이다.
+       업로드·삭제가 닿는 범위는 오직 이 목록이다.
+    """
+    root = Path(str(USER_INPUT_ROOT))
     if not root.is_dir():
         return []
     return sorted(
@@ -166,14 +192,192 @@ def _known_domains() -> List[str]:
     )
 
 
+def _preset_domains() -> List[str]:
+    """**프리셋** 도메인 — 배포 원본이 깔린 `datasets/<도메인>`.
+
+    🔴 목록에만 쓴다. 업로드·삭제는 이 루트에 **닿지 않는다**(`_dirs` 는
+       `USER_INPUT_ROOT` 만 본다) — 이름이 보이는 것과 손이 닿는 것은 다르다.
+    ⚠ `user_input` 자신은 뺀다. `USER_INPUT_ROOT` 가 `DATA_ROOT` **안**에 있어서
+      한 칸 아래를 훑으면 자기 자신이 도메인처럼 걸린다.
+    """
+    root = Path(str(DOMAIN_ROOT))
+    if not root.is_dir():
+        return []
+    return sorted(
+        p.name
+        for p in root.iterdir()
+        if p.is_dir()
+        and p.name != USER_INPUT_SUBDIR
+        and ((p / "data").is_dir() or (p / "law").is_dir())
+    )
+
+
+# ── 업로드 원장 (누가 올린 파일인지 **디스크에** 남긴다) ──────────────────
+#
+# 🔴 **왜 Redis 로 안 되나.** `source` 를 「Redis 색인에 sha256 이 있나」로 판정하면
+#    TTL(30일)이 지나거나 `volatile-lru` 가 걷어낸 순간 **사용자가 올린 파일이
+#    「폴더에 있던 것」으로 바뀐다.** 아래 삭제 문지기가 그 값을 보고 판단하므로
+#    판정이 뒤집히면 문지기도 같이 뒤집힌다 — 안 터지고 **지워진다**.
+#    정본은 디스크라고 이미 화면에 적혀 있다. 그러면 이 사실도 디스크에 있어야 한다.
+#
+# 🔴 실제로 이 구멍으로 `datasets/흡연/data` 가 통째로 지워졌다(2026-08-13 제보).
+#    프리셋 도메인 이름을 업로드 화면에 적으면 그 폴더의 **배포 원본**이 목록에
+#    뜨고 삭제 버튼이 그대로 붙어 있었다.
+_LEDGER_NAME = ".upload_ledger.json"
+
+
+def _ledger_path(domain: str) -> Path:
+    return Path(str(USER_INPUT_ROOT)) / domain / _LEDGER_NAME
+
+
+def _ledger_read(domain: str) -> dict:
+    """`{"data": {파일명: {...}}, "law": {...}}`. 없거나 깨졌으면 빈 원장.
+
+    깨졌을 때 `raise` 하지 않는 이유: 이 원장은 **보호를 더하는** 기록이고,
+    없으면 전부 `preexisting` = **삭제가 막히는 쪽**으로 실패한다. 안전한 방향이다.
+    """
+    p = _ledger_path(domain)
+    try:
+        if not p.is_file():
+            return {"data": {}, "law": {}}
+        doc = json.loads(p.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.warning(f"[upload] 업로드 원장을 못 읽었습니다({p}): {e} — 빈 원장으로 봅니다")
+        return {"data": {}, "law": {}}
+    if not isinstance(doc, dict):
+        return {"data": {}, "law": {}}
+    for k in ("data", "law"):
+        if not isinstance(doc.get(k), dict):
+            doc[k] = {}
+    return doc
+
+
+def _ledger_mark(domain: str, kind: str, name: str, meta: dict) -> None:
+    """업로드 성공을 원장에 적는다. 실패해도 업로드 자체는 되돌리지 않는다."""
+    p = _ledger_path(domain)
+    doc = _ledger_read(domain)
+    bucket = doc.setdefault(kind, {})
+    # 같은 이름의 옛 표기(NFD) 키는 걷어낸다 — 남겨두면 원장에 한 파일이 두 줄로
+    # 적혀, 지운 뒤에도 한쪽이 남아 「올린 적 있는 파일」로 계속 읽힌다.
+    for k in [k for k in bucket if k != name and _nfc(k) == _nfc(name)]:
+        bucket.pop(k, None)
+    bucket[name] = {
+        "uploaded_at": meta.get("uploaded_at"),
+        "sha256": meta.get("sha256"),
+        "size": meta.get("size"),
+    }
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(p.suffix + ".tmp")
+        tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, p)
+    except Exception as e:
+        # 원장이 안 써지면 그 파일은 다음 조회에서 `preexisting` 이 된다 —
+        # 사용자에겐 「내가 올렸는데 삭제가 막힌다」로 보인다. 조용히 넘기지 않는다.
+        logger.warning(f"[upload] 업로드 원장 기록 실패({p}): {e} — '{name}' 은 삭제가 막힙니다")
+
+
+def _ledger_names(domain: str, kind: str) -> set:
+    """원장에 적힌 이름들 — **NFC 로 맞춰서** 돌려준다.
+
+    이 변경(2026-08-14) 전에 적힌 키는 NFD 일 수 있다. 비교를 원문으로 하면
+    내가 올린 파일이 배포 원본으로 보여 삭제가 409 로 막힌다(`_nfc` 주석).
+    """
+    return {_nfc(k) for k in (_ledger_read(domain).get(kind) or {})}
+
+
+def _ledger_unmark(domain: str, kind: str, name: str) -> None:
+    p = _ledger_path(domain)
+    doc = _ledger_read(domain)
+    bucket = doc.get(kind) or {}
+    # 옛 NFD 키도 **같이** 지운다 — 하나만 지우면 남은 쪽이 「올린 적 있는 파일」로
+    # 계속 읽혀, 나중에 같은 이름의 배포 원본이 놓였을 때 삭제가 안 막힌다.
+    hits = [k for k in bucket if _nfc(k) == _nfc(name)]
+    if not hits:
+        return
+    for k in hits:
+        bucket.pop(k, None)
+    try:
+        tmp = p.with_suffix(p.suffix + ".tmp")
+        tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, p)
+    except Exception as e:
+        logger.warning(f"[upload] 업로드 원장 갱신 실패({p}): {e}")
+
+
+def _guard_preexisting(domain: str, kind: str, name: str, force: bool) -> None:
+    """배포 원본(사용자가 안 올린 파일)은 `force=true` 없이는 못 지운다.
+
+    🔴 「지우겠다」와 「남이 깔아둔 것을 지우겠다」는 **다른 손짓**이다
+       (CLAUDE.md — `--yes` 와 `--force`). 합치면 평소 삭제와 파괴적 삭제가
+       구분되지 않는다. 프리셋 도메인(`흡연`·`재활용`)의 `data/` 는 지우면
+       그 도메인 자체가 못 돌고, **다시 만들 방법이 저장소에 없다**
+       (`.gitignore` 대상이라 clone 에도 안 들어온다).
+    """
+    if force:
+        return
+    if _nfc(name) in _ledger_names(domain, kind):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=(
+            f"'{name}' 은 이 세션에서 업로드한 파일이 아니라 "
+            f"'{domain}' 폴더에 원래 있던 배포 원본입니다. "
+            f"프리셋 모드가 이 파일을 읽으므로 지우면 해당 도메인이 못 돕니다. "
+            f"(.gitignore 대상이라 다시 받을 수 없습니다) "
+            f"정말 지우려면 force=true 로 다시 보내세요."
+        ),
+    )
+
+
+def _nfc(s: str) -> str:
+    """한글 파일명을 **NFC 로 합친다**(자모 분리 해소).
+
+    🔴 macOS 에서 고른 파일은 브라우저가 이름을 **NFD** 로 준다 — `역` 이
+       `ㅇ+ㅕ+ㄱ` 세 코드포인트다(`서울시 역사마스터 정보.csv`, 2026-08-13 실물).
+       화면에는 똑같이 보이는데 Windows·Linux 는 **다른 파일명**으로 친다.
+       그래서 나는 증상이 전부 「안 터지고 값만 틀린다」다:
+         · 같은 파일을 다시 올리면 목록에 **두 줄**이 되고, 한쪽 이름으로 지우면
+           다른 쪽이 남는다(덮어쓰기가 안 걸린다).
+         · 원장 키와 디스크 이름이 갈려 내가 올린 파일이 **배포 원본**으로 보이고
+           삭제가 409 로 막힌다.
+         · 파이프라인 쪽이 제일 나쁘다 — 감리가 부르는 이름과 프로파일 키가 갈려
+           그 데이터셋이 **조용히 빠진다**(`no_profile`).
+       비교는 전부 NFC 로 하고, **디스크에 새로 쓰는 이름도 NFC** 로 고정한다.
+    """
+    return unicodedata.normalize("NFC", s or "")
+
+
+def _disk_match(d: Path, name: str) -> Optional[Path]:
+    """`name`(NFC)에 해당하는 **디스크의 실물**. 없으면 `None`.
+
+    🔴 정규화한 이름으로 곧바로 `unlink` 하면 **이 변경 전에 올라간 NFD 파일을
+       못 지운다** — 목록엔 뜨는데 삭제가 404 다. 이름은 NFC 로 **비교**하되
+       손대는 것은 디스크에 실제로 있는 그 이름이어야 한다.
+    """
+    p = d / name
+    if p.is_file():
+        return p
+    if not d.is_dir():
+        return None
+    for f in d.iterdir():
+        if f.is_file() and _nfc(f.name) == name:
+            return f
+    return None
+
+
 def _safe_name(filename: Optional[str]) -> str:
-    """업로드 파일명에서 **경로 성분을 제거**한다.
+    """업로드 파일명에서 **경로 성분을 제거**하고 NFC 로 맞춘다.
 
     `os.path.join(dir, file.filename)` 은 `../` 나 절대경로를 그대로 받아들인다.
     파일명은 이름이지 경로가 아니다.
+
+    🔴 정규화를 **여기 한 곳**에서 한다. 업로드·삭제·목록이 전부 이 함수를 지나므로
+       저장하는 이름과 지우는 이름이 갈릴 수가 없다. 저장 쪽만 고치면 옛 이름으로
+       들어온 삭제가 404 가 된다(`_nfc` 주석 참조).
     """
     raw = (filename or "").strip()
-    name = os.path.basename(raw.replace("\\", "/"))
+    name = _nfc(os.path.basename(raw.replace("\\", "/")))
     if not name or name in (".", ".."):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -217,8 +421,9 @@ def _resolve_facility_type(domain: str, explicit: Optional[str]) -> tuple[str, s
     if explicit and explicit.strip():
         return explicit.strip(), "request"
 
+    # `step1_output` 은 도메인 폴더가 아니라 공용 산출물이다 → `DATA_ROOT` 아래.
     reviewed = (
-        Path(str(DOMAIN_ROOT)) / "step1_output" / f"{domain}_audit_result_reviewed.json"
+        Path(str(DATA_ROOT)) / "step1_output" / f"{domain}_audit_result_reviewed.json"
     )
     if reviewed.is_file():
         try:
@@ -252,6 +457,16 @@ def _is_extract_cache(name: str) -> bool:
 # ══════════════════════════════════════════════════════════════════════
 class DomainItem(BaseModel):
     domain: str
+    root: str = Field(
+        "upload",
+        description=(
+            "이 도메인이 어느 루트에 있는가. "
+            "`upload` = `datasets/user_input/<도메인>` — 업로드·삭제가 닿는 곳. "
+            "`preset` = `datasets/<도메인>` 배포 원본 — **목록에만 뜬다.** "
+            "프리셋 행에 업로드하려면 같은 이름의 업로드 도메인을 새로 만들어야 하고"
+            "(`create_domain=true`), 그 둘은 **서로 다른 폴더**다"
+        ),
+    )
     law_files: int
     data_files: int
     has_audit_reviewed: bool = Field(
@@ -262,47 +477,197 @@ class DomainItem(BaseModel):
         description="mode=fixture·hitl 로 돌릴 수 있는가(= <도메인>_FIX 픽스처가 온전한가). "
         "false 면 그 두 모드는 400 이다. mode=full 은 픽스처와 무관하다",
     )
+    preexisting_files: int = Field(
+        0,
+        description=(
+            "업로드 원장에 없는 파일 수(data+law) = **배포 원본**. "
+            "0 보다 크면 이 도메인은 이미 쓰이고 있는 폴더이고, 업로드 화면에서 "
+            "고르면 그 원본이 같이 목록에 뜬다. 삭제는 force=true 없이는 409 다"
+        ),
+    )
+
+
+def _domain_item(name: str, p: dict, root: str) -> DomainItem:
+    """도메인 한 줄. `p` 는 **어느 루트의 경로 묶음인지** 호출자가 정한다.
+
+    🔴 원장(`_ledger_read`)은 `user_input` 아래에만 있다. 프리셋 행은 원장이 없으므로
+       모든 파일이 `preexisting_files` 로 잡힌다 — 그게 맞다. 프리셋의 파일은 전부
+       배포 원본이고 업로드 API 로 지울 수 없다(애초에 그 루트에 닿지 않는다).
+    """
+    law = (
+        [
+            f
+            for f in os.listdir(p["law"])
+            if os.path.splitext(f)[1].lower() in LAW_EXTENSIONS
+            and not _is_extract_cache(f)
+        ]
+        if os.path.isdir(p["law"])
+        else []
+    )
+    data = list_dataset_files(p["data"]) if os.path.isdir(p["data"]) else []
+    reviewed = (
+        Path(str(DATA_ROOT)) / "step1_output" / f"{name}_audit_result_reviewed.json"
+    )
+    # 🔴 양쪽 다 NFC 로 맞춰서 뺀다. 디스크 이름은 원문(옛 NFD 가능)이고 원장 키도
+    #    적힌 시점에 따라 갈린다 — 한쪽만 정규화하면 내가 올린 파일이 배포 원본으로
+    #    잡혀 삭제가 409 로 막힌다(`_nfc` 주석).
+    mine_data = _ledger_names(name, "data") if root == "upload" else set()
+    mine_law = _ledger_names(name, "law") if root == "upload" else set()
+    return DomainItem(
+        domain=name,
+        root=root,
+        law_files=len(law),
+        data_files=len(data),
+        has_audit_reviewed=reviewed.is_file(),
+        has_fixture=fixture_blocker(name) is None,
+        preexisting_files=(
+            sum(1 for f in data if _nfc(os.path.basename(f)) not in mine_data)
+            + sum(1 for f in law if _nfc(f) not in mine_law)
+        ),
+    )
 
 
 @router.get("/domains", response_model=List[DomainItem])
-async def list_domains():
-    """업로드 대상 도메인 목록. 업로드 API 는 전부 domain 이 필수다.
+async def list_domains(
+    root: str = Query(
+        "all",
+        description=(
+            "어느 루트를 볼 것인가 — `all`(기본) · `upload` · `preset`. "
+            "🔴 기본이 `all` 인 이유: 화면1 프리셋 카드가 **이 엔드포인트 하나**로 "
+            "목록을 만든다. 좁히면 프리셋 경로가 통째로 빈다"
+        ),
+    ),
+):
+    """도메인 목록. 업로드 API 는 전부 domain 이 필수다.
+
+    🔴 **루트가 둘이다**(2026-08-14). 업로드는 `datasets/user_input/<도메인>` 에 쌓이고
+       프리셋(배포 원본)은 `datasets/<도메인>` 에 있다. 같은 이름이어도 **다른 폴더**다 —
+       그래서 각 행에 `root` 를 같이 준다. 프리셋 행은 **목록에만** 있다: 업로드도 삭제도
+       그 루트에 닿지 않는다(`_dirs` 는 `USER_INPUT_ROOT` 만 본다).
+       이름이 겹치면 **업로드 쪽만** 내보낸다 — 업로드 화면이 보는 폴더가 그쪽이고,
+       프리셋 개수를 거기 얹으면 「내가 올린 파일」로 읽힌다(2026-08-13 삭제 사고).
 
     `has_fixture` 는 **러너 자신의 사전검사**로 판정한다
     (`pipeline_runner.fixture_blocker` → `build_commands` → `_load_fixture`).
     여기서 `Path(f"{name}_FIX").is_dir()` 같은 자체 판정식을 쓰면 안 된다 —
     실제 조건은 폴더가 아니라 **파일 둘**이라, 폴더만 보면 "가능" 이라 답해놓고
     실행이 400 으로 죽는다(프런트가 카드 단계에서 막지 못한다).
+    ⚠ 픽스처(`<도메인>_FIX`)는 프리셋 루트에 있고 **행의 root 와 무관하다** —
+      업로드 도메인이 우연히 같은 이름이면 `has_fixture: true` 가 될 수 있다.
 
     막힌 **이유**는 응답에 넣지 않는다. 이유 문자열에 저장소 절대경로가 들어가는데,
     `GET /pipeline/runs/{id}/log` 는 그 경로를 `<repo>` 로 마스킹해서 내보낸다 —
     한쪽만 원문으로 내보내면 마스킹이 무의미해진다.
     """
-    out = []
-    for name in _known_domains():
-        p = domain_paths(name)
-        law = [
-            f
-            for f in os.listdir(p["law"])
-            if os.path.splitext(f)[1].lower() in LAW_EXTENSIONS
-            and not _is_extract_cache(f)
-        ] if os.path.isdir(p["law"]) else []
-        data = list_dataset_files(p["data"]) if os.path.isdir(p["data"]) else []
-        reviewed = (
-            Path(str(DOMAIN_ROOT))
-            / "step1_output"
-            / f"{name}_audit_result_reviewed.json"
+    if root not in ("all", "upload", "preset"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"root 는 all·upload·preset 중 하나여야 합니다: {root!r}",
         )
-        out.append(
-            DomainItem(
-                domain=name,
-                law_files=len(law),
-                data_files=len(data),
-                has_audit_reviewed=reviewed.is_file(),
-                has_fixture=fixture_blocker(name) is None,
-            )
-        )
+
+    uploads = _known_domains()
+    out: List[DomainItem] = []
+    if root in ("all", "upload"):
+        out += [_domain_item(n, user_domain_paths(n), "upload") for n in uploads]
+    if root in ("all", "preset"):
+        seen = set(uploads) if root == "all" else set()
+        out += [
+            _domain_item(n, domain_paths(str(Path(str(DOMAIN_ROOT)) / n)), "preset")
+            for n in _preset_domains()
+            if n not in seen
+        ]
     return out
+
+
+# ── 초기화 버튼 — 이 도메인을 통째로 지운다 ────────────────────────────────
+@router.delete("/domains/{domain}")
+async def reset_domain(
+    domain: str,
+    redis: aioredis.Redis = Depends(get_redis),
+):
+    """업로드 도메인 폴더를 **통째로** 지운다(data·law·원장 전부).
+
+    자동 정리(24시간)를 기다리지 않고 지금 비우는 경로다 — 지우는 것도 판정 기준도
+    `user_input_pruner` 와 **같다**. 여기서 따로 짜면 손으로 누른 삭제와 자동 삭제가
+    다른 것을 남긴다.
+
+    🔴 프리셋(`datasets/흡연`)에는 닿지 않는다. 이 라우터가 보는 루트는
+       `datasets/user_input/` 뿐이라 **경로상 불가능**하다 — 문지기가 아니라 자리다.
+    🔴 파일보다 **벡터 청크를 먼저** 지운다. 순서가 반대면 「파일은 없는데 검색에는
+       잡히는」 상태가 남고, 폴더가 없어져 자동 정리의 계획에도 안 뜬다.
+       청크 삭제가 실패하면 폴더도 안 지우고 **500** 이다 — 반쯤 지우고 200 을 주면
+       그 도메인의 조문이 같은 시설을 쓰는 **다른 실행의 토론에 계속 인용된다**.
+    """
+    if not domain or Path(domain).name != domain or domain in (".", ".."):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"도메인 이름이 잘못됐습니다: {domain!r}",
+        )
+    folder = Path(str(USER_INPUT_ROOT)) / domain
+    if not folder.is_dir():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"업로드 도메인이 없습니다: {domain} · 현재 도메인: {_known_domains()}",
+        )
+
+    # 돌고 있는 run 의 입력을 발밑에서 지우지 않는다. 판정은 정리기와 **같은 함수**다.
+    live, _ = user_input_pruner._run_facts(domain)
+    if live:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"'{domain}' 으로 진행 중인 run 이 있습니다"
+                f"(queued·running·awaiting_hitl). "
+                f"끝나거나 취소된 뒤에 다시 시도하세요 — "
+                f"지금 지우면 그 run 이 읽는 입력이 사라집니다."
+            ),
+        )
+
+    files = [f for f in folder.rglob("*") if f.is_file()]
+    total = 0
+    for f in files:
+        try:
+            total += f.stat().st_size
+        except OSError:
+            pass
+
+    try:
+        chunks = user_input_pruner.drop_vector_chunks(domain)
+    except Exception as e:
+        logger.exception(f"[upload] {domain} 벡터 청크 삭제 실패 — 폴더도 남깁니다")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                f"'{domain}' 의 벡터 청크를 지우지 못해 아무것도 지우지 않았습니다: {e}"
+            ),
+        )
+    try:
+        shutil.rmtree(folder)
+    except OSError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                f"'{domain}' 폴더를 지우지 못했습니다: {e} "
+                f"(벡터 청크 {chunks}개는 이미 지워졌습니다 — 다시 올려야 검색됩니다)"
+            ),
+        )
+
+    # Redis 색인은 여기서 **즉시** 지운다. 자동 정리는 TTL 에 맡기지만, 사람이 초기화를
+    # 누른 뒤 목록에 이름이 남아 있으면 「안 지워졌다」로 읽힌다.
+    redis_removed = bool(await redis.delete(_REDIS_KEY.format(domain=domain)))
+
+    logger.info(
+        f"[upload] 도메인 초기화: {folder} ({total / 2**20:.1f} MB · {len(files)}파일 · "
+        f"청크 {chunks}개)"
+    )
+    return {
+        "status": "success",
+        "domain": domain,
+        "files_removed": len(files),
+        "bytes_removed": total,
+        "vector_chunks_removed": chunks,
+        "redis_index_removed": redis_removed,
+    }
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -313,6 +678,12 @@ class RegulationItem(BaseModel):
     size: int
     text_ready: bool = Field(..., description="텍스트 추출이 끝나 STEP1 이 읽을 수 있는가")
     chunks_in_vector_db: int
+    source: str = Field(
+        "preexisting", description="upload = 이 도메인에 업로드한 것 · preexisting = 배포 원본"
+    )
+    deletable: bool = Field(
+        False, description="False 면 삭제에 force=true 가 필요하다(배포 원본)"
+    )
 
 
 @router.get("/regulations", response_model=List[RegulationItem])
@@ -328,25 +699,33 @@ async def list_regulations(domain: str = Query(..., description="도메인 (예:
     except Exception as e:  # 벡터 DB 가 죽어도 파일 목록은 줄 수 있다
         logger.warning(f"[upload] 청크 수 조회 실패: {e}")
 
+    ledger_law = _ledger_names(domain, "law")
     items = []
-    for name in sorted(os.listdir(law_dir)):
-        if _is_extract_cache(name):
+    for raw in sorted(os.listdir(law_dir)):
+        if _is_extract_cache(raw):
             continue
-        path = law_dir / name
+        path = law_dir / raw
         if not path.is_file():
             continue
-        if os.path.splitext(name)[1].lower() not in LAW_EXTENSIONS:
+        if os.path.splitext(raw)[1].lower() not in LAW_EXTENSIONS:
             continue
+        # 🔴 밖으로 나가는 이름은 **NFC** 다. 프런트가 이 이름을 그대로 DELETE 에
+        #    되돌려주는데, 디스크 원문(옛 NFD)을 주면 화면에는 같아 보이는 두 이름이
+        #    돌아다닌다. 디스크를 만질 때는 `_disk_match` 가 원문을 되찾는다.
+        name = _nfc(raw)
         ready = (
-            os.path.splitext(name)[1].lower() in TEXT_EXT
-            or (law_dir / (name + ".txt")).is_file()
+            os.path.splitext(raw)[1].lower() in TEXT_EXT
+            or _disk_match(law_dir, raw + ".txt") is not None
         )
         items.append(
             RegulationItem(
                 filename=name,
                 size=path.stat().st_size,
+                # 청크 메타(`upload_filename`)는 적재 시점 표기라 갈릴 수 있다.
+                chunks_in_vector_db=counts.get(raw) or counts.get(name) or 0,
                 text_ready=ready,
-                chunks_in_vector_db=counts.get(name, 0),
+                source="upload" if name in ledger_law else "preexisting",
+                deletable=name in ledger_law,
             )
         )
     return items
@@ -425,11 +804,24 @@ async def upload_regulation(
                 ),
             )
 
+        # 🔴 같은 파일인데 **표기만 다른 것**(옛 NFD 이름)이 이미 있을 수 있다.
+        #    그냥 저장하면 목록에 두 줄이 되고, 한쪽을 지워도 다른 쪽이 남는다.
+        #    새 이름은 NFC 로 쓰되 옛 표기는 이 자리에서 걷는다(`_nfc` 주석).
+        twin = _disk_match(law_dir, name)
         dest = law_dir / name
-        replaced = dest.exists()
+        replaced = twin is not None
         size, sha = await _save_stream(up, dest)
 
         warnings: List[str] = []
+        if twin is not None and twin.name != name:
+            twin.unlink()
+            twin_cache = _disk_match(law_dir, twin.name + ".txt")
+            if twin_cache is not None:
+                twin_cache.unlink()
+            warnings.append(
+                "같은 파일이 옛 표기(자모 분리, NFD)로 있어 함께 정리했습니다 — "
+                "화면에는 같은 이름으로 보이지만 저장은 둘이었습니다."
+            )
 
         # ── 텍스트 확보: 정본 추출기(gam2_doc_extract)가 <원본>.txt 를 옆에 만든다.
         #    STEP1 `load_ordinance()` 가 그 .txt 를 글롭하므로 여기서 만들어두면
@@ -459,6 +851,7 @@ async def upload_regulation(
             "ingested": False,
             "warnings": warnings,
         }
+        _ledger_mark(domain, "law", name, {"uploaded_at": now, "sha256": sha, "size": size})
 
         if text:
             # ── 조문 구조 점검 (LLM 0회). 파일이 '읽혔다' 와 '쓸모가 있다' 는 다르다.
@@ -500,6 +893,14 @@ async def upload_regulation(
                     domain=domain,
                     upload_filename=name,
                 )
+                if twin is not None and twin.name != name:
+                    # 옛 표기로 적재된 청크도 걷는다 — 파일만 지우고 두면 같은 조문이
+                    # 두 번 인용된다(`delete_statute_chunks` 를 둔 이유와 같다).
+                    removed += await asyncio.to_thread(
+                        vector_db.delete_statute_chunks,
+                        domain=domain,
+                        upload_filename=twin.name,
+                    )
                 entry["deleted_old_chunks"] = removed
 
                 if chunks:
@@ -549,27 +950,37 @@ async def upload_regulation(
 
 @router.delete("/regulations/{filename}")
 async def delete_regulation(
-    filename: str, domain: str = Query(..., description="도메인 (예: 흡연)")
+    filename: str,
+    domain: str = Query(..., description="도메인 (예: 흡연)"),
+    force: bool = Query(False, description="배포 원본까지 지운다. 되돌릴 수 없다."),
 ):
     """조례 파일 + 추출 캐시 + 그 파일에서 나온 벡터 청크를 함께 지운다.
 
     셋 중 하나만 지우면 남은 쪽이 계속 검색에 잡힌다.
+
+    🔴 업로드 원장에 없는 파일(= 배포 원본)은 `force=true` 없이는 **409** 다.
     """
     paths = _dirs(domain)
     law_dir = Path(paths["law"])
     name = _safe_name(urllib.parse.unquote(filename))
-    target = law_dir / name
+    # 이름은 NFC 로 비교하고 **디스크에 있는 그 이름**을 지운다(`_disk_match` 주석).
+    target = _disk_match(law_dir, name)
 
-    if not target.is_file():
+    if target is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"'{domain}' 에 조례 파일이 없습니다: {name}",
         )
 
+    _guard_preexisting(domain, "law", name, force)   # 지우기 **전에** 막는다
     target.unlink()
-    cache = law_dir / (name + ".txt")
+    _ledger_unmark(domain, "law", name)
+    # 🔴 추출 캐시는 **원본 이름 그대로** 뒤에 `.txt` 를 붙인 것이라, 원본이 NFD 면
+    #    캐시도 NFD 다. NFC 이름으로만 찾으면 캐시가 남아 조례를 지워도 본문이
+    #    계속 검색에 잡힌다 — 벡터 청크와 같은 이유다.
+    cache = _disk_match(law_dir, name + ".txt") or _disk_match(law_dir, target.name + ".txt")
     cache_removed = False
-    if cache.is_file():
+    if cache is not None:
         cache.unlink()
         cache_removed = True
 
@@ -669,9 +1080,18 @@ async def upload_data(
                 ),
             )
 
+        # 🔴 같은 파일인데 **표기만 다른 것**(옛 NFD 이름)이 이미 있을 수 있다.
+        #    그냥 저장하면 목록에 두 줄이 되고 `dataset_id` 도 하나 더 매겨진다 —
+        #    감리가 같은 데이터를 두 번 보게 된다(`_nfc` 주석).
+        twin = _disk_match(data_dir, name)
         dest = data_dir / name
-        replaced = dest.exists()
+        replaced = twin is not None
         size, sha = await _save_stream(up, dest)
+        old_encoding_removed = False
+        if twin is not None and twin.name != name:
+            twin.unlink()
+            await redis.hdel(_REDIS_KEY.format(domain=domain), twin.name)
+            old_encoding_removed = True
 
         meta = {
             "filename": name,
@@ -681,10 +1101,14 @@ async def upload_data(
             "sha256": sha,
             "is_dataset": ext in DATA_EXTENSIONS,  # 부속(.dbf 등)은 dataset 이 아니다
             "replaced": replaced,
+            # 「덮어썼다」와 「옛 표기를 걷었다」는 다른 사실이다 — 접으면 목록에서
+            # 한 줄이 왜 사라졌는지 설명할 데가 없다(원칙 4).
+            "old_encoding_removed": old_encoding_removed,
             "uploaded_at": now,
             "path": str(dest),
         }
         await _redis_put(redis, domain, name, meta)
+        _ledger_mark(domain, "data", name, meta)   # 디스크에도 남긴다 — Redis 는 걷힌다
         reports.append(meta)
 
     after = _dataset_map(str(data_dir))
@@ -744,17 +1168,25 @@ async def list_data(
         except json.JSONDecodeError:
             cached[name] = {}
 
+    # 🔴 키를 **NFC 로 맞춰서** 잡는다. 디스크 이름·Redis 필드·원장 키가 각각 적힌
+    #    시점에 따라 NFD 일 수 있는데, 원문끼리 비교하면 같은 파일이 서로 남남이 된다:
+    #    색인이 `stale` 로 지워지고, 내가 올린 파일이 배포 원본으로 보인다(`_nfc` 주석).
     on_disk = {
-        p.name: p
+        _nfc(p.name): p
         for p in data_dir.iterdir()
         if p.is_file() and os.path.splitext(p.name)[1].lower() in DATA_UPLOAD_EXTENSIONS
     }
-    dataset_map = _dataset_map(str(data_dir))
+    dataset_map = {k: _nfc(v) for k, v in _dataset_map(str(data_dir)).items()}
     by_name = {v: k for k, v in dataset_map.items()}
+    ledger_data = {_nfc(k): v for k, v in (_ledger_read(domain).get("data") or {}).items()}
 
-    stale = [n for n in cached if n not in on_disk]
-    if stale:
-        await redis.hdel(key, *stale)
+    stale = [n for n in cached if _nfc(n) not in on_disk]
+    # 옛 표기로 적힌 색인 필드는 걷는다 — 아래에서 NFC 이름으로 다시 쓰므로,
+    # 안 걷으면 한 파일이 색인에 두 줄로 남고 다음 조회에서 `stale` 로 오인된다.
+    legacy = [n for n in cached if n not in stale and _nfc(n) != n]
+    if stale or legacy:
+        await redis.hdel(key, *stale, *legacy)
+    cached = {_nfc(n): m for n, m in cached.items() if n not in stale}
 
     items = []
     for name, p in sorted(on_disk.items()):
@@ -771,13 +1203,19 @@ async def list_data(
                 "path": str(p),
             }
         )
-        if "sha256" not in m:
-            # 업로드를 거치지 않고 폴더에 직접 놓인 파일. 해시는 "모른다" 로 둔다.
-            m["sha256"] = None
-            m["uploaded_at"] = None
-            m["source"] = "preexisting"
-        else:
+        # 🔴 `source` 판정은 **디스크 원장**이 정본이다. Redis 색인의 sha256 유무로
+        #    판정하면 TTL 이 지난 순간 내가 올린 파일이 「폴더에 있던 것」이 되고,
+        #    삭제 문지기도 같이 뒤집힌다. 원장에 있으면 업로드, 없으면 배포 원본.
+        if name in ledger_data:
             m["source"] = "upload"
+            m.setdefault("sha256", ledger_data[name].get("sha256"))
+            m.setdefault("uploaded_at", ledger_data[name].get("uploaded_at"))
+        else:
+            m["sha256"] = m.get("sha256")
+            m["uploaded_at"] = m.get("uploaded_at")
+            m["source"] = "preexisting"
+        # 화면이 삭제 버튼을 띄울지 정하는 값. 규칙을 프런트가 다시 구현하지 않게 **값으로** 준다.
+        m["deletable"] = m["source"] == "upload"
         items.append(m)
         await _redis_put(redis, domain, name, m)
 
@@ -788,6 +1226,8 @@ async def list_data(
         "dataset_map": dataset_map,
         "redis_key": key,
         "redis_stale_removed": stale,
+        # 「없어진 파일이라 걷었다」와 「표기만 옛것이라 다시 적었다」는 다른 사실이다.
+        "redis_legacy_encoding_rewritten": legacy,
         "files": items,
     }
 
@@ -796,24 +1236,35 @@ async def list_data(
 async def delete_data(
     filename: str,
     domain: str = Query(..., description="도메인 (예: 흡연)"),
+    force: bool = Query(False, description="배포 원본까지 지운다. 되돌릴 수 없다."),
     redis: aioredis.Redis = Depends(get_redis),
 ):
-    """데이터 파일 삭제. 남은 파일의 dataset_id 가 어떻게 바뀌는지 같이 알린다."""
+    """데이터 파일 삭제. 남은 파일의 dataset_id 가 어떻게 바뀌는지 같이 알린다.
+
+    🔴 업로드 원장에 없는 파일(= 배포 원본)은 `force=true` 없이는 **409** 다.
+       이 문지기가 없던 시절 `datasets/흡연/data` 가 화면의 삭제 버튼으로
+       통째로 날아갔다(2026-08-13).
+    """
     paths = _dirs(domain)
     data_dir = Path(paths["data"])
     name = _safe_name(urllib.parse.unquote(filename))
-    target = data_dir / name
+    # 이름은 NFC 로 비교하고 **디스크에 있는 그 이름**을 지운다(`_disk_match` 주석).
+    target = _disk_match(data_dir, name)
 
-    if not target.is_file():
+    if target is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"'{domain}' 에 데이터 파일이 없습니다: {name}",
         )
 
+    _guard_preexisting(domain, "data", name, force)   # 지우기 **전에** 막는다
     before = _dataset_map(str(data_dir))
     target.unlink()
+    _ledger_unmark(domain, "data", name)
     after = _dataset_map(str(data_dir))
-    await redis.hdel(_REDIS_KEY.format(domain=domain), name)
+    # 색인은 두 표기를 같이 지운다 — 옛 항목이 NFD 로 적혀 있으면 NFC 로만 지울 때
+    # 남아서 「없는 파일」이 계속 조회된다.
+    await redis.hdel(_REDIS_KEY.format(domain=domain), name, target.name)
 
     renumbered = [
         {"dataset_id": did, "before": before.get(did), "after": after[did]}

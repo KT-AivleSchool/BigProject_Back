@@ -176,12 +176,17 @@ def _print_weight_table(inds, slider, conflicts=None) -> None:
 # ── 값의 출처 라벨 ────────────────────────────────────────────────────
 #   STEP1 감리가 이미 쓰는 어휘(`human_confirmed`, gam2_audit_judgment_test.py:697)에
 #   맞춘다. 같은 뜻을 단계마다 다른 이름으로 남기면 대조할 때 걸린다.
-SRC_RADIUS = {"human": "human_confirmed", "fixture": "fixture", "cli": "cli_fixed"}
-SRC_WEIGHT = {"human": "human_confirmed", "fixture": "fixture", "cli": "cli"}
+SRC_RADIUS = {"human": "human_confirmed", "fixture": "fixture", "cli": "cli_fixed",
+              "llm": "llm"}
+SRC_WEIGHT = {"human": "human_confirmed", "fixture": "fixture", "cli": "cli",
+              "llm": "llm"}
 #   사람이 정한 값으로 볼 출처.
 #     human_confirmed = HITL 게이트에서 사람이 확정 · hitl = 대화형 루프에서 숫자 수정
 #     cli_fixed·cli   = 사람이 명령줄에 직접 지정
 #   `fixture`(픽스처 재생)·`llm`(모델 제안)·`none`(반경 없는 admin 지표)은 사람이 아니다.
+#   🔴 `llm` 은 「고속 자동 분석」(게이트 자동승인)이 쓴다 — 게이트를 **띄우긴 했고**
+#      그 자리에 AI 제안값을 그대로 넣은 실행이다. `human` 으로 적으면 사람이 본 적 없는
+#      값이 「사람이 확정함」으로 남는다(원칙 4). HUMAN_SRC 에 넣지 않는 것이 요점이다.
 HUMAN_SRC = {"human_confirmed", "hitl", "cli_fixed", "cli"}
 
 
@@ -271,10 +276,11 @@ def main():
     #   호출자가 인자를 빠뜨리면 **사람이 확정했다**로 조용히 샜다. 실제로 그렇게 샜다 —
     #   `runs/r_20260805_017` 이 옛 러너에서 나와 `value_source: "cli"` 로 찍혔다.
     #   추측하려면 안전한 쪽으로 해야 하는데 하필 가장 위험한 쪽이 기본값이었다(원칙 1).
-    ap.add_argument("--value-source", choices=["human", "fixture", "cli"], default=None,
+    ap.add_argument("--value-source", choices=["human", "fixture", "cli", "llm"],
+                    default=None,
                     help="--radius/--weight 값의 출처. 고정값을 주면 **필수**다. "
                          "human=사람이 HITL 게이트에서 확정 · fixture=픽스처 재생(사람 개입 0) · "
-                         "cli=명령줄에서 직접 지정")
+                         "cli=명령줄에서 직접 지정 · llm=게이트를 띄웠으나 AI 제안값을 자동승인")
     args = ap.parse_args()
 
     # 고정값을 넘겼으면 그 출처를 반드시 선언하게 한다. 무거운 로드 전에 즉시 죽는다.
@@ -284,6 +290,7 @@ def main():
         raise SystemExit(
             "--radius/--weight 를 지정했으면 --value-source 로 그 값의 출처를 선언하세요.\n"
             "  human=HITL 게이트에서 사람이 확정 · fixture=픽스처 재생 · cli=명령줄 직접 지정\n"
+            "  llm=게이트 자동승인(AI 제안값 그대로)\n"
             "  🔴 이 프로세스는 값만 봐서는 출처를 알 수 없습니다. 추측하면 산출물이 거짓말합니다.")
 
     # 사람이 실제로 프롬프트를 보고 승인했는가(엔터=승인도 확정이다).

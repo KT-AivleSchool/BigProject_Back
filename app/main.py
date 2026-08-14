@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -118,7 +120,29 @@ async def lifespan(app: FastAPI):
 
     await run_pruner.prune_on_boot_hook()
 
+    # 🔴 사용자 업로드(`datasets/user_input/<도메인>`) 정리는 **부팅 1회가 아니라 주기**다.
+    #    위 두 정리기는 답이 부팅 시점에 고정이지만(`started_at < _SERVER_BOOT`),
+    #    「마지막 사용 후 24시간」은 서버가 떠 있는 동안 계속 바뀐다 — 부팅 때만 돌면
+    #    오래 떠 있는 서버에서 영원히 안 지워진다.
+    from app.services import user_input_pruner
+
+    _ui_task = None
+    if user_input_pruner.sweep_enabled():
+        _ui_task = asyncio.create_task(user_input_pruner.sweep_loop())
+        logger.info(
+            "🧽 [UserInput] 업로드 자동 정리 시작 (TTL %d시간 · %d초마다).",
+            user_input_pruner.ttl_hours(), user_input_pruner.sweep_interval_sec(),
+        )
+    else:
+        logger.info("🧽 [UserInput] OMNISITE_USER_INPUT_SWEEP 가 꺼져 있어 건너뛴다.")
+
     yield
+
+    # 종료 시 취소 — 안 걷으면 shutdown 이 여기서 매달린다.
+    if _ui_task is not None:
+        _ui_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await _ui_task
 
     logger.info("🛑 [Shutdown] Server shutting down... Cleaning up connection pools.")
     try:

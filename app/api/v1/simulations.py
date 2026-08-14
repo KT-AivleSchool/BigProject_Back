@@ -385,15 +385,23 @@ async def run_debate_and_publish(
                                     text = parts[1].strip() if len(parts) == 2 else msg
 
                                     # Extract metrics from evaluator node_state
+                                    # 🔴 못 읽은 값을 0.0/"MEDIUM" 으로 채우지 않는다.
+                                    #    0.0 은 「완전 평행선」이라는 **정상 판정**과
+                                    #    화면에서 구분이 안 된다(원칙 4). null 을 보내면
+                                    #    프런트가 직전 값을 유지한다(hearing/page.tsx).
+                                    _evals = node_state.get("evaluations") or {}
+                                    _pro = _evals.get("pro_acceptance")
+                                    _con = _evals.get("con_acceptance")
                                     metrics = {
-                                        "pro_acc": node_state.get(
-                                            "evaluations", {}
-                                        ).get("pro_acceptance", 0.0),
-                                        "con_acc": node_state.get(
-                                            "evaluations", {}
-                                        ).get("con_acceptance", 0.0),
-                                        "css_pro": node_state.get("css_pro", "MEDIUM"),
-                                        "css_con": node_state.get("css_con", "MEDIUM"),
+                                        "pro_acc": float(_pro)
+                                        if isinstance(_pro, (int, float))
+                                        else None,
+                                        "con_acc": float(_con)
+                                        if isinstance(_con, (int, float))
+                                        else None,
+                                        "css_pro": node_state.get("css_pro"),
+                                        "css_con": node_state.get("css_con"),
+                                        "eval_error": _evals.get("eval_error"),
                                     }
 
                                     await pubsub_manager.publish_debate_message(
@@ -1080,6 +1088,22 @@ async def stream_ai_discussion(
     headers = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Credentials": "true",
+        # 🔴 `Cache-Control` 만 손으로 적는다. 위 주석대로 `X-Accel-Buffering` 은
+        #    라이브러리가 무조건 덮어쓰지만(직접 대입), `Cache-Control` 은
+        #    **`setdefault`** 라(`sse.py:53`) 여기서 준 값이 그대로 살아남는다 —
+        #    안 주면 `no-store` 가 된다. 두 줄의 운명이 다르므로 같이 묶지 말 것.
+        #
+        #    왜 `no-transform` 인가 — `X-Accel-Buffering` 은 **nginx 만 아는 낱말**이라
+        #    중간에 있는 게 nginx 가 아니면 한 글자도 안 읽는다. 우리 개발 환경이
+        #    그렇다: Next dev 서버(`compress` 기본 true)가 프록시 응답을 gzip 으로
+        #    다시 감싸는데, 그 압축기는 청크마다 flush 하지 않아 **스트림 전체를
+        #    끝까지 모았다가 한 번에** 내보낸다. 실측(2026-08-13): 파이썬으로
+        #    같은 경로를 재면 청크가 시간에 퍼져 오는데(끝 1초 1.5%), 브라우저로
+        #    재면 **100% 가 마지막 순간에** 온다(encoded 7,262B ↔ decoded
+        #    142,520B). 차이는 하나 — 파이썬은 `Accept-Encoding` 을 안 보낸다.
+        #    `no-transform` 은 RFC 9111 의 「이 응답을 변형하지 마라」이고
+        #    nginx·CDN·`compression` 미들웨어가 공통으로 읽는다.
+        "Cache-Control": "no-cache, no-transform",
     }
     return EventSourceResponse(event_generator(), headers=headers)
 
