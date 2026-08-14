@@ -247,6 +247,20 @@ python app\tools\check_cancel_run.py                 :: 실행 취소 `DELETE /r
                                                      ::    `_ACTIVE` 를 건드린다
 python app\tools\check_upload_api.py                 :: 업로드 API 25항목 (in-process TestClient)
                                                      :: [--no-ingest] 벡터 적재·검색 제외 → 16항목·LLM 0회
+python app\tools\check_upload_nfc.py                 :: 업로드 파일명 NFC 정규화 41항목
+                                                     :: (임시 DATA_ROOT + 인메모리 Redis · 도커·LLM 0회)
+                                                     :: 🔴 묻는 것은 「NFC 로 저장되나」가 **아니다** —
+                                                     ::    그건 항등식이다. **옛 NFD 이름이 남아 손이
+                                                     ::    안 닿는 자리가 생기나**다. 그래서 전 항목이
+                                                     ::    NFD 파일을 **먼저 디스크에 깔고** 시작한다
+                                                     :: 🔴 §4 는 원장 키를 NFD 로 **위조**한다(이 변경
+                                                     ::    전에 적힌 원장 모양). 여기서 갈리면 내가 올린
+                                                     ::    파일이 배포 원본으로 보여 삭제가 409 로 막힌다
+                                                     :: 🔴 §6 은 404 와 500 을 **가른다** — 404 면 NFD
+                                                     ::    실물을 못 찾은 것이고 500 은 지운 뒤 벡터 DB
+                                                     ::    부재로 막힌 것이다. 접으면 뭐가 고장인지 모른다
+                                                     :: ⚠ TTL·evict 는 못 본다(스텁 Redis) — 그건
+                                                     ::    check_upload_api.py 몫이다
 python app\tools\check_hearings.py                   :: 화면5 — /simulations/hearings 60항목
                                                      :: (실 DB 읽기. 행 수가 아니라 관계를 본다)
                                                      :: 🔴 404 `detail` 의 **다섯 갈래**를 같이 본다.

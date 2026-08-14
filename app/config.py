@@ -170,7 +170,25 @@ DATA_ROOT = Path(os.environ.get("OMNISITE_DATA_ROOT", str(BASE_DIR / "datasets")
 
 # 도메인 폴더(흡연·EV·재활용)의 부모. domain_paths() 가 여기서 도메인을 찾는다.
 #   예: datasets/흡연/{data,law,fixture}
-DOMAIN_ROOT = DATA_ROOT
+#
+# 🔴 `OMNISITE_DOMAIN_ROOT` 는 **`OMNISITE_DATA_ROOT` 와 다른 축이다.** 이것만 바꾸면
+#    도메인 폴더의 부모만 옮겨가고 `region_data`·`step*_output`·`search_cache`·조례는
+#    `DATA_ROOT` 아래 그대로 남는다(그 넷은 도메인 무관 공용이다). `DATA_ROOT` 를
+#    옮기면 지오코딩·지목 캐시가 갈라져 LLM 호출이 폭증한다 — 그래서 안 쓴다.
+#    러너가 `mode:"full"` 자식에게만 이 값을 `USER_INPUT_ROOT` 로 넘긴다(아래 참조).
+DOMAIN_ROOT = Path(os.environ.get("OMNISITE_DOMAIN_ROOT", str(DATA_ROOT)))
+
+# 🔴 사용자 업로드 도메인의 부모 — **프리셋과 루트를 가른다**(2026-08-14, 사람 결정).
+#    예전엔 화면1 업로드가 프리셋과 **같은 폴더**(`datasets/흡연/data`)에 썼다. 그래서
+#    ⓐ 업로드 화면에 프리셋 도메인이 목록으로 뜨고 ⓑ 그 배포 원본에 삭제 버튼이
+#    붙었다 — 실제로 `datasets/흡연/data`(536MB)가 통째로 지워졌다(2026-08-13 제보).
+#    문지기(`_guard_preexisting`)로 막을 수도 있지만 그건 **막는 것이지 가르는 것이
+#    아니다.** 루트가 다르면 사용자가 「흡연」으로 올려도 프리셋에 닿을 길이 없다.
+#    ⚠ 프리셋 원본을 `<도메인>_FIX/` 로 옮기는 안은 접었다 — 거기엔 기준선
+#      (`기준값.json`·`reviewed.json`·`산출물/`)만 있고 원본이 없다. 536MB 를 넣으면
+#      회귀 기준선 폴더에 입력이 섞인다.
+USER_INPUT_SUBDIR = "user_input"
+USER_INPUT_ROOT = DATA_ROOT / USER_INPUT_SUBDIR
 
 # 공용 지역 데이터(경계 SHP 등) — 도메인 무관 공유
 REGION_DATA_DIR = DATA_ROOT / "region_data"
@@ -383,7 +401,23 @@ def resolve_domain_dir(domain: str) -> str:
     p = Path(domain)
     if p.exists():  # 전체/상대 경로를 직접 준 경우
         return str(p)
+    # 🔴 아직 없는 **절대경로**도 그대로 쓴다. 안 그러면 `DOMAIN_ROOT / <절대경로>` 가
+    #    되는데, pathlib 은 이 경우 오른쪽을 그대로 돌려주므로 **우연히 맞는다** —
+    #    상대경로를 주면 `datasets/datasets/...` 로 조용히 어긋난다. 우연에 기대지 않는다.
+    #    (첫 업로드 때 폴더가 아직 없는 `USER_INPUT_ROOT/<도메인>` 이 이 경로로 온다)
+    if p.is_absolute():
+        return str(p)
     return str(DOMAIN_ROOT / domain)  # datasets/흡연
+
+
+def user_domain_paths(domain: str) -> dict:
+    """**사용자 업로드** 도메인의 경로 묶음. 프리셋과 루트가 다르다.
+
+    서버 프로세스의 `DOMAIN_ROOT` 는 `datasets` 이므로 `domain_paths("흡연")` 은
+    프리셋을 가리킨다. 업로드 경로는 그 값에 의존하면 안 되고 여기서 명시한다 —
+    `mode:"full"` 자식만 env 로 루트가 바뀌기 때문이다(비대칭이 정상이다).
+    """
+    return domain_paths(str(USER_INPUT_ROOT / domain))
 
 
 def domain_paths(domain_dir: str) -> dict:
