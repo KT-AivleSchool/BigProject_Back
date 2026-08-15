@@ -168,10 +168,24 @@ app = FastAPI(
 )
 
 # CORS 미들웨어 설정 (프론트엔드 Next.js 개발 서버 연동 허용)
+#
+# 🔴 `allow_origins=["*"]` 와 `allow_credentials=True` 는 **같이 못 쓴다**(CORS 명세).
+#    브라우저는 `Access-Control-Allow-Origin: *` 응답을 자격증명 요청에서 거절한다.
+#    그런데 Starlette 은 이 조합에서 요청에 Cookie 헤더가 있으면 **`*` 대신 요청 Origin 을
+#    그대로 되비춘다** — 즉 `allow_origins=["*"]` 가 「아무 사이트나 허용」이 된다.
+#    쿠키를 쓰기 시작하는 순간 임의 오리진이 인증된 응답을 읽는다.
+#
+# ⚠ 그래서 끄는 게 아니라, **애초에 켤 이유가 없어서** 끈다(2026-08-15, 프런트 합의).
+#    우리 인증은 `Authorization: Bearer` **헤더**다 — 저장소 전체에 `set_cookie` 0곳이고
+#    프런트도 `credentials: "include"` 를 안 쓴다(그쪽 코드에 쓰지 말라는 주석까지 있다).
+#    끄면 `*` 가 명세상 합법이 되고, 지금 동작은 한 글자도 안 바뀐다.
+#
+# 🔴 되돌리려면(쿠키 인증으로 가려면) `allow_origins` 에 **실제 오리진을 나열**해야 한다.
+#    `["*"]` 인 채로 이 값만 True 로 바꾸면 위 되비추기가 그대로 되살아난다.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # 개발 단계 전체 허용, 상용 시 도메인 타이트닝 설정 가능
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
