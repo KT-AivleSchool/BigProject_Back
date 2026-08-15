@@ -2,11 +2,16 @@ name: Deploy Backend to EC2
 
 on:
   push:
+    # 🔴 배포 브랜치는 **back_deploy 하나**다(2026-08-15, 사람 결정).
+    #    예전엔 main·main2·develop·develop2 도 여기 있었는데, 아래 배포 스크립트가
+    #    `git checkout -B ${{ github.ref_name }} origin/${{ github.ref_name }}` 로
+    #    **서버의 체크아웃 브랜치를 밀어붙인다** — 즉 누가 develop2 에 푸시하면
+    #    운영 서버가 back_deploy 를 떠나 develop2 로 넘어가고, 우리가 민 것이
+    #    통째로 사라진다. 트리거가 다섯이면 배포 브랜치도 사실상 다섯이다.
+    #    (main2 는 원격에 아예 없었다 — 있는 줄 알고 적힌 이름이다.)
+    # ⚠ GitHub 은 **푸시된 브랜치에 있는 워크플로 파일**을 쓴다. 그래서 이 변경은
+    #    main·develop·develop2 에 **같이 들어가기 전까지** 그쪽 푸시를 못 막는다.
     branches:
-      - main
-      - main2
-      - develop
-      - develop2
       - back_deploy
   workflow_dispatch:
 
