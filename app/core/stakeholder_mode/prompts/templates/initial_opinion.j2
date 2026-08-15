@@ -1,0 +1,21 @@
+[토론 주제]
+{{ topic }}
+
+[후보지 데이터]
+{% for site in candidate_sites %}
+- 후보지 ID: {{ site.candidate_id }}
+  명칭: {{ site.name }}
+  속성 정보: {{ site.attributes | tojson }}
+{% endfor %}
+
+[관련 조례 Context]
+{% for ord in ordinance_contexts %}
+- 조례 ID: {{ ord.chunk_id }}
+  조례명: {{ ord.ordinance_name }}
+  내용: {{ ord.content }}
+{% endfor %}
+
+위 데이터를 바탕으로 {{ persona.display_name }}의 입장에서 평가를 수행하세요:
+1. 각 후보지별 100점 만점 평가 점수(`candidate_scores`: candidate_id, score, reasoning)를 산출하세요.
+2. 당신의 절대 수용 불가 조건(Non-negotiable)에 위배되는 후보지가 있다면 `non_negotiable_violations` 항목에 기록하세요.
+3. 가장 선호하는 후보지(또는 보류), 주요 기대효과(benefits), 우려사항(concerns), 필요 요구조건(required_conditions), 근거 ID(evidence_ids)를 작성하세요.

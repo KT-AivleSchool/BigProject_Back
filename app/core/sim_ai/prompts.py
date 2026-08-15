@@ -1,36 +1,72 @@
-# [동현님 & 민영님 담당] AI 페르소나별 시스템 프롬프트 정의서
+# [동현님 담당] AI 페르소나별 시스템 프롬프트 정의서 (템플릿 기반 및 완전 일반화 버전)
+# 다목적 플랫폼(OmniSite) 철학에 따라, topic 기반의 하드코딩된 분기를 제거하고
+# RAG 컨텍스트와 AI 감리 판단에 의해 동적으로 프롬프트가 적용되도록 일반화(Pro/Con/Gov) 하였습니다.
 
-# 1. 갈등 민감도(CSS) 강도에 따른 동적 지시어 프롬프트 템플릿
+from app.core.jinja2_env import render_template
+
+# 글로벌 프롬프트 로드 (변수가 없는 정적 텍스트들은 미리 로드)
+PRO_ROLE_PROMPT = render_template("default/pro_role.txt")
+CON_ROLE_PROMPT = render_template("default/con_role.txt")
+GOV_ROLE_PROMPT = render_template("default/gov_role.txt")
+EVALUATOR_PROMPT = render_template("default/evaluator.txt")
+REPORTER_PROMPT = render_template("default/reporter.txt")
+
 CSS_PROMPT_TEMPLATE = {
-    "HIGH": """
-    갈등 민감도 점수가 매우 높은 [상] 상태입니다.
-    주민들의 불안 및 반발 강도를 극대화하여 표현해 주시고, 
-    소방법/도로법 등의 법규적 문제를 아주 깐깐하고 방어적인 논조로 지적해 주세요.
-    """,
-    "MEDIUM": """
-    갈등 민감도가 [중] 상태입니다.
-    소음 감쇄, 시설 규격 조정 등의 상호 보상 및 조건부 대안이 제시될 경우 
-    타협을 고려하는 열린 논조를 띄어 주세요.
-    """,
-    "LOW": """
-    갈등 민감도가 [하] 상태입니다.
-    상호 협조와 민관 상생 방안에 집중하여, 최대한 빠르게 합의안을 도출할 수 있도록 
-    긍정적이고 협상 친화적인 논조로 의견을 제시해 주세요.
-    """
+    "HIGH": render_template("default/css_high.txt"),
+    "MEDIUM": render_template("default/css_medium.txt"),
+    "LOW": render_template("default/css_low.txt"),
 }
 
-# 2. 페르소나 노드별 시스템 프롬프트
-RESIDENT_SYSTEM_PROMPT = """
-당신은 스마트시티 인프라 건립을 반대하는 인근 아파트 주민대표 에이전트입니다.
-RAG로 제공되는 관련 조례 법률 조항을 활용하여 입지 문제점을 논리적으로 반박해야 합니다.
-"""
 
-MERCHANT_SYSTEM_PROMPT = """
-당신은 스마트시티 인프라 건립을 적극 찬성하는 골목상권 상인협회 대표 에이전트입니다.
-유동인구 증가와 상권 활성화, 지역 편의성 개선을 논거로 주민대표의 반대를 설득해야 합니다.
-"""
+def build_prompt(
+    role_prompt: str,
+    candidate_jibun: str,
+    candidate_lat: float,
+    candidate_lng: float,
+    facility_type: str,
+    intensity_level: str,
+    ahp_weights: dict,
+    rag_context: str,
+    audit_context: str,
+    discussion_history: str,
+    css_level: str,
+) -> str:
+    """
+    공통 시스템 프롬프트 + CSS + 역할 프롬프트를 하나의 최종 Prompt로 생성합니다.
+    """
+    # AHP 가중치를 문자열로 예쁘게 포맷팅
+    ahp_str = (
+        "\n".join([f"  * {k}: {v}" for k, v in ahp_weights.items()])
+        if ahp_weights
+        else "  * 데이터 없음"
+    )
 
-OFFICER_SYSTEM_PROMPT = """
-당신은 양측의 이권 갈등을 조율하고 성공적인 스마트시티 인프라 건립을 달성하려는 용산구청 도시관리과 주무관입니다.
-양측의 타당한 근거를 취합하여 상호 합의 가능한 중재 조건안(차폐막 설치, 소유주 보상 등)을 도출해야 합니다.
+    # 1. 공통 시스템 프롬프트 템플릿 로드 (호출될 때마다 동적으로 변수 주입)
+    rendered_common = render_template(
+        "default/common_system_prompt.txt",
+        context={
+            "candidate_jibun": candidate_jibun,
+            "candidate_lat": candidate_lat,
+            "candidate_lng": candidate_lng,
+            "facility_type": facility_type,
+            "intensity_level": intensity_level,
+            "ahp_weights": ahp_str,
+            "rag_context": rag_context,
+            "audit_context": audit_context,
+            "discussion_history": discussion_history,
+        },
+    )
+
+    # 2. 갈등 민감도별 행동 지침 템플릿 로드
+    css_instruction = CSS_PROMPT_TEMPLATE.get(
+        css_level.upper(), CSS_PROMPT_TEMPLATE["HIGH"]
+    )
+
+    # 최종 프롬프트 빌드
+    return f"""
+{rendered_common}
+
+{css_instruction}
+
+{role_prompt}
 """

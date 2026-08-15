@@ -1,0 +1,89 @@
+name: Deploy Backend to EC2
+
+on:
+  push:
+    # 🔴 배포 브랜치는 **back_deploy 하나**다(2026-08-15, 사람 결정).
+    #    아래 배포 스크립트가
+    #    `git checkout -B ${{ github.ref_name }} origin/${{ github.ref_name }}` 로
+    #    **운영 서버의 체크아웃 브랜치를 밀어붙인다.** 그래서 트리거에 이름이 있으면
+    #    그 브랜치는 「CI 가 도는 브랜치」가 아니라 **배포 브랜치**다 —
+    #    develop2 에 PR 을 머지하면 운영 서버가 back_deploy 를 떠나 develop2 로
+    #    넘어가고, 배포돼 있던 것이 통째로 사라진다.
+    #    실제로 2026-08-12 하루에 PR 머지(#241~#256)로 **13번** 배포가 돌았고
+    #    그중 7번이 실패다. 머지는 곧 push 라 「PR 필수」 보호로는 안 막힌다.
+    # ⚠ main·develop 은 애초에 이 파일이 **없어서** 배포된 적이 없다(2026-08-15 실측).
+    #    목록에 이름만 있던 것이다. main2 는 원격에 존재하지도 않는다.
+    branches:
+      - back_deploy
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to EC2 using SSH
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          envs: GITHUB_TOKEN
+          command_timeout: 30m
+          script: |
+            set -e # 명령어 중 하나라도 실패하면 즉시 중단하고 실패 처리합니다.
+            
+            cd ~/BigProject_Back
+            
+            # 1. Fetch the exact triggered branch code (HTTPS 인증 방식으로 변경하여 권한 오류 방지)
+            git remote set-url origin https://x-access-token:$GITHUB_TOKEN@github.com/${{ github.repository }}.git
+            git fetch origin ${{ github.ref_name }}
+            
+            # 브랜치가 없으면 만들고, 있으면 해당 리모트 브랜치로 강제 초기화
+            git checkout -B ${{ github.ref_name }} origin/${{ github.ref_name }}
+            
+            # 2. Add SECRET_KEY to .env if missing (Fix for 502 Bad Gateway)
+            if [ -f .env ]; then
+              if ! grep -q "^SECRET_KEY=" .env; then
+                echo "SECRET_KEY=$(openssl rand -hex 32)" >> .env
+                echo "🔑 Auto-generated SECRET_KEY in .env"
+              fi
+            else
+              echo "SECRET_KEY=$(openssl rand -hex 32)" > .env
+              echo "🔑 Created .env with auto-generated SECRET_KEY"
+            fi
+            
+            # 3. Add Swap Memory to prevent OOM (Out Of Memory) during docker build
+            if [ ! -f /swapfile ]; then
+              echo "Creating 2GB swap file to prevent OOM..."
+              sudo fallocate -l 2G /swapfile
+              sudo chmod 600 /swapfile
+              sudo mkswap /swapfile
+              sudo swapon /swapfile
+              echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+              echo "Swap file created successfully."
+            else
+              echo "Swap file already exists."
+            fi
+            
+            # 3. Build and restart containers (runs detached)
+            # 이전 컨테이너가 남아있으면 구버전 docker-compose에서 ContainerConfig 에러가 발생하므로 먼저 down 시킵니다.
+            docker-compose down || true
+            
+            # 구버전 docker-compose의 이미지 태그 충돌(AlreadyExists) 버그를 방지하기 위해 기존 이미지를 삭제합니다.
+            docker rmi bigproject_back_api:latest || true
+            docker rmi bigproject_back_db:latest || true
+            
+            docker-compose up -d --build
+            
+            # 4. DB 스키마 동기화 (run_records 등 신규 추가된 테이블 자동 생성)
+            docker-compose run --rm api python scripts/create_missing_tables.py --yes || true
+            
+            # 5. Clean up dangling images to save space
+            docker image prune -f

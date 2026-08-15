@@ -1,0 +1,36 @@
+{
+  "project_id": "PROJECT-001",
+  "topic": "공공시설 후보지 선정",
+  "candidate_sites": [
+    {
+      "candidate_id": "SITE-A",
+      "name": "후보지 A",
+      "attributes": {
+        "accessibility": 80,
+        "estimated_cost": 4500000000,
+        "residential_proximity": "높음"
+      }
+    },
+    {
+      "candidate_id": "SITE-B",
+      "name": "후보지 B",
+      "attributes": {
+        "accessibility": 65,
+        "estimated_cost": 3200000000,
+        "residential_proximity": "낮음"
+      }
+    }
+  ],
+  "ordinance_contexts": [
+    {
+      "chunk_id": "ORD-001",
+      "ordinance_name": "도시계획 조례 제5조",
+      "content": "공공시설 입지 선정 시 주거지역과의 소음 방지 거리를 최소 100m 이상 확보해야 하며, 대중교통 연계성을 고려해야 한다."
+    },
+    {
+      "chunk_id": "ORD-002",
+      "ordinance_name": "골목상권 활성화 조례 제3조",
+      "content": "지역 상권 활성화를 위해 유동인구가 집중되는 후보지에 우선 지원 및 입지를 권장할 수 있다."
+    }
+  ]
+}

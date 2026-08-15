@@ -1,0 +1,196 @@
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    Float,
+    Numeric,
+    DateTime,
+    ForeignKey,
+    Text,
+    UniqueConstraint,
+)
+from sqlalchemy.dialects.postgresql import JSONB
+from geoalchemy2 import Geometry
+from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
+from app.db.session import Base
+
+
+class Parcel(Base):
+    """STEP4(MCLP)가 고른 **후보점**. 필지가 아니라 점이다.
+
+    ⚠ 클래스명이 `Parcel` 이라 필지로 읽히지만 테이블은 `booth_candidates` 다.
+      필지는 `candidate_lands`(6,524행)이고 여기는 후보점이다 — **id 공간이 다르다.**
+      `land_id` 가 그 점이 놓인 필지를 가리킨다.
+    """
+
+    __tablename__ = "booth_candidates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    # 🔴 `ForeignKey("candidate_lands.id")` 를 쓰지 않는다. SQLAlchemy 는 FK 대상을
+    #    **DB 가 아니라 `Base.metadata`** 에서 찾는데 `candidate_lands` 는 ORM 에
+    #    선언이 없다. 선언하면 이 매퍼를 쓰는 모든 flush 가 `NoReferencedTableError`
+    #    로 죽는다(2026-08-09 실측 — STEP5 저장이 5분 돌고 나서 이걸로 실패했다).
+    #    제약 자체는 실 DB 에 걸려 있다(booth_candidates_land_id_fkey).
+    land_id = Column(Integer, nullable=True)
+    score = Column(Float, nullable=True)
+    geom = Column(Geometry(geometry_type="POINT", srid=4326), nullable=True)
+
+    # ── STEP4 Top-N 적재분 (2026-08-10) ─────────────────────────────────
+    # 🔴 아래 6개는 `schema_step4_topn.sql` 가산분이다. **적용 안 하면 이 매퍼를 쓰는
+    #    모든 SELECT 가 `UndefinedColumnError` 로 죽는다**(화면5 토론 포함).
+    #    선언만 빼두면 조용히 안 보이는 대신 Top-N 조회가 불가능해진다 — 터지는 쪽을 택한다.
+    #    적용: docker exec -i omnisite-postgres-db psql -U postgres -d omnisite < schema_step4_topn.sql
+    domain = Column(String(50), nullable=True)  # STEP4 를 돌린 도메인 (흡연 / 재활용 …)
+    run_id = Column(String(64), nullable=True)  # runs/<id> 또는 step4_output(정본)
+    facility_type = Column(String(100), nullable=True)  # audit_rules.target_facility 와 같은 어휘
+    pnu = Column(String(19), nullable=True)
+    jibun = Column(String(100), nullable=True)
+    # 🔴 topN.geojson 의 `순위`. **1 이 최상위**다 (점수 내림차순이 아니다).
+    rank = Column(Integer, nullable=True)
+
+    simulations = relationship(
+        "HearingResultA", back_populates="parcel", cascade="all, delete-orphan"
+    )
+
+
+class HearingResultA(Base):
+    """화면5 **A 대립 토론**(찬성/반대/정부 + evaluator) 1회 = 1행.
+
+    🔴 2026-08-12 개명. 예전 이름은 클래스 `ConflictSimulation` · 테이블
+       `conflict_simulations` 였다. B 엔진 결과가 `hearing_results_b` 라 **두 엔진의
+       결과 테이블이 이름만으로는 짝으로 안 읽혔다** — 옛 로그·외부 문서에 남은
+       그 이름은 **같은 테이블**이다. 소문자로 둔 이유: 대문자가 섞이면 SQLAlchemy 가
+       `__tablename__` 을 따옴표로 감싸고 생 SQL 은 소문자로 접혀 **테이블이 둘로
+       갈린다**(둘 다 만들어지고 안 터진다).
+
+    🔴 2026-08-09 재선언(B안). 이전 선언은 `parcel_id`·`facility_type`·`result_json`
+       세 컬럼뿐이었고 **실 DB 에 그 셋이 다 없어서** INSERT 가 100% 실패했다
+       (`UndefinedColumnError`). 실 DB 쪽 컬럼(`css_score`·`css_vector`·시나리오 3칸)은
+       반대로 ORM 에 없어서 채울 수도 없었다. 이제 **양쪽을 다 선언**한다.
+
+    ⚠ 시나리오 3칸 중 채워지는 건 **매 실행 1칸**이다. 엔진(`reporter_node`)이
+      수용도 점수로 A/B/C 중 하나만 확정한다(`app/templates/default/reporter.txt`).
+      나머지 둘이 NULL 인 것은 결함이 아니라 사실이다 — 안 나온 걸 지어내지 않는다(원칙 4).
+    """
+
+    __tablename__ = "hearing_result_a"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # ── 대상 ────────────────────────────────────────────────────────────
+    # 🔴 NOT NULL 이다(2026-08-11, 사람 승인). 이 테이블에는 `run_id` 컬럼이 없어
+    #    run 에 닿는 경로가 `parcel_id → booth_candidates.run_id` **조인 하나뿐**이다.
+    #    NULL 이면 어느 실행의 어느 입지를 토론했는지 알 방법이 사라진다.
+    #    쓰기 경로는 `resolve_candidate`(실패 시 CandidateNotFound)를 통과해야만
+    #    저장하므로 실제로 NULL 이 될 수 없었지만, 그건 코드의 약속이지 DB 의
+    #    보증이 아니었다 — 손입력·다른 도구로 들어오면 막을 게 없다.
+    parcel_id = Column(
+        Integer,
+        ForeignKey("booth_candidates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # 위 후보점이 놓인 필지. booth_candidates.land_id 에서 유도해 채운다.
+    # parcel_id 의 다른 이름이 아니다 — 가리키는 테이블이 다르다.
+    # `ForeignKey` 를 안 붙이는 이유는 `Parcel.land_id` 쪽 주석과 같다.
+    candidate_land_id = Column(Integer, nullable=True)
+    facility_type = Column(String(100), nullable=True)
+
+    # ── 산출물 원본 ─────────────────────────────────────────────────────
+    # 아래 개별 컬럼은 전부 여기서 뽑아낸 사본이다. 원본을 통째로 남기는 이유는
+    # 컬럼으로 안 쪼갠 값(candidate_lat/lng·intensity_level·timestamp 등)이
+    # 있어서다. 쪼갠 것만 남기면 나머지는 조용히 사라진다.
+    result_json = Column(JSONB, nullable=True)
+
+    # ── 갈등 민감도 ─────────────────────────────────────────────────────
+    css_score = Column(Numeric, nullable=False)  # conflict_sensitivity_score
+    css_vector = Column(JSONB, nullable=False)  # ahp_weights (요인별 가중치)
+
+    # ── 시나리오 (매 실행 1칸만 채워진다) ───────────────────────────────
+    optimal_scenario = Column(Text, nullable=True)  # A 원만한 타결
+    normal_scenario = Column(Text, nullable=True)  # B 조건부 타결
+    worst_scenario = Column(Text, nullable=True)  # C 협상 결렬
+    # 엔진이 내는 final_acceptance_score 는 「수용도」라 의미가 다르다.
+    # 이름이 비슷하다고 넣으면 없는 값을 지어내는 것이다(원칙 5).
+    confidence_score = Column(Numeric, nullable=True)
+
+    created_at = Column(DateTime, server_default=func.current_timestamp())
+
+    parcel = relationship("Parcel", back_populates="simulations")
+    debate_logs = relationship(
+        "DebateLog",
+        back_populates="simulation",
+        cascade="all, delete-orphan",
+        order_by="DebateLog.turn_index",
+    )
+
+
+class DebateLog(Base):
+    """공청회 토론 발화 1건 = 1행.
+
+    `HearingResultA.result_json["debate_logs"]` 와 같은 내용이지만 행으로도
+    남긴다. 통짜 JSON 으로는 발화 단위 조회·인용·보고서 재구성이 안 된다.
+    STEP1~4 주요 산출물을 테이블로 둔 것과 같은 방침이다.
+
+    실측 규모: 1회 토론 = 완성 발화 14행. SSE 패킷 1,434건은 토큰 단위 조각이라
+    여기 오는 게 아니다.
+    """
+
+    __tablename__ = "debate_logs"
+    __table_args__ = (
+        UniqueConstraint("simulation_id", "turn_index", name="uq_debate_logs_turn"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    simulation_id = Column(
+        Integer,
+        ForeignKey("hearing_result_a.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    turn_index = Column(Integer, nullable=False)  # 0-base 발화 순서
+    sender = Column(String(50), nullable=False)  # 찬성 / 반대 / 정부 / 시스템
+    message = Column(Text, nullable=False)
+    created_at = Column(DateTime, server_default=func.current_timestamp())
+
+    simulation = relationship("HearingResultA", back_populates="debate_logs")
+
+
+class HearingResultB(Base):
+    """화면5 **B 다인 토론**(이해관계자 페르소나) 1회 = 1행.
+
+    A 대립 토론은 `HearingResultA` 이다. **합치지 않았다** — 이유는
+    `schema_step5_b.sql` 머리말에 있다(요약: `css_score`·`css_vector` 가 NOT NULL 인데
+    B 는 그 지표를 안 내고, 완화하면 A 의 반쪽 결과도 저장 가능해진다).
+
+    🔴 `run_id` 컬럼이 없다. A 와 같은 경로로 잇는다 —
+       `parcel_id → booth_candidates.id → booth_candidates.run_id`.
+       복사해 두면 후보점 쪽과 어긋날 수 있고, 어긋나도 안 터진다.
+    """
+
+    __tablename__ = "hearing_result_b"
+
+    id = Column(Integer, primary_key=True, index=True)
+    parcel_id = Column(
+        Integer,
+        ForeignKey("booth_candidates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    facility_type = Column(String(100), nullable=True)
+    topic = Column(Text, nullable=True)
+    purpose = Column(Text, nullable=True)
+
+    # 사람이 확정한 페르소나 배열(HITL 결과). 누가 토론했는지 없이는 결과를
+    # 읽을 수 없어서 result_json 안에 묻지 않고 밖으로 뺀다.
+    personas = Column(JSONB, nullable=False)
+
+    # 🔴 통짜다. B 산출물 모양이 아직 움직인다(B 담당자 소유) — 지금 컬럼으로
+    #    쪼개면 그쪽이 키를 하나 바꿀 때마다 조용히 NULL 이 된다.
+    result_json = Column(JSONB, nullable=False)
+
+    # 완성 발화 수. 0 이면 "한 마디도 안 나온 토론" 이고, 행이 없는 것과 다르다.
+    message_count = Column(Integer, nullable=False, default=0)
+
+    created_at = Column(DateTime, server_default=func.current_timestamp())

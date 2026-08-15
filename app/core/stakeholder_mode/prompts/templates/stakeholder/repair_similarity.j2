@@ -1,0 +1,19 @@
+다음 이해관계자 프로필들이 지나치게 유사하거나 요구사항을 충족하지 못했습니다.
+
+[문제]
+{% for issue in diversity_issues %}
+- [{{ issue.severity|upper }}] {{ issue.field }}: {{ issue.message }} (관련 페르소나: {{ issue.persona_ids | join(', ') }})
+{% endfor %}
+
+[현재 프로필]
+{{ profiles }}
+
+각 이해관계자의 실제 역할과 손익이 드러나도록 문제 필드만 수정하여 프로필 전체 목록을 다시 작성하십시오.
+
+수정 규칙:
+- 기존 근거와 사용자 수정값은 유지하십시오.
+- 각 페르소나의 primary_goal은 역할에 맞게 구분하십시오.
+- expected_benefits와 expected_costs를 반드시 구체적으로 포함하십시오.
+- 각 페르소나의 unique_questions는 서로 다른 의사결정 질문이어야 합니다.
+- 모든 페르소나를 건강·안전 중심으로 통일하지 마십시오.
+- 조례를 모든 페르소나의 핵심 논거로 사용하지 마십시오.

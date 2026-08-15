@@ -3,7 +3,7 @@ uvicorn[standard]>=0.22.0
 pydantic-settings>=2.0.0
 sqlalchemy>=2.0.0
 geoalchemy2>=0.12.0
-psycopg2-binary>=2.9.0
+psycopg[binary]>=3.1.0
 httpx>=0.24.0
 sse-starlette>=1.6.0
 pyjwt[crypto]>=2.7.0
@@ -14,7 +14,44 @@ email-validator>=2.0.0
 
 # AI/RAG & LangGraph Engine
 langgraph>=0.1.0
+langchain>=0.1.0
 langchain-openai>=0.1.0
 langchain-community>=0.0.20
+langchain-text-splitters>=0.0.1
 pgvector>=0.2.0
 asyncpg>=0.28.0
+playwright>=1.40.0
+pymupdf>=1.23.0
+jinja2>=3.1.2
+python-docx>=1.1.0
+olefile>=0.46
+redis>=4.2.0
+
+# GAM2 Pipeline Dependencies
+requests>=2.30.0
+pandas>=2.0.0
+numpy>=2.0.0
+geopandas>=0.13.0
+shapely>=2.0.0
+
+# Machine Learning & RAG Re-ranking
+xgboost>=2.0.0
+scikit-learn>=1.3.0
+# 🔴 아래 둘은 "있으면 좋은 것"이 아니라 **없으면 값이 달라지는 것**이다.
+#    안 터지고 조용히 다른 결과를 낸다 — 회귀 방어가 여기서 샌다(2026-08-04 추가).
+#  pyarrow : parquet 저장 엔진. 없으면 CSV 로 떨어지고 앞자리 0 이 유실된다
+#            ("00001"→1) → 조인 파괴. CLAUDE.md 함정 표의 그 항목이다
+#  pyogrio : geopandas 의 GPKG/SHP IO 엔진. 없으면 fiona 로 떨어져 동작·속도가 갈린다
+pyarrow>=15.0.0
+pyogrio>=0.8.0
+
+# HWPX 보고서(PR #224) — 지도 핀 QR 코드 PNG 생성용.
+qrcode>=7.4
+pillow>=10.0.0
+
+# 설치할 때는 constraints 를 같이 건다 — 전이 의존이 위 버전을 밀어올리는 걸 막는다.
+#   pip install -r requirements.txt -c constraints.txt
+# 실제로 sse-starlette 가 starlette 을 0.37.2 → 1.3.1 로 올려 fastapi 0.110.3 을
+# 깨뜨리려 한 적이 있다(2026-08-04). 위 sse-starlette 줄에 상한이 없어서다.
+# 🔴 이 주석 덩이는 PR #224 병합에서 **충돌 없이 조용히 지워졌었다**(2026-08-10).
+#    남의 브랜치가 옛 베이스면 auto-merge 가 우리 방어선을 지운다 — diff 를 볼 것.
