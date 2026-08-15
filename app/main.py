@@ -171,17 +171,23 @@ app = FastAPI(
 #
 # 🔴 `allow_origins=["*"]` 와 `allow_credentials=True` 는 **같이 못 쓴다**(CORS 명세).
 #    브라우저는 `Access-Control-Allow-Origin: *` 응답을 자격증명 요청에서 거절한다.
-#    그런데 Starlette 은 이 조합에서 요청에 Cookie 헤더가 있으면 **`*` 대신 요청 Origin 을
-#    그대로 되비춘다** — 즉 `allow_origins=["*"]` 가 「아무 사이트나 허용」이 된다.
-#    쿠키를 쓰기 시작하는 순간 임의 오리진이 인증된 응답을 읽는다.
 #
 # ⚠ 그래서 끄는 게 아니라, **애초에 켤 이유가 없어서** 끈다(2026-08-15, 프런트 합의).
 #    우리 인증은 `Authorization: Bearer` **헤더**다 — 저장소 전체에 `set_cookie` 0곳이고
 #    프런트도 `credentials: "include"` 를 안 쓴다(그쪽 코드에 쓰지 말라는 주석까지 있다).
 #    끄면 `*` 가 명세상 합법이 되고, 지금 동작은 한 글자도 안 바뀐다.
 #
+# 🔴 **`allow_origins=["*"]` 는 요청에 Cookie 헤더가 있으면 `*` 대신 요청 Origin 을 그대로
+#    되비춘다**(starlette 0.37.2 실측). 이건 `allow_credentials` 와 **무관**하다 — False 로
+#    꺼도 되비추기는 그대로다. 운영 실측: `Origin: https://evil.example` + `Cookie:` →
+#    `access-control-allow-origin: https://evil.example`.
+#    지금 안전한 이유는 되비추기가 없어서가 아니라 **`Access-Control-Allow-Credentials: true`
+#    가 없어서**다. 그게 없으면 브라우저가 자격증명 응답을 스크립트에 안 넘긴다.
+#    ⚠ 「끄면 되비추기가 사라진다」고 적었던 건 틀렸다(2026-08-15 정정) — `credentials=True`
+#    두 행만 재고 세 번째를 추론했다.
+#
 # 🔴 되돌리려면(쿠키 인증으로 가려면) `allow_origins` 에 **실제 오리진을 나열**해야 한다.
-#    `["*"]` 인 채로 이 값만 True 로 바꾸면 위 되비추기가 그대로 되살아난다.
+#    `["*"]` 인 채로 이 값만 True 로 바꾸면 되비추기 + credentials 가 겹쳐 실제로 뚫린다.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # 개발 단계 전체 허용, 상용 시 도메인 타이트닝 설정 가능
