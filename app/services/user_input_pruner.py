@@ -119,11 +119,41 @@ def _last_upload(folder: Path) -> datetime | None:
     return datetime.fromtimestamp(newest)
 
 
+def _reads_user_input(doc: dict) -> bool:
+    """이 run 이 **업로드 루트**를 읽는가. 판별자는 러너 정본(`_domain_root`)을 쓴다.
+
+    🔴 여기서 `mode == "full"` 이라고 직접 적지 않는다. 그 규칙은 러너가 갖고 있고
+       (`pipeline_runner._domain_root`), 사본을 두면 한쪽만 바뀌었을 때 **삭제가
+       조용히 잘못된 run 을 보호한다.** 비교는 문자열이 아니라 **경로**다.
+
+    ⚠ `mode` 가 **없거나 모르는 값**이면 읽는 것으로 친다. 「모른다」를 「안 읽는다」로
+       바꾸면 돌고 있는 run 의 입력을 발밑에서 지운다(원칙 1). 없는 키는 옛 run 의
+       모양이고, 모르는 값은 **모드가 늘었는데 여기를 안 고친** 모양이다 —
+       `_domain_root` 는 `full` 이 아닌 것을 전부 프리셋으로 돌리므로, 그 기본값에
+       기대면 새 업로드 모드가 생기는 순간 조용히 보호가 풀린다.
+    """
+    mode = doc.get("mode")
+    if not isinstance(mode, str) or mode not in R.MODES:
+        return True
+    # 양쪽 다 **러너의** 루트로 잰다. 한쪽만 이 모듈 것을 쓰면 대조기가 루트를
+    # 갈아끼울 때 비교가 조용히 어긋난다 — 그럼 전 항목이 「프리셋」이 된다.
+    return R._domain_root(mode) == Path(str(R.USER_INPUT_ROOT))
+
+
 def _run_facts(domain: str) -> tuple[bool, datetime | None]:
     """`(진행 중인 run 이 있나, 마지막 run 종료 시각)`.
 
     🔴 `R.read_status()` 를 부르지 않는다. 그건 순수 읽기이긴 하지만 `runs/` 전수를
-       도는 자리에서 부르면 산출물 URL 보정까지 매번 돈다 — 여기 필요한 건 두 필드뿐이다.
+       도는 자리에서 부르면 산출물 URL 보정까지 매번 돈다 — 여기 필요한 건 세 필드뿐이다.
+
+    🔴 **이름이 같다고 같은 폴더가 아니다**(2026-08-16 실측으로 드러남). 프리셋
+       (`fixture`·`hitl`)은 `datasets/<도메인>` 을 읽고 업로드(`full`)만
+       `datasets/user_input/<도메인>` 을 읽는다 — `_domain_root` 가 그렇게 가른다.
+       예전엔 `domain` 이름만 맞춰서, **닿지도 못하는 프리셋 run 이 업로드 도메인을
+       보호**했다. 하필 그 run 이 `awaiting_hitl` 이면 스레드가 없어 `reap_orphans`
+       도 못 닫으므로 **영구히** 서 있고, 삭제 API 는 영원히 409, 자동 정리기는
+       영원히 `keep` 이다. 안 터지고 **지워지지 않을 뿐**이라 안 걸린다.
+       (실제 사건: `r_20260814_008` 재활용 `hitl` 하나가 업로드 `재활용` 을 막았다.)
     """
     live = False
     last: datetime | None = None
@@ -139,6 +169,9 @@ def _run_facts(domain: str) -> tuple[bool, datetime | None]:
             live = True
             continue
         if doc.get("domain") != domain:
+            continue
+        if not _reads_user_input(doc):
+            # 이 run 의 입력은 프리셋 루트에 있다. 여기서 지우는 폴더와 무관하다.
             continue
         if doc.get("status") in LIVE_STATUSES:
             live = True
