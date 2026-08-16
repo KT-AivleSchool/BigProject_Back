@@ -1019,6 +1019,30 @@ def _dataset_map(data_dir: str) -> dict[str, str]:
     }
 
 
+def _renumbered(
+    before: dict[str, str], after: dict[str, str]
+) -> list[dict[str, str]]:
+    """**이미 있던 번호가 다른 파일을 가리키게 된 것**만 고른다. 정의는 여기 하나다.
+
+    경고가 막으려는 위험은 「옛 감리·정제 결과가 참조하는 번호가 이제 딴 파일을
+    가리킨다」 하나다. 그래서 판정 기준은 `did in before` 다 — 새로 생긴 번호는
+    옛 결과가 참조할 수 없으니 위험이 없다.
+
+    🔴 예전엔 `before.get(did) != after[did]` 하나로 걸렀다. 빈 도메인 첫 업로드는
+       `before` 가 `{}` 라 `None != "<파일명>"` 이 전건 참이 되어 **신규 배정이
+       전부 「밀림」으로 보고**됐다(2026-08-16 사용자 제보). 업로드 모드의 가장 흔한
+       경로라 거의 매번 떴고, 늘 켜져 있는 경고등은 꺼져 있는 것과 같다 — 진짜
+       밀림까지 같이 넘기게 된다.
+    ⚠ 번호↔파일 대응 자체는 `dataset_map` 이 따로 들고 있다. 여기서 뺀다고
+      사실이 사라지지는 않는다.
+    """
+    return [
+        {"dataset_id": did, "before": before[did], "after": after[did]}
+        for did in sorted(after)
+        if did in before and before[did] != after[did]
+    ]
+
+
 async def _redis_put(redis: aioredis.Redis, domain: str, name: str, meta: dict) -> None:
     """색인 한 필드를 쓰고 **키 TTL 을 갱신한다.**
 
@@ -1043,6 +1067,8 @@ async def upload_data(
        뒤 번호가 전부 밀리고, 이미 돌린 `<도메인>_audit_result_reviewed.json` ·
        정제 캐시의 번호와 어긋난다. 그래서 응답에 **번호 변화(renumbered)** 를 담는다.
        조용히 밀리면 감리 결과가 엉뚱한 파일에 붙는다 — 안 터지고 값만 틀린다.
+       ⚠ **신규 배정은 밀림이 아니다**(`_renumbered` 참고). 지금 배치는 `dataset_map`
+         이 항상 전량 담고 있으므로 `renumbered` 는 위험한 것만 골라 담는다.
 
     Redis 에는 **메타데이터만** 넣는다(파일 본문 아님). 정본은 디스크다.
     """
@@ -1112,11 +1138,7 @@ async def upload_data(
         reports.append(meta)
 
     after = _dataset_map(str(data_dir))
-    renumbered = [
-        {"dataset_id": did, "before": before.get(did), "after": after[did]}
-        for did in sorted(after)
-        if before.get(did) != after[did]
-    ]
+    renumbered = _renumbered(before, after)
 
     # 번호가 밀리면 Redis 색인에도 최신 번호를 반영한다(색인이 사실과 달라지지 않게).
     by_name = {v: k for k, v in after.items()}
@@ -1266,11 +1288,7 @@ async def delete_data(
     # 남아서 「없는 파일」이 계속 조회된다.
     await redis.hdel(_REDIS_KEY.format(domain=domain), name, target.name)
 
-    renumbered = [
-        {"dataset_id": did, "before": before.get(did), "after": after[did]}
-        for did in sorted(after)
-        if before.get(did) != after[did]
-    ]
+    renumbered = _renumbered(before, after)
     return {
         "status": "success",
         "domain": domain,

@@ -53,10 +53,16 @@ def main() -> int:
 
     from fastapi.testclient import TestClient
 
-    from app.config import DOMAIN_ROOT
+    from app.config import DOMAIN_ROOT, USER_INPUT_ROOT
     from app.main import app
 
-    test_root = Path(str(DOMAIN_ROOT)) / TEST_DOMAIN
+    # 🔴 업로드가 쓰는 곳은 **`USER_INPUT_ROOT`**(`datasets/user_input/`)다.
+    #    `DOMAIN_ROOT`(`datasets/`)는 프리셋 자리이고 `_dirs` 는 거기 안 쓴다.
+    #    여기서 루트를 틀리면 뒷정리가 **다른 폴더**를 지워, 잔재가 남은 채로
+    #    다음 실행이 시작된다 — §4 「빈 도메인 첫 업로드」가 빈 도메인이 아니게 되고
+    #    도메인이 이미 있으니 §1 「없는 도메인은 400」도 통과해 버린다.
+    #    안 터지고 **판정만 틀린다**(2026-08-16 실측: NG 5건 중 4건이 이 탓).
+    test_root = Path(str(USER_INPUT_ROOT)) / TEST_DOMAIN
     if test_root.exists():
         shutil.rmtree(test_root)
 
@@ -200,6 +206,14 @@ def main() -> int:
             j.get("dataset_map") == {"01": "a_첫번째.csv", "02": "b_두번째.csv"},
             str(j.get("dataset_map")),
         )
+        # 🔴 빈 도메인 첫 업로드는 **밀린 게 아니다.** 예전엔 `before` 가 `{}` 라
+        #    신규 배정 전건이 renumbered 로 나가 경고가 켜졌다(2026-08-16 제보).
+        #    업로드 모드의 가장 흔한 경로라 거의 매번 떴다.
+        chk(
+            "빈 도메인 첫 업로드는 renumbered 가 아니다",
+            j.get("renumbered") == [] and j.get("warning") is None,
+            f"renumbered={j.get('renumbered')} warning={j.get('warning')!r}",
+        )
 
         r = client.post(
             f"{base}/data",
@@ -207,10 +221,17 @@ def main() -> int:
             files={"files": ("0_먼저.csv", b"c1\n9\n", "text/csv")},
         )
         j = r.json()
+        # 01·02 가 딴 파일을 가리키게 됐다. 03 은 **새 번호**라 옛 결과가 참조할
+        # 수 없으므로 위험이 아니다 — 그래서 3 이 아니라 2 다.
         chk(
             "앞 번호로 끼어들면 renumbered 로 알린다",
-            len(j.get("renumbered", [])) == 3 and j.get("warning"),
-            f"renumbered={len(j.get('renumbered', []))}",
+            len(j.get("renumbered", [])) == 2 and j.get("warning"),
+            f"renumbered={j.get('renumbered')}",
+        )
+        chk(
+            "renumbered 의 before 는 항상 채워져 있다",
+            all(x.get("before") for x in j.get("renumbered", [])),
+            f"renumbered={j.get('renumbered')}",
         )
 
         r = client.get(f"{base}/data", params={"domain": TEST_DOMAIN})
