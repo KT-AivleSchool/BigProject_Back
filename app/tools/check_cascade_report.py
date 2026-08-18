@@ -60,7 +60,14 @@ ZERO = {
 def drive(run_id_in_lines: str) -> R._Proc:
     src = "; ".join(f"print({ln.format(r=run_id_in_lines)!r})" for ln in LINES)
     proc = R._Proc(step_ids=(), argv=[sys.executable, "-c", src])
-    doc = {"run_id": RUN, "domain": "흡연", "steps": [], "artifacts": {}}
+    # 🔴 `mode` 는 이 대조기가 재는 것과 무관하지만 **빠지면 죽는다** —
+    #    `_run_one` 이 `_child_env(run_id, doc["mode"])` 로 자식 DATA_ROOT 를 고른다.
+    #    실제로 그랬다: 2026-08-14(6a0271f)에 그 줄이 생겼는데 여기 손으로 만든 doc 은
+    #    그대로라 **그날부터 13항목이 통째로 KeyError 로 안 돌았다.**
+    #    값은 `fixture` 다 — 자식이 print 만 하므로 무엇을 골라도 결과는 같지만,
+    #    프리셋을 보는 쪽이라 임시 run 폴더에 아무것도 안 만든다.
+    doc = {"run_id": RUN, "domain": "흡연", "mode": R.MODE_FIXTURE,
+           "steps": [], "artifacts": {}}
     R._run_one(RUN, doc, proc, io.StringIO())
     return proc
 

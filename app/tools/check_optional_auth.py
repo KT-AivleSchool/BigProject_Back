@@ -123,9 +123,19 @@ async def main():
             print("       (🔴 start_run 을 가짜로 갈아끼운다. 진짜 run 은 안 돈다)")
             seen: list = []
 
-            def fake_start(domain, mode, user_input=None, topn=None, user_id=None):
+            # 🔴 `**kw` 는 게으름이 아니라 **측정 대상을 고정하는 장치**다.
+            #    여기서 묻는 것은 「`start_run` 이 불렸는가 · user_id 가 무엇인가」뿐이고,
+            #    나머지 인자는 이 대조기의 관심사가 아니다. 시그니처를 그대로 베껴 두면
+            #    러너에 인자가 하나 늘 때마다 **대조기가 TypeError 로 죽는다** —
+            #    실제로 그랬다: `auto_approve` 가 2026-08-14(6a0271f)에 늘었는데 이 파일은
+            #    2026-08-12(97e26b4) 것이라 **그날부터 이 27항목이 통째로 안 돌았다.**
+            #    죽는 대조기는 시끄럽긴 해도 「그 경로가 검증되지 않는다」는 점에선
+            #    가짜 초록불과 같다. 삼키지는 않는다 — 받은 것은 `kw` 로 다 적어둔다.
+            def fake_start(domain, mode, user_input=None, topn=None,
+                           user_id=None, **kw):
                 seen.append(
-                    {"domain": domain, "mode": mode, "user_id": user_id}
+                    {"domain": domain, "mode": mode, "user_id": user_id,
+                     "kw": kw}
                 )
                 return f"fake_{len(seen)}"
 
