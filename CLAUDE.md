@@ -254,6 +254,31 @@ python app\tools\check_cancel_run.py                 :: 실행 취소 `DELETE /r
                                                      :: ⚠ `RUNS_ROOT` 를 임시 폴더로 바꾸고 도메인은
                                                      ::    `취소_대조용` 이다. 안 바꾸면 남의 run 과
                                                      ::    `_ACTIVE` 를 건드린다
+python app\tools\check_runner_pkg_proxy.py           :: 러너 패키지 프록시 23항목
+                                                     :: (DB·LLM·진짜 `runs/` 0회 — 경로를 문자열로만 다룬다)
+                                                     :: 🔴 2026-08-18 `pipeline_runner.py` 2,580행을 12개
+                                                     ::    서브모듈로 가르면서 생긴 **마법 하나**를 지킨다.
+                                                     ::    `from .state import RUNS_ROOT` 는 **값을 복사**하므로
+                                                     ::    `R.RUNS_ROOT = tmp` 가 패키지 attr 만 고치고 서브모듈은
+                                                     ::    옛 값을 계속 본다 — **예외가 안 난다.** 실측(프록시
+                                                     ::    없이): 패키지 attr `/tmp/fake` ↔ `run_dir()`
+                                                     ::    `\real\runs\r_1`. 그 상태로 `check_prune_runs` 는
+                                                     ::    **진짜 .gpkg 를 지우고** `check_run_records_e2e` 의
+                                                     ::    `reap_orphans()` 는 **남이 돌리는 run** 을 닫는다
+                                                     :: 🔴 대조기 9종은 **한 줄도 안 고쳤다**(사람 결정).
+                                                     ::    분할하면서 회귀망을 같이 고치면 「분할이 안전한가」를
+                                                     ::    재는 자와 재어지는 자가 같이 움직인다
+                                                     :: 🔴 §4 「모호하면 터진다」 — 같은 이름을 두 서브모듈이
+                                                     ::    **서로 다른 것**으로 들고 있으면 추측해서 한쪽만
+                                                     ::    고치지 않고 `RuntimeError` 다(원칙 1). 같은 객체를
+                                                     ::    여럿이 들고 있는 건 모호가 아니다 — 전부 고친다
+                                                     :: 🔴 §5 는 서브모듈이 **정의한** 122개가 패키지에서
+                                                     ::    **같은 객체**로 보이는지 + 밖에서 `R.<이름>` 으로
+                                                     ::    부르는 44개가 살아 있는지. 재내보내기를 빠뜨리면
+                                                     ::    라우터·대조기가 `AttributeError` 다
+                                                     :: ⚠ `_SEQ_PATH` 는 import 시점에 굳어 `RUNS_ROOT` 를
+                                                     ::    갈아끼워도 **안 따라온다**. 분할 전부터 그랬다 —
+                                                     ::    「분할이 이걸 바꾸지 않았다」를 재는 항목이다
 python app\tools\check_upload_api.py                 :: 업로드 API (in-process TestClient)
                                                      :: [--no-ingest] 벡터 적재·검색 제외 → **17항목**·LLM 0회
                                                      ::    (2026-08-16 실측 16/17. 전체 실행 개수는 **안 쟀다** —
