@@ -115,7 +115,7 @@ MVP: 용산구 흡연부스 / 2차: 성동구 재활용정거장.
 
 ```
 STEP0  프로파일링          gam2_profile.py
-STEP1  감리 AI + HITL      gam2_audit_judgment_test.py · gam2_audit_ops_catalog.py
+STEP1  감리 AI + HITL      gam2_audit_judgment_test/ (패키지) · gam2_audit_ops_catalog.py
        조례 로드            gam2_doc_extract.py(PDF→txt) · gam2_ordinance_select.py(조문 선별)
        상위법 검색          gam2_ordinance_acquisition.py
 STEP2  정제                gam2_clean_data.py
@@ -305,6 +305,29 @@ python app\tools\check_runner_pkg_proxy.py           :: 러너 패키지 프록�
                                                      :: ⚠ `_SEQ_PATH` 는 import 시점에 굳어 `RUNS_ROOT` 를
                                                      ::    갈아끼워도 **안 따라온다**. 분할 전부터 그랬다 —
                                                      ::    「분할이 이걸 바꾸지 않았다」를 재는 항목이다
+python app\tools\check_audit_pkg_proxy.py            :: 감리 패키지 프록시 22항목
+                                                     :: (DB·LLM 0회 · 도메인 폴더도 안 읽는다)
+                                                     :: 🔴 2026-08-19 `gam2_audit_judgment_test.py` 2,179행을
+                                                     ::    11개 서브모듈로 가르면서 생긴 **같은 마법**을 지킨다.
+                                                     ::    위 러너 것과 원리는 같지만 **손해가 다르다** —
+                                                     ::    여기서 프록시가 죽으면 `check_full_step01.py` §10 이
+                                                     ::    꽂는 스텁 11개가 아무 데도 안 닿아 **진짜 `RealLLM`
+                                                     ::    이 불린다**(그 스텁의 정체는 부르면 터지는
+                                                     ::    `_BoomLLM` 이다). 즉 **돈이 드는 진짜 호출을 하면서
+                                                     ::    122/122 초록불**이 뜬다
+                                                     :: 🔴 §3 이 핵심이다 — 패키지 **안쪽** 호출자도 갈아낀
+                                                     ::    것을 보는가. `harness` 는 `enrich_hitl_flags` 를,
+                                                     ::    `admin_code` 는 `build_fixtures` 를, `hitl` 은
+                                                     ::    `apply_radius_answer` 를 자기 전역으로 들고 있다.
+                                                     ::    attr 만 대조하면 §2 로 통과하므로 `_code_samples`
+                                                     ::    를 **실제로 불러** 스텁이 불렸는지 본다
+                                                     :: 🔴 §5 는 서브모듈이 **정의한** 53개가 패키지에서
+                                                     ::    같은 객체로 보이는지 + 밖에서 부르는 **19개**가
+                                                     ::    살아 있는지. `A.DOMAIN`(gam2_run_pipeline.py:209)은
+                                                     ::    **주석 안**이라 목록에 없다 — 부분문자열로 세면 낀다
+                                                     :: ⚠ 장부(`_SUBMODULES`)는 **10개**이고 `__main__` 은
+                                                     ::    없는 게 맞다(CLI 진입점이라 아무도 그 전역을 안
+                                                     ::    갈아끼운다). 러너 것과 세는 단위가 다르다
 python app\tools\check_upload_api.py                 :: 업로드 API (in-process TestClient)
                                                      :: [--no-ingest] 벡터 적재·검색 제외 → **17항목**·LLM 0회
                                                      ::    (2026-08-16 실측 16/17. 전체 실행 개수는 **안 쟀다** —
@@ -528,7 +551,12 @@ python app\tools\prune_runs.py [--keep N] [--yes]           :: runs/ 의 .gpkg·
 
 :: 파이프라인
 python app\services\gam2_run_pipeline.py <도메인> "<지역> <시설> 부지 선정"
-python app\services\gam2_audit_judgment_test.py hitl <도메인>
+python -m app.services.gam2_audit_judgment_test hitl <도메인>
+                                                 :: 🔴 2026-08-19 패키지로 분할됐다. **스크립트 형태는 못 쓴다**
+                                                 ::    (옛) python app\services\gam2_audit_judgment_test.py hitl …
+                                                 ::    러너는 이 모듈을 subprocess 로 안 부르므로
+                                                 ::    (`pipeline_runner/commands.py` 의 `_svc` 대상 5개에 없다)
+                                                 ::    바뀌는 것은 **사람이 손으로 치는 경로뿐**이다
 python app\services\gam2_clean_data.py <도메인>   :: [--refresh-geocode] 지오코딩 실패분만 재호출
 python app\services\make_parcel_candidates.py <도메인>
 python app\services\run_weight_model.py <도메인> --candidates 후보_지적도필지.gpkg ^
