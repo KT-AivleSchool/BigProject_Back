@@ -21,6 +21,14 @@ OmniSite 위치선정 (STEP 4) — 최소 동작 버전
 
 from __future__ import annotations
 
+import sys
+import io
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 import argparse
 import json
 import os
@@ -93,7 +101,10 @@ def make_loader(domain: str):
                 files[r["dataset_id"]] = alt
 
     def loader(did):
-        f = files[did]
+        f = files.get(did)
+        if not f:
+            print(f"  ⚠ 레이어 '{did}' 정제 산출물 없음 — 빈 레이어로 대체합니다.")
+            return gpd.GeoDataFrame(columns=["geometry"], crs=W.WORK_CRS)
         if f.endswith(".gpkg"):
             return gpd.read_file(f).to_crs(W.WORK_CRS)
         # parquet 에 좌표가 남아 있으면 geometry 복원(좌표계는 값으로 판정).

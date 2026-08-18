@@ -457,8 +457,14 @@ def clean_domain(domain_dir: str, csv_preview: bool = False, prune: bool = True)
         )
     print(f"[대상] 시설='{facility}' 지역='{region}'  데이터셋 {len(results)}개")
 
-    with open(A._DOMAIN["profiles"], encoding="utf-8") as f:
-        profiles = json.load(f)
+    profiles_path = A._DOMAIN["profiles"]
+    if os.path.isfile(profiles_path):
+        with open(profiles_path, encoding="utf-8") as f:
+            profiles = json.load(f)
+    else:
+        from app.services.gam2_profile import profile_folder, save_profiles
+        profiles = profile_folder(data_dir)
+        save_profiles(profiles, profiles_path)
 
     # 🔴 프로파일이 감리 결과의 데이터셋을 **하나도** 안 덮으면 여기서 멈춘다.
     #    `profiles.json` 은 `data/` 의 **사본**이라 원본이 바뀌면 어긋난다(원본을 지웠다

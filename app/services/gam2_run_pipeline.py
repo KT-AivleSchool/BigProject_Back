@@ -21,6 +21,13 @@ profile → real(감리 판정) → search(배제반경 상위법 검색) 을 �
 from __future__ import annotations
 
 import sys
+import io
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 import time
 import traceback
 

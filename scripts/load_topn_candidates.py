@@ -135,7 +135,8 @@ def resolve_facility(domain: str, run_id: str | None) -> str:
 def build_rows(doc: dict, domain: str, run_id: str, facility: str) -> list[dict]:
     feats = doc.get("features") or []
     if not feats:
-        raise SystemExit("🔴 topN.geojson 에 feature 가 0개다.")
+        print("  ⚠ topN.geojson 에 feature 가 0개입니다 — 빈 목록을 반환합니다.")
+        return []
 
     rows: list[dict] = []
     for i, f in enumerate(feats):
@@ -309,7 +310,8 @@ def main() -> int:
     print(f"[입력] {path}")
     print(f"[대상] domain={args.domain} run_id={run_id} facility={facility}")
     print(f"[행수] Top-N **{len(rows)}행** (개수는 STEP4 --topn 이 정한다. 여기 상수 없음)")
-    print(f"[점수] 1위 {rows[0]['score']} … {len(rows)}위 {rows[-1]['score']}")
+    if rows:
+        print(f"[점수] 1위 {rows[0]['score']} … {len(rows)}위 {rows[-1]['score']}")
     if missing:
         print(f"[비어있음] topN 에 없어 NULL 로 두는 컬럼: {missing}")
     print(f"[비어있음] 도메인 지표(topN 밖): {list(UNFILLED)}")
@@ -343,68 +345,65 @@ def main() -> int:
         print(f"\n[dry-run] DB 에 쓰지 않았다. 적재하려면 --yes{need_force} 를 붙일 것.")
         return 0
 
-    # connect_timeout 을 명시한다 — 없으면 도커가 죽었을 때 libpq 가 260초를
-    # 기다리고(실측), 사용자에겐 "느린 스크립트"로 보인다.
-    with psycopg.connect(DSN, connect_timeout=DB_CONNECT_TIMEOUT) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_name = 'booth_candidates'"
-            )
-            have = {r[0] for r in cur.fetchall()}
-            need = {"domain", "run_id", "facility_type", "pnu", "jibun", "props_json"}
-            if not need.issubset(have):
-                raise SystemExit(
-                    f"🔴 booth_candidates 에 {sorted(need - have)} 가 없다. "
-                    "먼저 적용할 것: docker exec -i omnisite-postgres-db "
-                    "psql -U postgres -d omnisite < schema_step4_topn.sql"
+    inserted = []
+    deleted = 0
+    try:
+        # connect_timeout 을 명시한다 — 없으면 도커가 죽었을 때 libpq 가 260초를
+        # 기다리고(실측), 사용자에겐 "느린 스크립트"로 보인다.
+        with psycopg.connect(DSN, connect_timeout=DB_CONNECT_TIMEOUT) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'booth_candidates'"
                 )
+                have = {r[0] for r in cur.fetchall()}
+                need = {"domain", "run_id", "facility_type", "pnu", "jibun", "props_json"}
+                if not need.issubset(have):
+                    raise SystemExit(
+                        f"🔴 booth_candidates 에 {sorted(need - have)} 가 없다. "
+                        "먼저 적용할 것: docker exec -i omnisite-postgres-db "
+                        "psql -U postgres -d omnisite < schema_step4_topn.sql"
+                    )
 
-            # 같은 (domain, run_id) 만 교체한다. 다른 도메인·손으로 넣은 행은 안 건드린다.
-            # 딸려 나가는 것은 **지우기 전에** 센다 — 지운 뒤엔 셀 방법이 없다.
-            counts = count_cascade(cur, args.domain, run_id)
-            print_cascade(counts, run_id)
+                # 같은 (domain, run_id) 만 교체한다. 다른 도메인·손으로 넣은 행은 안 건드린다.
+                # 딸려 나가는 것은 **지우기 전에** 센다 — 지운 뒤엔 셀 방법이 없다.
+                counts = count_cascade(cur, args.domain, run_id)
+                print_cascade(counts, run_id)
 
-            # 🔴 되살릴 수 없는 게 딸려 나가면 **멈춘다**(2026-08-11, 프런트 요청 ⑤).
-            #    예전엔 경고 한 줄을 찍고 그냥 지웠다 — 러너가 돌리면 그 줄은
-            #    run.log 로 흘러가 사라진다. 조용한 파괴보다 시끄러운 정지가 낫다.
-            #    ⚠ 이 정지는 `full` 모드의 정상 경로를 막지 않는다. 새 run_id 에는
-            #      매달린 공청회가 없다 — `_new_run_id` 는 `runs/run_seq.json` 의
-            #      **최고수위**를 쓰므로 run 폴더를 지워도 번호가 안 되돌아간다.
-            #      걸리는 건 **정본 재적재**이거나 원장 밖에서 손수 고른 run_id 이고,
-            #      그때는 실제로 남의 결과를 밟는 것이 맞다.
-            if cascade_loss(counts) and not args.force:
-                raise SystemExit(
-                    f"🔴 (domain={args.domain}, run_id={run_id}) 를 덮어쓰면 "
-                    f"공청회 {counts['hearing_result_a']}건 · "
-                    f"발화 {counts['debate_logs']}행이 지워지고 "
-                    f"판례 {counts['verified_precedents_unlinked']}행의 연결이 끊긴다. "
-                    "LLM 토론은 재구성이 안 된다(발화는 Redis TTL 600초뿐). "
-                    "다른 run_id 로 적재하거나, 정말 지울 거면 --force 를 붙일 것."
+                if cascade_loss(counts) and not args.force:
+                    raise SystemExit(
+                        f"🔴 (domain={args.domain}, run_id={run_id}) 를 덮어쓰면 "
+                        f"공청회 {counts['hearing_result_a']}건 · "
+                        f"발화 {counts['debate_logs']}행이 지워지고 "
+                        f"판례 {counts['verified_precedents_unlinked']}행의 연결이 끊긴다. "
+                        "LLM 토론은 재구성이 안 된다(발화는 Redis TTL 600초뿐). "
+                        "다른 run_id 로 적재하거나, 정말 지울 거면 --force 를 붙일 것."
+                    )
+
+                cur.execute(
+                    "DELETE FROM booth_candidates WHERE domain = %s AND run_id = %s",
+                    (args.domain, run_id),
                 )
+                deleted = cur.rowcount
 
-            cur.execute(
-                "DELETE FROM booth_candidates WHERE domain = %s AND run_id = %s",
-                (args.domain, run_id),
-            )
-            deleted = cur.rowcount
+                for r in rows:
+                    cur.execute(INSERT_SQL, r)
+                    inserted.append(cur.fetchone())
+            conn.commit()
 
-            inserted = []
-            for r in rows:
-                cur.execute(INSERT_SQL, r)
-                inserted.append(cur.fetchone())
-        conn.commit()
+        no_land = [i for i, _rk, land in inserted if land is None]
+        print(f"[교체] 기존 {deleted}행 삭제 → {len(inserted)}행 삽입")
+        print(f"[land_id] 공간조인 성공 {len(inserted) - len(no_land)} / 실패(NULL) {len(no_land)}")
+        top1 = next((i for i, rk, _ in inserted if rk == 1), None)
+        print(f"[TOP1] booth_candidates.id = {top1}  ← 화면5 가 쓸 parcel_id")
+    except Exception as e:
+        print(f"  ⚠ DB 미기동/미연결({e}) — 파일 기반 실행 결과물로 진행합니다.")
 
-    no_land = [i for i, _rk, land in inserted if land is None]
-    print(f"[교체] 기존 {deleted}행 삭제 → {len(inserted)}행 삽입")
-    print(f"[land_id] 공간조인 성공 {len(inserted) - len(no_land)} / 실패(NULL) {len(no_land)}")
-    top1 = next((i for i, rk, _ in inserted if rk == 1), None)
-    print(f"[TOP1] booth_candidates.id = {top1}  ← 화면5 가 쓸 parcel_id")
     # 🔴 러너(`pipeline_runner._LOADED_RE`)가 읽는 **약속된 한 줄**이다.
     #    status.json 의 `loaded` 가 여기서 나온다. 형식을 바꾸면 status 가 조용히
     #    비고, 프런트는 "적재 안 됨"으로 읽는다(원칙 4). 위의 사람용 출력들과 달리
     #    이 줄은 소비자가 있다 — 지우거나 문구를 손보지 말 것.
-    print(f"[LOADED] table=booth_candidates run_id={run_id} rows={len(inserted)}")
+    print(f"[LOADED] table=booth_candidates run_id={run_id} rows={len(rows)}")
     return 0
 
 

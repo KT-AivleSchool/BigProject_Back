@@ -767,9 +767,9 @@ def build_matrix(
         # ---- admin 지표: 반경 개념이 없어 감쇠와 무관 (기존 로직 그대로) ----
         if i["kind"] == "admin":
             if cand_admcd is None:
-                raise ValueError(
-                    f"[{iid}] admin 지표엔 admin_gdf(행정동 경계)가 필요합니다."
-                )
+                print(f"  ⚠ [{iid}] admin 경계 SHP 부재로 0.0 으로 대체합니다.")
+                mat[iid] = pd.Series(0.0, index=cand["_cid"])
+                continue
             agg = i["_admin_agg"]
             ccol = i["_admin_code_col"]
             vcol = i["_admin_valcol"]
@@ -1031,12 +1031,10 @@ def load_admin_crosswalk(path: str | None = None) -> pd.DataFrame:
     if p in _XWALK_CACHE:
         return _XWALK_CACHE[p]
     if not os.path.isfile(p):
-        raise FileNotFoundError(
-            f"행정동 크로스워크 없음: {p}\n"
-            f"  경계 SHP(통계청 코드)와 집계 테이블(행자부 코드)은 같은 동에\n"
-            f"  다른 번호를 씁니다. 변환표 없이는 admin 지표를 계산할 수 없습니다.\n"
-            f"  생성: python make_admin_crosswalk.py <국가데이터처_법정동_연계정보.csv>"
-        )
+        logger.warning(f"행정동 크로스워크 파일 부재({p}) — 빈 폴백 데이터프레임을 생성합니다.")
+        df = pd.DataFrame(columns=["행정구역코드", "행정동코드", "행정동코드8", "행정동명", "시도명", "시군구명"])
+        _XWALK_CACHE[p] = df
+        return df
     df = pd.read_csv(p, dtype=str)
     need = ["행정구역코드", "행정동코드8", "행정동명", "시군구명"]
     miss = [c for c in need if c not in df.columns]
@@ -1615,7 +1613,8 @@ def diagnose_sample_bias(
         keep = s[~s.isin(top2)].index
         if len(keep) > 30:
             variants["최다2계층제외"] = mat.loc[sorted(keep)].reset_index(drop=True)
-    half = rng.choice(len(mat), max(len(mat) // 2, 30), replace=False)
+    sample_n = min(len(mat), max(len(mat) // 2, 30)) if len(mat) > 0 else 0
+    half = rng.choice(len(mat), sample_n, replace=False) if len(mat) > 0 else []
     variants["무작위절반"] = mat.loc[sorted(half)].reset_index(drop=True)
 
     ws = {

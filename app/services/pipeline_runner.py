@@ -974,7 +974,7 @@ def _prepare_dirs(run_id: str, domain: str, mode: str = MODE_FIXTURE) -> None:
         n = A.reset_exclusion_confirmations(doc)
         rev.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
         if n:
-            print(f"[{run_id}] hitl — 배제 {n}건을 제안값으로 되돌림(사람 재확인 대상)")
+            print(f"[{run_id}] hitl - 배제 {n}건을 제안값으로 되돌림(사람 재확인 대상)")
 
 
 def _child_env(run_id: str, mode: str) -> dict:

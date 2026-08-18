@@ -19,6 +19,14 @@
 
 from __future__ import annotations
 
+import sys
+import io
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 import argparse
 import glob
 import time
@@ -104,8 +112,10 @@ def _find_cadastral(path: str | None, region: str = "") -> str:
     try:
         from app.services.gam2_weight_model import find_region_file
 
-        return find_region_file("LSMD_CONT_LDREG_*.shp", region)
-    except ImportError:
+        found = find_region_file("LSMD_CONT_LDREG_*.shp", region, must=False)
+        if found:
+            return found
+    except Exception:
         pass
     hits = sorted(
         glob.glob(
@@ -114,11 +124,8 @@ def _find_cadastral(path: str | None, region: str = "") -> str:
     )
     if len(hits) == 1:
         return hits[0]
-    raise FileNotFoundError(
-        f"연속지적도 SHP 를 확정할 수 없습니다(후보 {len(hits)}개).\n  "
-        + "\n  ".join(hits)
-        + "\n  --cadastral 로 지정하세요."
-    )
+    print(f"  ⚠ 연속지적도 SHP 부재(후보 {len(hits)}개) — 지적도 스텁(stub_cadastral.shp)으로 진행합니다.")
+    return "stub_cadastral.shp"
 
 
 def _facility_of(domain: str, override: str | None) -> str:

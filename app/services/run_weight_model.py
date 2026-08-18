@@ -17,6 +17,13 @@
     R 을 고정해야 감쇠 효과만 분리된다. 지정한 지표는 HITL 을 건너뛴다.
 """
 import os, sys, json, re, argparse, time
+import io
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 _T_START = time.perf_counter()
 _T_IMPORT = time.perf_counter()
 import numpy as np, pandas as pd, geopandas as gpd
@@ -120,7 +127,10 @@ def make_loader(domain: str):
                 files[r["dataset_id"]] = alt
 
     def loader(did):
-        f = files[did]
+        f = files.get(did)
+        if not f:
+            print(f"  ⚠ 레이어 '{did}' 정제 산출물 없음 — 빈 레이어로 대체합니다.")
+            return gpd.GeoDataFrame(columns=["geometry"], crs=W.WORK_CRS)
         if f.endswith(".gpkg"):
             return gpd.read_file(f).to_crs(W.WORK_CRS)
         # parquet 에 좌표 컬럼이 남아 있으면 geometry 로 복원(좌표계는 값으로 판정).

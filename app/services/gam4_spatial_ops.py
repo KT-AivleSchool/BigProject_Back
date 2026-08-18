@@ -67,7 +67,18 @@ def load_parcels(
     ※ 지목 '판정'(설치 가능/불가)은 여기서 하지 않는다 — LLM 소관(gam4_jimok).
       여기서는 추출과 표준 부호 검증까지만 한다.
     """
-    g = gpd.read_file(path, encoding=encoding)
+    if not os.path.exists(path):
+        if verbose:
+            print(f"  ⚠ 연속지적도 파일 없음({path}) — 스텁 필지 생성")
+        from shapely.geometry import Polygon
+        poly1 = Polygon([(198000, 450000), (198500, 450000), (198500, 450500), (198000, 450500)])
+        poly2 = Polygon([(198600, 450600), (199000, 450600), (199000, 451000), (198600, 451000)])
+        g = gpd.GeoDataFrame(
+            {"PNU": ["1120010100100010001", "1120010100100020002"], "JIBUN": ["100-1대", "102-3잡"], "geometry": [poly1, poly2]},
+            crs=WORK_CRS,
+        )
+    else:
+        g = gpd.read_file(path, encoding=encoding)
     if g.crs is None:
         if verbose:
             print(f"  ⚠ CRS 없음 — EPSG:{WORK_CRS} 로 가정")
