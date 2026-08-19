@@ -120,7 +120,7 @@ STEP1  감리 AI + HITL      gam2_audit_judgment_test/ (패키지) · gam2_audit
        상위법 검색          gam2_ordinance_acquisition.py
 STEP2  정제                gam2_clean_data.py
 STEP3  후보 생성            make_parcel_candidates.py
-       가중치 [A][A2][R][W][B][D][E][F]   gam2_weight_model.py · run_weight_model.py
+       가중치 [A][A2][R][W][B][D][E][F]   gam2_weight_model/ (패키지) · run_weight_model.py
 STEP4  입지 선정(MCLP)      gam4_site_select.py · gam4_spatial_ops.py · gam4_jimok.py
 ```
 
@@ -328,6 +328,34 @@ python app\tools\check_audit_pkg_proxy.py            :: 감리 패키지 프록�
                                                      :: ⚠ 장부(`_SUBMODULES`)는 **10개**이고 `__main__` 은
                                                      ::    없는 게 맞다(CLI 진입점이라 아무도 그 전역을 안
                                                      ::    갈아끼운다). 러너 것과 세는 단위가 다르다
+python app\tools\check_weight_pkg_proxy.py           :: 가중치 패키지 프록시 24항목
+                                                     :: (DB·LLM·파일 0회 — 순수 dict 만 넘긴다)
+                                                     :: 🔴 2026-08-19 `gam2_weight_model.py` 1,752행을 10개
+                                                     ::    서브모듈로 가르면서 건 **같은 마법**을 지킨다.
+                                                     ::    앞의 둘과 **묻는 것이 다르다** — 여기엔
+                                                     ::    `W.<이름> = …` 로 갈아끼우는 곳이 **0곳**이다.
+                                                     ::    그래서 이건 오늘의 기능이 아니라 **규칙**을 잰다:
+                                                     ::    `A.RealLLM = 스텁` 이 되는 걸 본 사람은
+                                                     ::    `W.build_matrix = 스텁` 도 될 거라고 읽는다 —
+                                                     ::    셋 중 하나만 다르면 그 기대가 **말없이 배신당한다**
+                                                     ::    (예외가 안 나고 옛 값으로 돈다)
+                                                     :: 🔴 §3 이 핵심이다 — 패키지 **안쪽** 사본도 갈아끼나.
+                                                     ::    `matrix` 는 `load_admin_crosswalk` 를,
+                                                     ::    `diagnostics` 는 `critic_weights`·`synthesize` 를
+                                                     ::    자기 전역으로 들고 있다. attr 만 대조하면 §2 로
+                                                     ::    통과하므로 `diagnose_alpha` 를 **실제로 불러**
+                                                     ::    스텁이 낸 값이 나오는지 본다(`alphas=(0.0,0.4)` →
+                                                     ::    `{'가':1.0,'나':0.0}` · `{'가':0.6,'나':0.4}`)
+                                                     :: 🔴 §5 는 서브모듈이 **정의한** 44개가 패키지에서
+                                                     ::    같은 객체로 보이는지 + 밖에서 `W.<이름>` 으로
+                                                     ::    부르는 **27개**가 살아 있는지
+                                                     ::    (`gam4_site_select`·`run_weight_model`·
+                                                     ::     `check_loader_health`·`make_parcel_candidates`·
+                                                     ::     `check_exclusion_state`)
+                                                     :: ⚠ 장부는 **10개**이고 `__main__` 이 **없는 게 맞다** —
+                                                     ::    원본에 `if __name__ == "__main__"` 이 애초에 없었다.
+                                                     ::    그래서 이 분할은 **사람이 치는 명령이 하나도 안 바뀐다**
+                                                     ::    (감리 것은 `python -m …` 로 바뀌었다)
 python app\tools\check_split_ast.py <옛리비전>:<옛경로> <새패키지폴더>
                                                      :: 분할 전후 **본문이 같은가** (git show + 파싱만)
                                                      :: 🔴 분할의 진짜 위험은 「import 가 깨진다」가 아니다 —
