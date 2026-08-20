@@ -45,22 +45,28 @@ BigProject_Back/
 **받는 곳** — 실행 가이드에 공지된 Google Drive:
 <https://drive.google.com/file/d/1TAxlK0tCu_a1T4bZffj-yaKXggm0P68A/view?usp=drive_link>
 
-### 🔴 제출본 ZIP 을 쓰는 경우 — 경계 SHP 3개를 따로 넣어야 합니다
+### 🔴 제출본 ZIP 의 행정경계는 **서울 + 경기만** 들어 있습니다
 
-제출 규정(100MB 상한)에 맞추려고 제출본에서는 **공개 행정경계 파일 3개를 뺐습니다.**
-우리가 만든 데이터가 아니라 통계청이 배포하는 원본이고, 이 셋만 304.7MB 입니다.
+행정경계 3종(`datasets/region_data/BND_*`)은 통계청 원본이 전국이라 셋만 **304.7MB** 입니다.
+제출 규정(100MB 상한)에 맞추려고 **시도코드 `11`(서울)·`31`(경기)로 잘라서** 넣었습니다.
+좌표계(EPSG:5186)와 컬럼은 원본 그대로이고, **잘라낸 것은 행뿐입니다.**
 
-| 빼놓은 파일 | 크기 | 필수 |
-|---|---|---|
-| `datasets/region_data/BND_ADM_DONG_PG.shp` | 129MB | ✅ 필수 |
-| `datasets/region_data/BND_SIGUNGU_PG.shp` | 93MB | ✅ 필수 |
-| `datasets/region_data/BND_SIDO_PG.shp` | 83MB | 선택 |
+| 파일 | 원본 | 제출본 | 담긴 범위 |
+|---|---|---|---|
+| `BND_ADM_DONG_PG.shp` | 3,559행 129MB | **1,027행 11.8MB** | 서울 426 + 경기 601 |
+| `BND_SIGUNGU_PG.shp` | 252행 93MB | **69행 4.2MB** | 서울 25 + 경기 44 |
+| `BND_SIDO_PG.shp` | 17행 83MB | **2행 1.6MB** | 서울 · 경기 |
 
-같은 폴더의 `.dbf`·`.shx`·`.prj` 는 그대로 들어 있으니 **`.shp` 3개만** 위 Drive 링크의
-`datasets.zip` 에서 꺼내 같은 자리에 놓으면 됩니다.
+시연 대상인 **용산구(11030, 16개 동)·성동구(11040, 17개 동)** 는 그대로 들어 있어
+프리셋 두 도메인(흡연·재활용)은 손댈 것 없이 그대로 돌아갑니다.
 
-> **없으면 어떻게 되나**: 서버는 정상 기동하고 화면도 뜹니다. 대신 파이프라인 STEP2 의
-> 공간조인이 대상 폴리곤을 못 찾아 **지표가 전부 0** 이 됩니다. 안 터지고 값만 틀리므로
+> **서울·경기 밖 지역을 돌리려면** 위 Drive 링크의 `datasets.zip` 에서 전국 원본
+> `BND_*.shp` 3개를 꺼내 같은 자리에 덮어쓰세요. `.dbf`·`.shx`·`.prj`·`.cpg` 도
+> **같이** 바꿔야 합니다 — `.shp` 만 바꾸면 행 수가 어긋나 **속성이 엉뚱한 폴리곤에
+> 붙습니다**(터지지 않고 값만 틀립니다).
+>
+> **범위 밖에서 돌리면 어떻게 되나**: 서버는 정상 기동하고 화면도 뜹니다. 대신
+> 파이프라인 STEP2 의 공간조인이 대상 폴리곤을 못 찾아 **지표가 전부 0** 이 됩니다.
 > 5단계 자체점검(`check_fixture.py`)을 꼭 돌려 확인하세요.
 
 ---
@@ -182,7 +188,8 @@ docker compose exec api python -c "from app.config import missing_reference_file
 docker compose exec api python app/tools/check_fixture.py 흡연
 ```
 
-②에서 `행정동 경계 SHP`·`시군구 경계 SHP` 가 나오면 **1단계의 `.shp` 3개를 안 넣은 것**입니다.
+②에서 `행정동 경계 SHP`·`시군구 경계 SHP` 가 나오면 **1단계의 데이터 ZIP 을 안 푼 것**입니다
+(`datasets/region_data/` 에 `BND_*.shp` 가 있어야 합니다).
 
 ③은 LLM 을 한 번도 부르지 않는 순수 대조입니다(비용 0). 후보 필지 수·배제 면적·
 가중치까지 기준선과 대조하므로, 여기가 57/57 이면 파이프라인 전체가 정상입니다.
@@ -226,7 +233,7 @@ docker compose exec api python app/tools/check_fixture.py 흡연
 | `cannot connect to the Docker daemon` | Docker Desktop 미실행 | 도커 켜기 |
 | `bind: … forbidden by its access permissions` (8000) | Windows 가 8000 을 예약 구간에 넣음(`netsh int ipv4 show excludedportrange protocol=tcp` 로 확인) | 관리자 PowerShell 에서 `net stop winnat && net start winnat`, 또는 Docker Desktop·PC 재시작 |
 | 3단계 2줄째가 `건너뛴 단계 ['5']` 로 끝남 | 시드에 이미 데이터가 있어 삭제를 거부한 것 | 정상. 3단계 주의문 참고 (`--force` 금지) |
-| 화면은 뜨는데 **지표가 전부 0** | 경계 `.shp` 3개 없음 | 1단계 · 5단계 ② |
+| 화면은 뜨는데 **지표가 전부 0** | 경계 `.shp` 3개 없음, 또는 **서울·경기 밖 지역**을 돌림 | 1단계 · 5단계 ② |
 | `relation "…" does not exist` | 부트스트랩 안 함 | 3단계 2줄째 |
 | 요청 하나가 **130초** 걸림 | `.env` 에 `localhost` 를 씀 | `127.0.0.1` 로 |
 | 화면5 가 **HTTP 500** 인데 백엔드는 멀쩡 | 프런트 프록시 타임아웃 | `next.config.ts` 의 `proxyTimeout` 확인 |
