@@ -1,245 +1,244 @@
-# 🛡️ OmniSite 백엔드 개발자 협업 가이드라인 (README)
+# OmniSite — 실행 안내
 
-본 문서는 스마트시티 SDSS 플랫폼 **OmniSite** 백엔드 개발에 참여하는 팀원(장천명, 배종현, 찬진, 동현, 규민, 혜성, 승헌)의 원활한 병렬 개발과 기술 표준 준수를 위한 로컬 개발 가이드라인이자 형상관리 지침서입니다.
+> **B2G 공간의사결정지원 시스템(SDSS).** 갈등시설 입지 선정 —
+> GIS 최적화(MCLP) + 다중 에이전트 공청회 시뮬레이션.
+> MVP: 서울 용산구 흡연부스 / 2차: 성동구 재활용정거장.
+>
+> **이 문서 하나만 읽고 끝까지 실행할 수 있게 썼습니다.** 다른 문서를 찾아갈 필요가 없습니다.
+
+| 구성요소 | 저장소 | 브랜치 | 주소 |
+|---|---|---|---|
+| 백엔드 (FastAPI) | `BigProject_Back` | `back_deploy` | http://127.0.0.1:8000 |
+| 프런트엔드 (Next.js) | `BigProject_Front` | `main_deploy` | http://localhost:3000 |
 
 ---
 
-## 📅 1. 개발 환경 요구사항 및 기동 절차
+## 0. 준비물
 
-### ➊ Python 가상환경 셋업
-본 프로젝트는 **Python 3.14+** 최신 환경의 휠(Wheel) 호환성을 위해 `psycopg` (psycopg3) 및 `shapely` 완화 설치를 지원합니다.
-```bash
-# 가상환경 활성화 (Mac OS / Linux)
-source ../.venv/bin/activate
+| 필요한 것 | 확인 명령 | 비고 |
+|---|---|---|
+| **Docker Desktop** | `docker --version` | 백엔드는 전부 도커 안에서 돕니다 — **로컬 파이썬 불필요** |
+| **Node.js 20 이상** | `node --version` | 프런트엔드용 (Next.js 16) |
+| **데이터셋 ZIP** | — | 아래 [1단계](#1-데이터셋-배치) 참조 |
 
-# 의존성 설치
-pip install --upgrade pip setuptools
-pip install -r requirements.txt -c constraints.txt
+> 🔴 **Docker Desktop 이 실행 중**이어야 합니다. 아이콘이 초록색인지 먼저 보세요.
+> 안 켜져 있으면 `docker compose` 가 `cannot connect to the Docker daemon` 으로 죽습니다.
+
+---
+
+## 1. 데이터셋 배치
+
+원본 데이터는 용량이 커서 소스코드와 **따로** 배포합니다.
+
+```
+BigProject_Back/
+└── datasets/          ← 여기에 ZIP 내용물을 풉니다
+    ├── 흡연/           (MVP 도메인 — 원본 데이터 + 조례)
+    ├── 재활용/         (2차 도메인)
+    ├── EV/
+    ├── 흡연_FIX/       (회귀 기준선 — 5단계 자체점검이 이걸 씁니다)
+    ├── 재활용_FIX/
+    ├── region_data/    (지적도 · 행정경계 · 크로스워크)
+    ├── search_cache/
+    └── step1_output/ ~ step4_output/   (정본 산출물)
 ```
 
-> 🔴 **`-c constraints.txt` 를 빼지 마십시오.**
-> `requirements.txt` 가 "무엇을 설치할지"라면 `constraints.txt` 는 **"무엇을 바꾸면
-> 안 되는지"** 입니다. 값이 달라지는 패키지(pandas·pyarrow·geopandas·shapely·openai
-> 등)를 핀으로 묶어 둡니다.
->
-> 이미 당한 적이 있습니다 — `pip install langchain-openai` 한 번이 `openai` 를
-> 2.44 → 2.53 으로 **말없이** 올렸습니다. 이런 전이 의존 이동은 회귀 대조
-> (`python app/tools/check_fixture.py 흡연` 57/57)로 **안 걸립니다.** 픽스처는 LLM 을
-> 부르지 않기 때문입니다. 패키지를 새로 설치할 때는 `--dry-run` 을 먼저 보고,
-> 설치 후에는 `pip freeze` **전체 diff** 를 보십시오(몇 개만 지켜보면 놓칩니다).
+**받는 곳** — 실행 가이드에 공지된 Google Drive:
+<https://drive.google.com/file/d/1TAxlK0tCu_a1T4bZffj-yaKXggm0P68A/view?usp=drive_link>
 
-### ➋ 로컬 PostGIS + pgvector 컨테이너 기동
-Docker를 활용해 지리 정보 공간 데이터베이스(PostGIS) 및 RAG 벡터 DB(pgvector)가 통합 장착된 DB 인프라를 가동합니다.
+### 🔴 제출본 ZIP 을 쓰는 경우 — 경계 SHP 3개를 따로 넣어야 합니다
+
+제출 규정(100MB 상한)에 맞추려고 제출본에서는 **공개 행정경계 파일 3개를 뺐습니다.**
+우리가 만든 데이터가 아니라 통계청이 배포하는 원본이고, 이 셋만 304.7MB 입니다.
+
+| 빼놓은 파일 | 크기 | 필수 |
+|---|---|---|
+| `datasets/region_data/BND_ADM_DONG_PG.shp` | 129MB | ✅ 필수 |
+| `datasets/region_data/BND_SIGUNGU_PG.shp` | 93MB | ✅ 필수 |
+| `datasets/region_data/BND_SIDO_PG.shp` | 83MB | 선택 |
+
+같은 폴더의 `.dbf`·`.shx`·`.prj` 는 그대로 들어 있으니 **`.shp` 3개만** 위 Drive 링크의
+`datasets.zip` 에서 꺼내 같은 자리에 놓으면 됩니다.
+
+> **없으면 어떻게 되나**: 서버는 정상 기동하고 화면도 뜹니다. 대신 파이프라인 STEP2 의
+> 공간조인이 대상 폴리곤을 못 찾아 **지표가 전부 0** 이 됩니다. 안 터지고 값만 틀리므로
+> 5단계 자체점검(`check_fixture.py`)을 꼭 돌려 확인하세요.
+
+---
+
+## 2. 환경변수 `.env`
+
+`.env.example` 을 복사한 뒤 값을 채웁니다. **이 파일이 없으면 서버가 기동조차 못 합니다**
+(`DATABASE_URL`·`REDIS_URL`·`SECRET_KEY` 는 기본값을 일부러 두지 않았습니다 —
+기본값이 있으면 빠뜨렸을 때 조용히 약한 설정으로 뜹니다).
+
 ```bash
-# Docker Compose 백그라운드 실행
+# Windows
+copy .env.example .env
+
+# macOS / Linux
+cp .env.example .env
+```
+
+### 반드시 채워야 하는 5개
+
+| 키 | 값 | 설명 |
+|---|---|---|
+| `POSTGRES_PASSWORD` | 임의의 긴 문자열 | 도커 DB 비밀번호. **`postgres` 같은 약한 값 금지** |
+| `REDIS_PASSWORD` | 임의의 긴 문자열 | 도커 Redis 비밀번호 |
+| `DATABASE_URL` | `postgresql://postgres:<POSTGRES_PASSWORD>@127.0.0.1:5432/omnisite` | 위 비밀번호와 **같은 값**을 넣습니다 |
+| `REDIS_URL` | `redis://:<REDIS_PASSWORD>@127.0.0.1:6379/0` | 위와 동일 |
+| `SECRET_KEY` | 임의의 64자 hex | JWT 서명 키 |
+
+비밀번호·키 생성 한 줄 (아무 데서나):
+
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+### 선택 — 기능별로 필요한 키
+
+| 키 | 없으면 못 하는 것 |
+|---|---|
+| `OPENAI_API_KEY` | 감리 AI(STEP1)·공청회 토론(화면5). **`fixture` 모드 시연에는 불필요** |
+| `VWORLD_KEY` / `VWORLD_API_KEY` | 주소→좌표 지오코딩(새 지역 데이터를 넣을 때만) |
+| `KAKAO_REST_API_KEY` | 지도 로드뷰 |
+| `LAW_GO_KR_OC` / `DATA_GO_KR_KEY` | 상위법 자동 검색 |
+
+> 🔴 **`localhost` 대신 `127.0.0.1` 을 쓰세요.** `localhost` 는 IPv6(`::1`)로 먼저 풀리는데
+> 도커가 IPv4 에만 바인딩해서 **요청 하나가 130초** 걸린 적이 있습니다.
+> (코드가 자동 교정하고 경고 로그를 남기지만, 애초에 안 겪는 게 낫습니다.)
+
+---
+
+## 3. 백엔드 실행 — 2줄
+
+```bash
+cd BigProject_Back
+
 docker compose up -d --build
-
-# 스키마 전체 주입 (계획만 출력이 기본 — 무엇을 만들지 먼저 보고 --yes)
-python scripts/bootstrap_db.py
-python scripts/bootstrap_db.py --yes
+docker compose run --rm api python scripts/bootstrap_db.py --yes
 ```
 
-> 🔴 **`schema.sql` 하나로는 DB 가 완성되지 않습니다 (2026-08-11 정정).**
-> 그래서 `scripts/bootstrap_db.py` 가 아래 순서를 대신 칩니다 — **DDL 은 한 줄도
-> 새로 안 씁니다.** 기존 `.sql` 과 `create_missing_tables.py` 를 순서대로 부르기만
-> 합니다(정본을 늘리면 「같은 스키마가 두 곳」 함정이 다시 생깁니다).
-> 표를 남기는 이유는 **정본이 어느 파일인지**가 여기 말고는 적힌 데가 없어서입니다.
-> 그전까지 이 자리에는 "17개 물리 테이블 DDL 주입" 이라고 적혀 있었는데,
-> 그 17개 중 **11개는 실 DB 에도 없고 코드 참조도 0회**였고 **5개는 정본이 ORM**,
-> **1개는 정본이 `schema_cadastral.sql`** 이었습니다. 낡은 선언들은
-> `CREATE TABLE IF NOT EXISTS` 라서 **빈 DB 에 먼저 돌리면 틀린 스키마가 만들어지고**
-> 뒤이은 `create_all(checkfirst=True)` 이 「이미 있다」며 건너뜁니다 —
-> 이름이 같아 `SELECT` 를 짤 때까지 안 보입니다. 그래서 17개를 들어냈습니다
-> (경위는 `schema.sql` 머리말).
->
-> 빈 DB 를 채우는 순서는 다음과 같습니다. **파일마다 정본이 다릅니다.**
->
-> | 순서 | 무엇 | 대상 |
-> |---|---|---|
-> | 1 | `schema.sql` | 확장팩 · `districts` · `dong_boundaries` |
-> | 2 | `schema_region_boundaries.sql` + `python scripts/load_region_boundaries.py --commit` | 1계층 경계 3종 + `admin_crosswalk` |
-> | 3 | `schema_cadastral.sql` + `python scripts/load_cadastral.py --commit` | `cadastral_lands` (연속지적도) |
-> | 4 | `schema_cleaned_data.sql` → `schema_cleaned_data_add.sql` | `candidate_lands` · `national_properties` · `booth_candidates` |
-> | 5 | `schema_step4_topn.sql` | `booth_candidates` 컬럼 가산(멱등) |
-> | 6 | `python scripts/create_missing_tables.py --yes` | ORM 정본 9종(`users`·`audit_rules`·`run_records`·`hearing_result_a`…) |
-> | 7 | `schema_step5.sql` · `schema_step5_b.sql` | STEP5 정합분 — **6 뒤여야 합니다** |
->
-> 🔴 **5·6·7 의 순서는 2026-08-12 에 정정된 것입니다.** 그전 표는 step5 계열을
-> `create_missing_tables.py` **앞**에 두었는데, `schema_step5.sql` 은
-> `hearing_result_a`·`verified_precedents` 를 **ALTER** 하고 그 두 테이블은 어느
-> `.sql` 에도 `CREATE TABLE` 이 없습니다(정본이 ORM 입니다). 그래서 빈 DB 에서
-> 표대로 치면 `relation "hearing_result_a" does not exist` 로 죽습니다.
-> 표가 틀렸다기보다 **한 번도 빈 DB 에서 끝까지 쳐본 적이 없었다**는 뜻입니다
-> (지금은 일회용 DB 로 9칸 완주를 확인했습니다 — 21테이블).
->
-> ⚠ `schema_cleaned_data_add.sql` 에는 `DROP TABLE IF EXISTS national_properties
-> CASCADE;` 가 살아 있습니다. `bootstrap_db.py` 는 그 테이블이 **이미 있으면
-> 행 수와 딸려 나갈 대상을 먼저 출력하고 `--force` 없이는 그 단계를 건너뜁니다.**
->
-> 2·3 의 원본(SHP)은 `.gitignore` 대상이라 clone 에 안 들어옵니다.
-> 팀 seed(`omnisite_seed.sql.gz`)로 복원하면 표의 행 적재는 건너뛸 수 있지만,
-> 🔴 **`python scripts/bootstrap_db.py --yes` 는 그래도 한 번 치십시오.**
-> seed 를 뜬 시점 이후에 생긴 테이블(예: `run_records`)이 조용히 빠집니다 —
-> 그러면 파이프라인이 도는 도중에야 「테이블이 없다」가 나옵니다.
-*   **로컬 DB 접속 정보**: 포트 `5432` / 사용자 `postgres` / 비밀번호 `postgres` / DB명 `omnisite`
-    *   컨테이너명은 `omnisite-postgres-db` 입니다(Redis 는 `omnisite-redis-cache`).
-    *   🔴 **`DATABASE_URL`·`REDIS_URL`·`SECRET_KEY` 는 기본값이 없습니다**
-        (2026-08-07 침해 대응 · `app/config.py:36-44` `_require_env`).
-        로컬이라도 **`.env` 가 반드시 있어야 기동됩니다** — `.env.example` 을 복사해
-        위 접속 정보를 채우세요.
-        없으면 「DB 접속 실패」가 아니라 **import 시점 `RuntimeError`** 로 죽습니다.
-        docker 를 헤매지 마세요 — 그 예외 문구가 `.env.example` 을 복사하라고 정확히
-        말해줍니다.
-*   *주의*: pgvector 확장 제어 선언은 `CREATE EXTENSION vector;` 문법을 사용해야 합니다.
+* 1줄째: DB(PostgreSQL+PostGIS) · Redis · API 컨테이너 3개를 빌드하고 띄웁니다.
+  첫 실행은 이미지 빌드 때문에 몇 분 걸립니다.
+  **빈 DB 라면 `omnisite_seed.sql.gz` 가 자동으로 복원**되므로 따로 할 일이 없습니다.
+* 2줄째: 시드 이후에 추가된 테이블(`run_records` 등)을 만들고 스키마를 맞춥니다.
+  **시드를 복원했어도 반드시 한 번 칩니다** — 안 치면 조용히 몇 개가 빠집니다.
 
-> 🔴 **`:65` 는 2026-08-12 에 정정된 것입니다** (프런트 세션 지적).
-> 그전까지 이 자리에는 「`app/config.py` 의 `DATABASE_URL` 기본값이 이 값과 같으므로
-> 로컬에서는 `.env` 없이도 붙습니다」라고 적혀 있었습니다. **그 기본값은
-> 2026-08-09 보안 조치로 일부러 없앤 것**입니다(`_require_env` 를 넣은 그 커밋).
-> **코드가 옳고 README 만 그때 같이 안 고쳐졌습니다.**
->
-> 증상이 헷갈리는 방향으로 납니다. 처음 받은 사람은 README 를 믿고 `.env` 없이
-> `uvicorn` 을 치는데, 나오는 건 「DB 접속 실패」가 아니라 **import 시점
-> `RuntimeError`** 입니다 → 「DB 를 안 띄웠나」로 읽고 docker 쪽을 헤맵니다.
-> `RuntimeError` 문구는 `.env.example` 을 복사하라고 정확히 말해주는데,
-> **그 앞의 README 문장이 반대로 안내하고 있었습니다.**
->
-> ⚠ **`:63` 의 접속 정보 자체는 지금도 맞습니다**(`docker-compose.yml` 과 일치).
-> 틀린 건 「그래서 `.env` 가 없어도 된다」는 **뒷문장 하나**였습니다 —
-> 앞줄까지 같이 고치면 멀쩡한 값이 사라집니다.
->
-> 이건 CLAUDE.md 함정표 「**안 고친 주석이 남의 요구사항이 된다**」와 같은 모양입니다.
-> 없앤 것을 있다고 말하는 문서는 **다음 사람의 계획이 됩니다.**
+열립니다 → **<http://127.0.0.1:8000/docs>**
 
-> 🔴 **위 접속 정보는 2026-08-05 에 정정된 것입니다.**
-> 그전까지 이 자리에는 컨테이너 `omnisite-db` / 사용자 `admin` / 비밀번호 `admin1234` /
-> "16대 테이블" 이라고 적혀 있었습니다. **네 값 모두 실제와 달랐습니다** —
-> `docker-compose.yml` 은 `omnisite-postgres-db` · `postgres`/`postgres` 이고
-> `Dockerfile.db` 어디에도 `admin` 계정을 만드는 구문이 없으며, `schema.sql` 의
-> `CREATE TABLE` 은 **17개**입니다. 그대로 치면 컨테이너명과 사용자 두 군데에서 실패합니다.
-> (⚠ 그 **17개**는 2026-08-11 에 **2개**가 됐습니다 — 위 표 참조. 여기 숫자는
-> 「16대」가 왜 틀렸는지를 적은 당시 기록이라 고치지 않고 둡니다.)
->
-> 코드가 아니라 **문서만 어긋나 있었습니다.** 이런 종류는 실행해 보기 전엔 안 걸리고,
-> 처음 받은 사람이 첫 명령에서 막힙니다.
+> `docker compose` 가 없다는 오류가 나면 구버전입니다. `docker-compose`(하이픈)로 바꿔 치세요.
+> 운영 배포 스크립트도 하이픈 쪽을 씁니다.
 
-> ✅ **`schema.sql` ↔ ORM 불일치는 2026-08-11 에 해소됐습니다.**
-> 여기 있던 경고 — 「공통 14개 중 `hearing_result_a`·`verified_precedents` 가 갈린다,
-> 하필 `/api/v1/audit/*` 이 쓰는 테이블이다」 — 는 그대로 참이었습니다.
-> **어느 쪽을 정본으로 삼을지 정해서** 끝냈습니다: 그 계열은 **ORM 이 정본**이고,
-> `schema.sql` 에서 중복 선언을 들어냈습니다(위 표 6행). 겹치는 정의가 없으니
-> 갈릴 자리도 없습니다. 컬럼 정합은 2026-08-09 `schema_step5.sql` 로 맞췄고,
-> `/audit/*` 은 2026-08-11 에 `python app/tools/check_audit.py` **57/57** 로 실측했습니다.
-> 대조 근거는 `01_설계결정\백엔드팀_API현황_및_Redis_Postgres_전환.md` §5-2 · §10-1.
+**중지 / 재시작**
 
-### ➌ FastAPI 백엔드 개발 서버 실행
 ```bash
-uvicorn app.main:app --host 127.0.0.1 --port 8000
+docker compose logs -f api     # 로그 보기
+docker compose restart api     # API 만 재시작
+docker compose down            # 전부 정지 (데이터는 볼륨에 남습니다)
 ```
-*   **Swagger API 문서**: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
-
-> 🔴 **`--reload` 를 붙이지 마십시오 (2026-08-05 정정).**
-> 파이프라인 실행 API(`/api/v1/pipeline/*`)가 생기면서 **서버가 자식 프로세스를 들고
-> 있게 됐습니다.** 서버가 죽으면 그 자식을 추적할 수 없으므로,
-> `pipeline_runner.py` 의 `_reap_orphans` 는 기동 시 **이전 서버가 남긴 run 을 전부
-> `failed` 로 닫습니다.** `--reload` 는 파일이 바뀔 때마다 프로세스를 갈아치우므로,
-> 코드를 한 줄 저장하는 순간 **본인과 남이 돌리던 run 이 같이 죽습니다.**
->
-> 대신 **코드를 고쳐도 재시작 전에는 반영되지 않습니다.** 재시작할 때는 같은 서버를
-> 보는 사람에게 말하고 하십시오. (이 문장은 파이프라인 API 신설 전에 쓰인 것이라
-> 그때는 틀린 말이 아니었습니다 — 낡은 것이지 잘못이 아닙니다.)
 
 ---
 
-## ⚙️ 2. 핵심 구현 아키텍처 및 공용 모듈 사용법
+## 4. 프런트엔드 실행 — 3줄
 
-### ➊ 비동기 SQLAlchemy 2.0 세션 주입 (`get_db`)
-모든 API 엔드포인트에서 데이터베이스 커넥션을 맺을 때는 반드시 `app/db/session.py`에 선언된 비동기 제너레이터 `get_db`를 주입받아 사용해야 합니다.
-```python
-from fastapi import Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-from app.db.session import get_db
+```bash
+cd BigProject_Front
 
-@router.get("/example")
-async def read_data(db: AsyncSession = Depends(get_db)):
-    # db 객체는 asyncpg 비동기 드라이버 세션입니다.
-    # SQL 실행 시 await db.execute(...) 형태로 호출해야 합니다.
+copy .env.example .env.local     # macOS/Linux: cp .env.example .env.local
+npm install
+npm run dev
 ```
-*   `.env` 내의 DB 주소는 비동기 구동을 위해 `postgresql+asyncpg://` 프로토콜 형식을 유지합니다.
 
-### ➋ 4대 조례 RAG 관리 API 규격
-RAG에 필요한 법규 PDF와 파싱 텍스트 캐시의 라이프사이클을 보존하기 위해 구현된 규격입니다.
-*   **다중 조례 업로드**: `POST /api/v1/upload/regulation` (PDF 다중 파일 저장 및 캐시 자동 생성)
-*   **중복 업로드 방지 가드**: 동일 파일명이 이미 업로드된 경우 `400 Bad Request` 예외 반환.
-*   **조례 목록 리스팅**: `GET /api/v1/upload/regulations` (파일명 및 KB 크기 반환)
-*   **물리 삭제 Deletion Engine**: `DELETE /api/v1/upload/regulations/{filename}` (PDF 원본 및 `data/regulations/cache/[파일명].txt` 캐시 텍스트 동시 소거)
+열립니다 → **<http://localhost:3000>**
+
+`.env.local` 은 키가 **하나뿐**이고 기본값이 이미 맞습니다:
+
+```
+OMNISITE_API_ORIGIN=http://127.0.0.1:8000
+```
+
+> 브라우저는 백엔드 주소를 모릅니다 — 항상 같은 출처(`/api/v1/...`)로만 부르고
+> Next.js rewrite 가 위 주소로 넘깁니다. 백엔드를 다른 호스트에 두더라도
+> **이 값 한 줄만** 바꾸면 됩니다.
 
 ---
 
-## 🤝 3. 코드 작성 규칙 및 깃(Git) 협업 모델
+## 5. 제대로 떴는지 확인 (3분)
 
-### 🚨 코드 주석 작성 규칙 (MANDATORY)
-*   **원칙**: **모든 작성 코드 라인에 한글 설명 주석을 꼼꼼하게 달아주세요.**
-*   **사유**: 주니어 팀원들의 코드 리딩 편의와, 기획자-개발자 간의 지리 공간 연산 알고리즘(AHP 가중치, PostGIS 차집합 등) 이해도를 동기화하기 위한 필수 행동 지침입니다. 주석이 누락된 코드는 코드 리뷰 시 병합 반려(Request Changes) 대상입니다.
+```bash
+# ① API 문서가 열리는가
+curl http://127.0.0.1:8000/docs
 
-### 🌿 브랜치 전략 및 PR 정책
-*   `main` 브랜치는 항상 동작 가능한 알파 빌드 상태를 유지하며 보호됩니다.
-*   신규 기능 개발 시 반드시 깃허브 이슈(Issues)에 태스크를 매핑하고 아래 브랜치 규칙을 따릅니다:
-    ```bash
-    # 예시: 2주차 PostGIS ST_Difference 기능 개발 시
-    git checkout -b feature/26-postgis-difference
-    ```
-*   기능 개발 완료 후 main 브랜치로 Pull Request를 날리면, 로컬 import 및 컴파일 검증 통과 여부를 확인한 후 승인 병합합니다.
+# ② 참조 데이터가 다 있는가  → [] 가 나와야 정상
+docker compose exec api python -c "from app.config import missing_reference_files; print(missing_reference_files(required_only=True))"
+
+# ③ 회귀 기준선과 값이 같은가 → 57/57 이 나와야 정상
+docker compose exec api python app/tools/check_fixture.py 흡연
+```
+
+②에서 `행정동 경계 SHP`·`시군구 경계 SHP` 가 나오면 **1단계의 `.shp` 3개를 안 넣은 것**입니다.
+
+③은 LLM 을 한 번도 부르지 않는 순수 대조입니다(비용 0). 후보 필지 수·배제 면적·
+가중치까지 기준선과 대조하므로, 여기가 57/57 이면 파이프라인 전체가 정상입니다.
+
 ---
 
-## 🖨️ 4. WeasyPrint 로컬 환경 설치 안내
+## 6. 화면 흐름
 
-PDF 보고서 발급 기능(`GET /api/v1/simulations/results/{parcel_id}/pdf`)은 **WeasyPrint** 라이브러리를 사용합니다.
-WeasyPrint는 Python 패키지 외에도 **OS 수준의 C 라이브러리(Pango, Cairo)**가 필요합니다.
+| 화면 | 하는 일 | 필요한 것 |
+|---|---|---|
+| 1 업로드 | 도메인별 원본 데이터·조례 업로드 | — |
+| 2~3 감리·정제 | 감리 AI 가 데이터 의도·배제반경 제안 → **사람이 확정(HITL)** | `OPENAI_API_KEY` |
+| 4 입지 선정 | MCLP 로 후보지 Top-N 산출, 지도에서 선택 | 경계 SHP |
+| 5 공청회 | 선택한 입지로 다중 에이전트 토론 (A 대립형 / B 다인형) | `OPENAI_API_KEY` |
+| 6 보고서 | PDF · HWPX 다운로드 | — |
 
-### macOS
-```bash
-brew install pango cairo
-```
+**API 키 없이 시연하려면** 파이프라인 실행 모드를 `fixture` 로 두세요 —
+미리 고정해 둔 기준선을 그대로 재생하므로 LLM 을 부르지 않고 화면 5까지 갑니다
+(흡연 약 95초). 모드는 실행 요청(`POST /api/v1/pipeline/runs`)의 `mode` 필드입니다.
 
-### Ubuntu / Debian (Docker 포함)
-```bash
-apt-get install -y \
-    libpango-1.0-0 \
-    libpangoft2-1.0-0 \
-    libcairo2 \
-    libffi-dev \
-    libjpeg-dev \
-    libopenjp2-7
-```
+| 모드 | 뜻 | LLM |
+|---|---|---|
+| `fixture` | 고정 기준선 재생 (시연용, 대기 없음) | 호출 0회 |
+| `hitl` | 프리셋 데이터 + 사람이 게이트에서 값 확정 | 호출함 |
+| `full` | 업로드한 데이터로 STEP0부터 전부 | 호출함 |
 
-> **💡 폰트 번들링 안내**: 한글 깨짐 방지를 위해 NanumGothic TTF 폰트가 `app/static/fonts/NanumGothic-Regular.ttf`에 번들링되어 있습니다.
-> OS에 별도 한글 폰트를 설치하지 않아도 PDF가 정상 렌더링됩니다.
+---
 
+## 7. 자주 나는 오류
 
-## 🗺️ 5. PostGIS / GeoAlchemy2 개발 주의사항
+| 증상 | 원인 | 처치 |
+|---|---|---|
+| 기동 시 `RuntimeError: … .env.example 을 복사…` | `.env` 없음/키 누락 | 2단계 |
+| `POSTGRES_PASSWORD 를 .env 에 설정할 것` | compose 가 비밀번호를 못 찾음 | 2단계 |
+| `cannot connect to the Docker daemon` | Docker Desktop 미실행 | 도커 켜기 |
+| 화면은 뜨는데 **지표가 전부 0** | 경계 `.shp` 3개 없음 | 1단계 · 5단계 ② |
+| `relation "…" does not exist` | 부트스트랩 안 함 | 3단계 2줄째 |
+| 요청 하나가 **130초** 걸림 | `.env` 에 `localhost` 를 씀 | `127.0.0.1` 로 |
+| 화면5 가 **HTTP 500** 인데 백엔드는 멀쩡 | 프런트 프록시 타임아웃 | `next.config.ts` 의 `proxyTimeout` 확인 |
+| 프런트 `npm install` 실패 | Node 버전 | Node 20 이상 |
+| 콘솔에 `UnicodeEncodeError` | Windows cp949 콘솔 | `set PYTHONIOENCODING=utf-8` |
 
-### ⚠️ Alembic 오토마이그레이션 도입 시 필수 설정
+---
 
-`geoalchemy2` 기반의 공간 컬럼(`Geometry`, `MULTIPOLYGON` 등)을 포함한 ORM 모델이 존재합니다.
-향후 Alembic 오토마이그레이션(`alembic revision --autogenerate`)을 도입할 경우, `alembic/env.py` 파일 **최상단**에 아래 두 줄을 반드시 추가해야 합니다:
+## 8. 더 읽을 것 (실행에는 필요 없음)
 
-```python
-import geoalchemy2  # PostGIS Geometry 컬럼 Alembic 인식을 위한 선행 임포트 (필수)
-import geoalchemy2.types  # 커스텀 공간 타입 서브클래스 완전 등록
-```
+| 문서 | 내용 |
+|---|---|
+| `CLAUDE.md` | 설계 원칙 · **실제로 겪은 함정 목록** |
+| `docs/개발자_협업_가이드.md` | 팀 내부 협업 규칙 (옛 README) |
+| `docs/api_schema.md` | API 스키마 |
+| `pipeline_run_contract.md` | 파이프라인 실행 API 계약 (프런트↔백엔드) |
 
-> 이 두 줄이 없으면 `alembic revision --autogenerate` 실행 시 Geometry 컬럼을 인식하지 못하여 마이그레이션 스크립트가 비정상 생성됩니다.
+---
 
-### 📅 통계 테이블 날짜 필드 포맷 컨벤션
+## 9. 기술 스택
 
-`stats.py` 내 통계 테이블의 날짜 필드는 **의도적으로 `String` 타입**으로 관리합니다:
+**백엔드** FastAPI · SQLAlchemy 2.0 (asyncpg) · PostgreSQL + PostGIS · Redis ·
+GeoPandas / Shapely · LangChain + LangGraph · pgvector · playwright(PDF)
 
-| 필드명 | 타입 | 포맷 예시 | 사유 |
-|:---|:---|:---|:---|
-| `analysis_ym` | `String(6)` | `"202412"` | 행정안전부·통계청 공공 API 원본 포맷 일치 |
-| `analysis_year` | `String(4)` | `"2024"` | 공공 데이터 CSV 원본 포맷 일치 |
+**프런트엔드** Next.js 16 · React 19 · TypeScript · Tailwind CSS 4 · Leaflet
 
-범위 조회가 필요할 경우 `BETWEEN '202404' AND '202406'` 형태로 처리합니다.
-향후 시계열 분석 기능 추가 시 `Date` 타입으로 마이그레이션을 검토합니다.
-
+**인프라** Docker Compose · GitHub Actions → AWS EC2 · AWS Amplify

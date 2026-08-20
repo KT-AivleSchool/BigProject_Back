@@ -1209,7 +1209,9 @@ async def download_feasibility_report_pdf(
 ):
     """
     [장천명 풀스택] Step 5 최종 입지 선정 타당성 보고서 PDF 실시간 다운로드 API
-    - DB에 저장된 최종 시뮬레이션 갈등 시나리오 정보를 WeasyPrint를 통해 PDF로 컴파일하여 내보냅니다.
+    - DB에 저장된 최종 시뮬레이션 갈등 시나리오 정보를 playwright(chromium headless)로
+      렌더해 PDF 로 내보냅니다. (weasyprint 를 쓴다고 적혀 있던 것은 오기 — 코드 참조 0회다.
+      이 문장은 `/docs` 에 그대로 노출돼 남이 근거로 삼는다.)
     """
     # 1. DB에서 가장 최신의 시뮬레이션 결과 획득
     result = await db.execute(
