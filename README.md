@@ -125,6 +125,11 @@ docker compose run --rm api python scripts/bootstrap_db.py --yes
 * 2줄째: 시드 이후에 추가된 테이블(`run_records` 등)을 만들고 스키마를 맞춥니다.
   **시드를 복원했어도 반드시 한 번 칩니다** — 안 치면 조용히 몇 개가 빠집니다.
 
+> 🔴 **2줄째가 `🔴 건너뛴 단계 ['5']` 를 찍고 0 이 아닌 코드로 끝나는 것은 정상입니다.**
+> 시드에 `national_properties`(2,486행)가 이미 들어 있어서, 그 행을 지우는 단계를
+> 도구가 **일부러 거부**한 것입니다. 그 단계가 만들 테이블 2개는 시드에 이미 있으므로
+> 실제로 빠지는 것은 없습니다. **`--force` 는 치지 마세요** — 2,486행이 삭제됩니다.
+
 열립니다 → **<http://127.0.0.1:8000/docs>**
 
 > `docker compose` 가 없다는 오류가 나면 구버전입니다. `docker-compose`(하이픈)로 바꿔 치세요.
@@ -194,6 +199,12 @@ docker compose exec api python app/tools/check_fixture.py 흡연
 | 5 공청회 | 선택한 입지로 다중 에이전트 토론 (A 대립형 / B 다인형) | `OPENAI_API_KEY` |
 | 6 보고서 | PDF · HWPX 다운로드 | — |
 
+> 🔴 **시드에는 계정도 후보점도 들어 있지 않습니다.** 처음 띄우면 `users` 는 0행이라
+> 로그인이 401 이고, 화면 4·5 가 읽는 `booth_candidates` 도 비어 있어 404 입니다.
+> 계정은 `POST /api/v1/auth/register`(`/docs` 에서 바로 칠 수 있습니다)로 만들고,
+> 후보점은 아래 `fixture` 모드를 한 번 돌리면 채워집니다. **둘 다 정상 동작입니다** —
+> 남의 계정과 남의 실행 결과를 배포본에 넣지 않았습니다.
+
 **API 키 없이 시연하려면** 파이프라인 실행 모드를 `fixture` 로 두세요 —
 미리 고정해 둔 기준선을 그대로 재생하므로 LLM 을 부르지 않고 화면 5까지 갑니다
 (흡연 약 95초). 모드는 실행 요청(`POST /api/v1/pipeline/runs`)의 `mode` 필드입니다.
@@ -213,6 +224,8 @@ docker compose exec api python app/tools/check_fixture.py 흡연
 | 기동 시 `RuntimeError: … .env.example 을 복사…` | `.env` 없음/키 누락 | 2단계 |
 | `POSTGRES_PASSWORD 를 .env 에 설정할 것` | compose 가 비밀번호를 못 찾음 | 2단계 |
 | `cannot connect to the Docker daemon` | Docker Desktop 미실행 | 도커 켜기 |
+| `bind: … forbidden by its access permissions` (8000) | Windows 가 8000 을 예약 구간에 넣음(`netsh int ipv4 show excludedportrange protocol=tcp` 로 확인) | 관리자 PowerShell 에서 `net stop winnat && net start winnat`, 또는 Docker Desktop·PC 재시작 |
+| 3단계 2줄째가 `건너뛴 단계 ['5']` 로 끝남 | 시드에 이미 데이터가 있어 삭제를 거부한 것 | 정상. 3단계 주의문 참고 (`--force` 금지) |
 | 화면은 뜨는데 **지표가 전부 0** | 경계 `.shp` 3개 없음 | 1단계 · 5단계 ② |
 | `relation "…" does not exist` | 부트스트랩 안 함 | 3단계 2줄째 |
 | 요청 하나가 **130초** 걸림 | `.env` 에 `localhost` 를 씀 | `127.0.0.1` 로 |
