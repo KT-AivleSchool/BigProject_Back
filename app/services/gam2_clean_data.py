@@ -455,9 +455,14 @@ def clean_domain(domain_dir: str, csv_preview: bool = False, prune: bool = True)
             "facility_inference 에 facility/region 이 비어 있다. "
             "HITL(시설·지역 확정) 후 정제하거나, result.json 을 확인하세요."
         )
-    print(f"[대상] 시설='{facility}' 지역='{region}'  데이터셋 {len(results)}개")
+    prof_path = A._DOMAIN["profiles"]
+    if not os.path.isfile(prof_path):
+        print(f"[정제] 프로파일 파일이 없어 자동으로 생성합니다: {prof_path}")
+        from app.services.gam2_profile import profile_domain
+        domain_root = os.path.dirname(os.path.dirname(prof_path))
+        profile_domain(domain_root)
 
-    with open(A._DOMAIN["profiles"], encoding="utf-8") as f:
+    with open(prof_path, encoding="utf-8") as f:
         profiles = json.load(f)
 
     # 🔴 프로파일이 감리 결과의 데이터셋을 **하나도** 안 덮으면 여기서 멈춘다.
