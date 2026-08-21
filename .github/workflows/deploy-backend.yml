@@ -84,8 +84,9 @@ jobs:
             docker-compose down || true
             docker-compose up -d --build
             
-            # 4. DB 스키마 동기화 (run_records 등 신규 추가된 테이블 자동 생성)
+            # 4. DB 스키마 동기화 및 무결성 검증 테스트
             docker-compose run --rm api python scripts/bootstrap_db.py --yes
+            docker-compose run --rm api python scripts/bootstrap_db.py
             
             # 5. Clean up dangling images to save space
             docker image prune -f
