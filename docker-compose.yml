@@ -57,8 +57,7 @@ services:
       - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-postgres_omnisite_pass}@db:5432/omnisite
       - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_omnisite_pass}@redis:6379/0
     env_file:
-      - path: .env
-        required: false
+      - .env
     volumes:
       - ./datasets:/code/datasets
       - ./runs:/code/runs

@@ -18,19 +18,20 @@ echo "🚀 OmniSite AWS EC2/Lightsail 인스턴스 초기 환경 자동 세팅�
 echo "📍 스크립트 위치: $SCRIPT_DIR"
 echo "======================================================================"
 
-# 0-1. 환경 변수 .env 파일 복사 및 경로 호환성 보장
-if [ -f "$SCRIPT_DIR/.env.example" ] && [ ! -f "$SCRIPT_DIR/.env" ]; then
-  echo "🔑 .env 파일이 없어 .env.example 파일에서 기본 생성합니다."
-  cp "$SCRIPT_DIR/.env.example" "$SCRIPT_DIR/.env"
-fi
-
-# 이중 디렉터리 경로(BigProject_Back/BigProject_Back/.env) 호환성 완전 보장
-mkdir -p "$SCRIPT_DIR/BigProject_Back"
-if [ -f "$SCRIPT_DIR/.env" ]; then
-  cp "$SCRIPT_DIR/.env" "$SCRIPT_DIR/BigProject_Back/.env" 2>/dev/null || true
-elif [ -f "$SCRIPT_DIR/.env.example" ]; then
-  cp "$SCRIPT_DIR/.env.example" "$SCRIPT_DIR/BigProject_Back/.env" 2>/dev/null || true
-fi
+# 0-1. 모든 디렉터리 경로에 .env 존재 보장
+for dir in "." "$SCRIPT_DIR" "$SCRIPT_DIR/.." "$SCRIPT_DIR/BigProject_Back"; do
+  if [ -d "$dir" ]; then
+    if [ ! -f "$dir/.env" ]; then
+      if [ -f "$dir/.env.example" ]; then
+        cp "$dir/.env.example" "$dir/.env" 2>/dev/null || true
+      elif [ -f "$SCRIPT_DIR/.env.example" ]; then
+        cp "$SCRIPT_DIR/.env.example" "$dir/.env" 2>/dev/null || true
+      elif [ -f "$SCRIPT_DIR/BigProject_Back/.env.example" ]; then
+        cp "$SCRIPT_DIR/BigProject_Back/.env.example" "$dir/.env" 2>/dev/null || true
+      fi
+    fi
+  fi
+done
 
 # 1. 루트/일반 사용자 권한 확인 및 OS 패키지 매니저 분기
 if [ "$EUID" -ne 0 ]; then
