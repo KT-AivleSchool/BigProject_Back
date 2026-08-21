@@ -239,11 +239,11 @@ def _artifact_url(run_id: str, name: str) -> str:
 
 def _refresh_artifacts(doc: dict) -> None:
     """생긴 산출물만 URL 로 바꾼다. 키는 항상 전부 있고 값만 null ↔ URL."""
-    run_id, domain = doc["run_id"], doc["domain"]
-    pre = domain_prefix(domain)
-    for name, (sub, suffix) in ARTIFACTS.items():
-        p = run_dir(run_id) / sub / f"{pre}{suffix}"
-        doc["artifacts"][name] = _artifact_url(run_id, name) if p.is_file() else None
+    from .artifacts import artifact_path
+    run_id = doc["run_id"]
+    for name in ARTIFACTS:
+        p = artifact_path(run_id, name)
+        doc["artifacts"][name] = _artifact_url(run_id, name) if p is not None else None
 
 
 def _new_status(run_id: str, domain: str, mode: str = MODE_FIXTURE,

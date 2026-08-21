@@ -31,7 +31,23 @@ def artifact_path(run_id: str, name: str) -> Path | None:
     if name in ARTIFACTS:
         sub, suffix = ARTIFACTS[name]
         p = d / sub / f"{pre}{suffix}"
-        return p if p.is_file() else None
+        if p.is_file():
+            return p
+        p_alt = d / sub / suffix.lstrip("_")
+        if p_alt.is_file():
+            return p_alt
+        if name == "reviewed":
+            from app.config import DATA_ROOT, DOMAIN_ROOT
+            fix_p = Path(str(DOMAIN_ROOT)) / f"{doc['domain']}_FIX" / "reviewed.json"
+            if fix_p.is_file():
+                return fix_p
+            step1_p = Path(str(DATA_ROOT)) / "step1_output" / f"{pre}_audit_result_reviewed.json"
+            if step1_p.is_file():
+                return step1_p
+            step1_p2 = Path(str(DATA_ROOT)) / "step1_output" / f"{doc['domain']}_audit_result_reviewed.json"
+            if step1_p2.is_file():
+                return step1_p2
+        return None
 
     m = _CLEAN_NAME_RE.match(name)
     if not m:
