@@ -59,6 +59,8 @@ services:
     env_file:
       - .env
     volumes:
+      - ./app:/code/app
+      - ./scripts:/code/scripts
       - ./datasets:/code/datasets
       - ./runs:/code/runs
     depends_on:
