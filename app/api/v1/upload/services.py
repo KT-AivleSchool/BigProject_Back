@@ -285,34 +285,52 @@ class RegulationItem(BaseModel):
 
 
 def _domain_item(name: str, p: dict, root: str) -> DomainItem:
-    law = (
-        [
-            f
-            for f in os.listdir(p["law"])
-            if os.path.splitext(f)[1].lower() in LAW_EXTENSIONS
-            and not _is_extract_cache(f)
-        ]
-        if os.path.isdir(p["law"])
-        else []
-    )
-    data = list_dataset_files(p["data"]) if os.path.isdir(p["data"]) else []
-    reviewed = (
-        Path(str(DATA_ROOT)) / "step1_output" / f"{name}_audit_result_reviewed.json"
-    )
-    mine_data = _ledger_names(name, "data") if root == "upload" else set()
-    mine_law = _ledger_names(name, "law") if root == "upload" else set()
-    return DomainItem(
-        domain=name,
-        root=root,
-        law_files=len(law),
-        data_files=len(data),
-        has_audit_reviewed=reviewed.is_file(),
-        has_fixture=fixture_blocker(name) is None,
-        preexisting_files=(
-            sum(1 for f in data if _nfc(os.path.basename(f)) not in mine_data)
-            + sum(1 for f in law if _nfc(f) not in mine_law)
-        ),
-    )
+    try:
+        law = (
+            [
+                f
+                for f in os.listdir(p["law"])
+                if os.path.splitext(f)[1].lower() in LAW_EXTENSIONS
+                and not _is_extract_cache(f)
+            ]
+            if os.path.isdir(p.get("law", ""))
+            else []
+        )
+        data = list_dataset_files(p["data"]) if os.path.isdir(p.get("data", "")) else []
+        reviewed = (
+            Path(str(DATA_ROOT)) / "step1_output" / f"{name}_audit_result_reviewed.json"
+        )
+        mine_data = _ledger_names(name, "data") if root == "upload" else set()
+        mine_law = _ledger_names(name, "law") if root == "upload" else set()
+        has_fix = False
+        try:
+            has_fix = fixture_blocker(name) is None
+        except Exception:
+            has_fix = False
+
+        return DomainItem(
+            domain=name,
+            root=root,
+            law_files=len(law),
+            data_files=len(data),
+            has_audit_reviewed=reviewed.is_file(),
+            has_fixture=has_fix,
+            preexisting_files=(
+                sum(1 for f in data if _nfc(os.path.basename(f)) not in mine_data)
+                + sum(1 for f in law if _nfc(f) not in mine_law)
+            ),
+        )
+    except Exception as e:
+        logger.exception(f"[upload] _domain_item 처리 실패 ({name}): {e}")
+        return DomainItem(
+            domain=name,
+            root=root,
+            law_files=0,
+            data_files=0,
+            has_audit_reviewed=False,
+            has_fixture=False,
+            preexisting_files=0,
+        )
 
 
 def _chunk_counts(vector_db, domain: str) -> dict[str, int]:
