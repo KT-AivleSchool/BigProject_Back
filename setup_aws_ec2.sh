@@ -11,23 +11,21 @@
 
 set -e
 
-# 0. 저장소 루트 디렉터리로 실행 위치 고정 (경로 중복 에러 방지)
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-if [ -f "$SCRIPT_DIR/docker-compose.yml" ]; then
-  cd "$SCRIPT_DIR"
-elif [ -f "$SCRIPT_DIR/../docker-compose.yml" ]; then
-  cd "$SCRIPT_DIR/.."
-fi
 
 echo "======================================================================"
 echo "🚀 OmniSite AWS EC2/Lightsail 인스턴스 초기 환경 자동 세팅을 시작합니다."
-echo "📍 현재 작업 경로: $(pwd)"
+echo "📍 스크립트 위치: $SCRIPT_DIR"
 echo "======================================================================"
 
 # 0-1. 백엔드 .env 파일 존재 여부 확인 및 생성
-if [ -f "BigProject_Back/.env.example" ] && [ ! -f "BigProject_Back/.env" ]; then
+if [ -f "$SCRIPT_DIR/.env.example" ] && [ ! -f "$SCRIPT_DIR/.env" ]; then
+  echo "🔑 .env 파일이 없어 .env.example 파일에서 기본 생성합니다."
+  cp "$SCRIPT_DIR/.env.example" "$SCRIPT_DIR/.env"
+fi
+if [ -f "$SCRIPT_DIR/BigProject_Back/.env.example" ] && [ ! -f "$SCRIPT_DIR/BigProject_Back/.env" ]; then
   echo "🔑 BigProject_Back/.env 파일이 없어 .env.example 파일에서 기본 생성합니다."
-  cp BigProject_Back/.env.example BigProject_Back/.env
+  cp "$SCRIPT_DIR/BigProject_Back/.env.example" "$SCRIPT_DIR/BigProject_Back/.env"
 fi
 
 # 1. 루트/일반 사용자 권한 확인 및 OS 패키지 매니저 분기
@@ -72,21 +70,35 @@ fi
 
 # 4. 프론트엔드 Node.js 의존성 설치
 echo "📌 [4/6] Next.js 프론트엔드 (BigProject_Front) 의존성 설치..."
-if [ -d "BigProject_Front" ]; then
-  (cd BigProject_Front && npm install)
+if [ -d "$SCRIPT_DIR/BigProject_Front" ]; then
+  (cd "$SCRIPT_DIR/BigProject_Front" && npm install)
+elif [ -d "$SCRIPT_DIR/../BigProject_Front" ]; then
+  (cd "$SCRIPT_DIR/../BigProject_Front" && npm install)
 fi
 
 # 5. 도커 컴포즈 상시 구동 및 서비스 빌드
 echo "📌 [5/6] 전체 서비스 (프론트/백엔드/DB/Redis) 도커 컨테이너 구동..."
-COMPOSE_FILE="docker-compose.yml"
+COMPOSE_FILE=""
+if [ -f "$SCRIPT_DIR/docker-compose.yml" ]; then
+  COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yml"
+elif [ -f "$SCRIPT_DIR/../docker-compose.yml" ]; then
+  COMPOSE_FILE="$SCRIPT_DIR/../docker-compose.yml"
+elif [ -f "$SCRIPT_DIR/BigProject_Back/docker-compose.yml" ]; then
+  COMPOSE_FILE="$SCRIPT_DIR/BigProject_Back/docker-compose.yml"
+elif [ -f "docker-compose.yml" ]; then
+  COMPOSE_FILE="$(pwd)/docker-compose.yml"
+fi
 
 DOCKER_CMD="docker"
 if ! docker ps &> /dev/null; then
   DOCKER_CMD="$SUDO docker"
 fi
 
-if [ -f "$COMPOSE_FILE" ]; then
-  echo "  ✅ 선택된 컴포즈 파일: $(pwd)/$COMPOSE_FILE"
+if [ -n "$COMPOSE_FILE" ] && [ -f "$COMPOSE_FILE" ]; then
+  COMPOSE_DIR="$(dirname "$COMPOSE_FILE")"
+  cd "$COMPOSE_DIR"
+  echo "  ✅ 선택된 컴포즈 파일: $COMPOSE_FILE"
+  echo "  📍 작업 디렉터리: $(pwd)"
   if command -v docker-compose &> /dev/null; then
     $SUDO docker-compose -f "$COMPOSE_FILE" up -d --build
   else
@@ -120,8 +132,8 @@ if $DOCKER_CMD ps | grep -q omnisite-fastapi; then
   $DOCKER_CMD exec omnisite-fastapi python scripts/bootstrap_db.py
 elif [ -f "setup_bootstrap.py" ]; then
   python3 setup_bootstrap.py
-elif [ -f "BigProject_Back/scripts/bootstrap_db.py" ]; then
-  python3 BigProject_Back/scripts/bootstrap_db.py --yes --force
+elif [ -f "scripts/bootstrap_db.py" ]; then
+  python3 scripts/bootstrap_db.py --yes --force
 fi
 
 echo ""
