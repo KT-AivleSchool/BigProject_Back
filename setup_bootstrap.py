@@ -15,7 +15,7 @@ import urllib.request
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
-BACK_DIR = BASE_DIR / "BigProject_Back"
+BACK_DIR = BASE_DIR / "BigProject_Back" if (BASE_DIR / "BigProject_Back").exists() else BASE_DIR
 BOOTSTRAP_SCRIPT = BACK_DIR / "scripts" / "bootstrap_db.py"
 
 def log(msg: str, icon: str = "📌"):
@@ -28,8 +28,8 @@ def check_db_and_bootstrap():
         log(f"스마트 스크립트를 찾을 수 없습니다: {BOOTSTRAP_SCRIPT}", "🔴")
         return False
 
-    # 1. bootstrap_db.py --yes 실행
-    cmd = [sys.executable, str(BOOTSTRAP_SCRIPT), "--yes"]
+    # 1. bootstrap_db.py --yes --force 실행
+    cmd = [sys.executable, str(BOOTSTRAP_SCRIPT), "--yes", "--force"]
     log(f"실행 명령: {' '.join(cmd)}")
     res = subprocess.call(cmd)
     
