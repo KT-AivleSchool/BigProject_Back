@@ -18,14 +18,18 @@ echo "🚀 OmniSite AWS EC2/Lightsail 인스턴스 초기 환경 자동 세팅�
 echo "📍 스크립트 위치: $SCRIPT_DIR"
 echo "======================================================================"
 
-# 0-1. 백엔드 .env 파일 존재 여부 확인 및 생성
+# 0-1. 환경 변수 .env 파일 복사 및 경로 호환성 보장
 if [ -f "$SCRIPT_DIR/.env.example" ] && [ ! -f "$SCRIPT_DIR/.env" ]; then
   echo "🔑 .env 파일이 없어 .env.example 파일에서 기본 생성합니다."
   cp "$SCRIPT_DIR/.env.example" "$SCRIPT_DIR/.env"
 fi
-if [ -f "$SCRIPT_DIR/BigProject_Back/.env.example" ] && [ ! -f "$SCRIPT_DIR/BigProject_Back/.env" ]; then
-  echo "🔑 BigProject_Back/.env 파일이 없어 .env.example 파일에서 기본 생성합니다."
-  cp "$SCRIPT_DIR/BigProject_Back/.env.example" "$SCRIPT_DIR/BigProject_Back/.env"
+
+# 이중 디렉터리 경로(BigProject_Back/BigProject_Back/.env) 호환성 완전 보장
+mkdir -p "$SCRIPT_DIR/BigProject_Back"
+if [ -f "$SCRIPT_DIR/.env" ]; then
+  cp "$SCRIPT_DIR/.env" "$SCRIPT_DIR/BigProject_Back/.env" 2>/dev/null || true
+elif [ -f "$SCRIPT_DIR/.env.example" ]; then
+  cp "$SCRIPT_DIR/.env.example" "$SCRIPT_DIR/BigProject_Back/.env" 2>/dev/null || true
 fi
 
 # 1. 루트/일반 사용자 권한 확인 및 OS 패키지 매니저 분기
