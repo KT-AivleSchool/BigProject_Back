@@ -171,6 +171,7 @@ def _prepare_dirs(run_id: str, domain: str, mode: str = MODE_FIXTURE) -> None:
     # reviewed 는 **픽스처 것으로 덮어쓴다** — 이게 고정의 핵심이다.
     rev = d / "step1" / f"{pre}_audit_result_reviewed.json"
     shutil.copyfile(fix_rev, rev)
+    shutil.copyfile(fix_rev, d / "step1" / "reviewed.json")
 
     # 🔴 hitl 모드는 이 사본의 **배제 확정을 전부 제안값으로 되돌린다**(2026-08-10 사람 지시).
     #    픽스처에는 예전 확정(`confirmed:true`)이 박혀 있어 그대로 두면 게이트A 가

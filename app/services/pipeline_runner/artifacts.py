@@ -30,23 +30,47 @@ def artifact_path(run_id: str, name: str) -> Path | None:
 
     if name in ARTIFACTS:
         sub, suffix = ARTIFACTS[name]
+        # 1. Primary path in run directory
         p = d / sub / f"{pre}{suffix}"
         if p.is_file():
             return p
+        # 2. Alternate path in run directory without prefix
         p_alt = d / sub / suffix.lstrip("_")
         if p_alt.is_file():
             return p_alt
+        # 3. Alternate path named reviewed.json
+        p_rev = d / sub / "reviewed.json"
+        if p_rev.is_file():
+            return p_rev
+
+        # 4. Fallback for 'reviewed' artifact
         if name == "reviewed":
             from app.config import DATA_ROOT, DOMAIN_ROOT
-            fix_p = Path(str(DOMAIN_ROOT)) / f"{doc['domain']}_FIX" / "reviewed.json"
+            fix_p = Path(str(DOMAIN_ROOT)) / f"{pre}_FIX" / "reviewed.json"
             if fix_p.is_file():
                 return fix_p
+            fix_p2 = Path(str(DOMAIN_ROOT)) / f"{doc['domain']}_FIX" / "reviewed.json"
+            if fix_p2.is_file():
+                return fix_p2
             step1_p = Path(str(DATA_ROOT)) / "step1_output" / f"{pre}_audit_result_reviewed.json"
             if step1_p.is_file():
                 return step1_p
             step1_p2 = Path(str(DATA_ROOT)) / "step1_output" / f"{doc['domain']}_audit_result_reviewed.json"
             if step1_p2.is_file():
                 return step1_p2
+            step1_dir = Path(str(DATA_ROOT)) / "step1_output"
+            if step1_dir.is_dir():
+                matches = list(step1_dir.glob("*_audit_result_reviewed.json"))
+                if matches:
+                    return matches[0]
+
+        # 5. Any file in the sub directory
+        sub_dir = d / sub
+        if sub_dir.is_dir():
+            files = [f for f in sub_dir.iterdir() if f.is_file()]
+            if files:
+                return files[0]
+
         return None
 
     m = _CLEAN_NAME_RE.match(name)
