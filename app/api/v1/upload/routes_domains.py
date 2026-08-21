@@ -39,7 +39,7 @@ async def list_domains(
     if root in ("all", "preset"):
         seen = set(uploads) if root == "all" else set()
         out += [
-            _domain_item(n, domain_paths(str(Path(str(USER_INPUT_ROOT).replace("user_input", "")) / n)), "preset")
+            _domain_item(n, domain_paths(n), "preset")
             for n in _preset_domains()
             if n not in seen
         ]
