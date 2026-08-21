@@ -72,15 +72,12 @@ if [ -n "$CURRENT_USER" ] && [ "$CURRENT_USER" != "root" ]; then
   echo "  ✅ 사용자 '$CURRENT_USER' Docker 그룹 등록 완료."
 fi
 
-# 3. Python 빠른 패키지 매니저 (uv) 설치 (PEP 668 대응)
-echo "📌 [3/6] Python uv 패키지 매니저 설치..."
+# 3. Python 빠른 패키지 매니저 (uv) 설치 및 확인
+echo "📌 [3/6] Python uv 패키지 매니저 확인..."
 export PATH="$HOME/.cargo/bin:$HOME/.local/bin:/root/.cargo/bin:/root/.local/bin:$PATH"
 if ! command -v uv &> /dev/null; then
-  (curl -sSf https://astral.sh/uv/install.sh | sh 2>/dev/null) || true
+  $SUDO apt-get install -y python3-uv &>/dev/null || (curl -sSf https://astral.sh/uv/install.sh | sh &>/dev/null) || true
   export PATH="$HOME/.cargo/bin:$HOME/.local/bin:/root/.cargo/bin:/root/.local/bin:$PATH"
-fi
-if ! command -v uv &> /dev/null; then
-  pip3 install --break-system-packages uv 2>/dev/null || pip install --break-system-packages uv 2>/dev/null || true
 fi
 
 # 4. 프론트엔드 Node.js 의존성 설치
