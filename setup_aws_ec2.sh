@@ -42,8 +42,17 @@ fi
 
 echo "📌 [1/6] 시스템 필수 패키지 및 패키지 매니저 업데이트..."
 if command -v apt-get &> /dev/null; then
-  $SUDO apt-get update -y
-  $SUDO apt-get install -y docker.io docker-compose-v2 python3 python3-pip python3-venv nodejs npm git curl gdal-bin libgdal-dev build-essential
+  if $SUDO fuser /var/lib/dpkg/lock-frontend &> /dev/null; then
+    echo "  ⏳ 우분투 백그라운드 자동 업데이트(unattended-upgr) 진행 중... 잠금 해제 대기 (최대 15초)"
+    for i in {1..5}; do
+      if ! $SUDO fuser /var/lib/dpkg/lock-frontend &> /dev/null; then
+        break
+      fi
+      sleep 3
+    done
+  fi
+  $SUDO apt-get update -y || echo "⚠️ apt update 완료 대기 실패, 패키지 설치 단계로 넘어갑니다."
+  $SUDO apt-get install -y docker.io docker-compose-v2 python3 python3-pip python3-venv nodejs npm git curl gdal-bin libgdal-dev build-essential || echo "⚠️ 일부 패키지가 이미 설치되어 있거나 dpkg 잠금 상태입니다. 구동을 계속합니다."
 elif command -v dnf &> /dev/null; then
   $SUDO dnf update -y
   $SUDO dnf install -y docker python3 python3-pip nodejs npm git curl gdal gdal-devel gcc gcc-c++
