@@ -142,8 +142,17 @@ if $DOCKER_CMD ps | grep -q omnisite-fastapi; then
   fi
 
   echo "  🚀 API 컨테이너 내에서 DB 스키마 복원 및 검증을 실행합니다..."
+  TABLE_COUNT=$($DOCKER_CMD exec omnisite-postgres-db psql -U postgres -d omnisite -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';" 2>/dev/null || echo "0")
+  if [ "${TABLE_COUNT:-0}" -lt "10" ]; then
+    echo "  📦 DB 시드 데이터(omnisite_seed.sql.gz) 복원을 실행합니다..."
+    if $DOCKER_CMD exec omnisite-postgres-db test -f /docker-entrypoint-initdb.d/01_seed.sql.gz; then
+      $DOCKER_CMD exec omnisite-postgres-db bash -c "zcat /docker-entrypoint-initdb.d/01_seed.sql.gz | psql -U postgres -d omnisite" || true
+    fi
+  fi
   $DOCKER_CMD exec omnisite-fastapi python scripts/bootstrap_db.py --yes --force
   $DOCKER_CMD exec omnisite-fastapi python scripts/bootstrap_db.py
+  $DOCKER_CMD exec omnisite-fastapi python scripts/load_audit_data.py 흡연 || true
+  $DOCKER_CMD exec omnisite-fastapi python scripts/load_audit_data.py 재활용 || true
 elif [ -f "setup_bootstrap.py" ]; then
   python3 setup_bootstrap.py
 elif [ -f "scripts/bootstrap_db.py" ]; then

@@ -53,18 +53,27 @@ ROOT = Path(__file__).resolve().parent.parent
 FIXED_RUN_ID = "정본"
 
 
+from app.config import domain_prefix  # noqa: E402
+
+
 def resolve_source(domain: str, run_id: str | None) -> tuple[Path, str]:
     """읽을 reviewed.json 경로와 그 산출물의 run_id 를 정한다."""
-    name = f"{domain}_audit_result_reviewed.json"
+    pre = domain_prefix(domain)
+    name = f"{pre}_audit_result_reviewed.json"
     if run_id:
         p = ROOT / "runs" / run_id / "step1" / name
         if not p.exists():
-            # 조용히 정본으로 흘러가지 않는다 — 부른 사람은 그 run 을 원한 것이다(원칙 1).
+            p_alt = ROOT / "runs" / run_id / "step1" / "reviewed.json"
+            if p_alt.exists():
+                return p_alt, run_id
             raise SystemExit(f"🔴 {p} 가 없다. run_id 를 확인할 것.")
         return p, run_id
 
     p = ROOT / "datasets" / "step1_output" / name
     if not p.exists():
+        p_fix = ROOT / "datasets" / f"{pre}_FIX" / "reviewed.json"
+        if p_fix.exists():
+            return p_fix, FIXED_RUN_ID
         raise SystemExit(
             f"🔴 {p} 가 없다. STEP1 을 먼저 돌리거나 --run <run_id> 로 지정할 것."
         )
