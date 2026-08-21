@@ -115,12 +115,12 @@ MVP: 용산구 흡연부스 / 2차: 성동구 재활용정거장.
 
 ```
 STEP0  프로파일링          gam2_profile.py
-STEP1  감리 AI + HITL      gam2_audit_judgment_test.py · gam2_audit_ops_catalog.py
+STEP1  감리 AI + HITL      gam2_audit_judgment_test/ (패키지) · gam2_audit_ops_catalog.py
        조례 로드            gam2_doc_extract.py(PDF→txt) · gam2_ordinance_select.py(조문 선별)
        상위법 검색          gam2_ordinance_acquisition.py
 STEP2  정제                gam2_clean_data.py
 STEP3  후보 생성            make_parcel_candidates.py
-       가중치 [A][A2][R][W][B][D][E][F]   gam2_weight_model.py · run_weight_model.py
+       가중치 [A][A2][R][W][B][D][E][F]   gam2_weight_model/ (패키지) · run_weight_model.py
 STEP4  입지 선정(MCLP)      gam4_site_select.py · gam4_spatial_ops.py · gam4_jimok.py
 ```
 
@@ -238,6 +238,32 @@ python app\tools\check_hitl_gate.py <도메인>         :: A2 — HITL 게이트
                                                      ::    값인가)를 **따로** 본다. 하나로 합치면 계약 §7-7
                                                      ::    (hitl·full 은 배제를 전부 다시 본다)이 조용히 뒤집힌다
 python app\tools\check_hitl_e2e.py <도메인>          :: A2 — fixture ↔ hitl 완주 대조 (🔴 LLM 1회)
+python app\tools\check_full_step01.py                :: STEP0·1 정본 3파일 **122항목**
+                                                     :: (LLM 0회 · DB 0회 · 네트워크 0회 · 디스크 원본 0건)
+                                                     :: 🔴 이 셋을 **한 대조기**로 묶은 이유 —
+                                                     ::    `gam2_audit_ops_catalog` 1,381 + `gam2_profile` 595 +
+                                                     ::    `gam2_run_pipeline` 305 은 파일이 셋이라 구멍도 셋으로
+                                                     ::    보이지만 실제로는 **모드 하나가 안 재어지고 있었다** —
+                                                     ::    `0-1` 칸은 `_PLAN` 에서 **`full` 에만** 있고 `full` 을
+                                                     ::    도는 대조기가 없었다. 하나가 셋을 덮는다
+                                                     :: 🔴 재는 것은 「돌아가는가」가 아니라 **「틀렸을 때 시끄러운가」**다.
+                                                     ::    §6 은 필터가 데이터셋을 **0행으로 만드는** 4갈래를 넣고
+                                                     ::    「원본 df 그대로 + high 플래그」인지 본다(성동구 18→0 사고)
+                                                     :: 🔴 §1 은 개수를 **안 맞춘다** — 「현재 개수를 주장하는 문구가
+                                                     ::    정본에 있는가」를 묻는다. 숫자를 맞춰두면 op 를 더할 때
+                                                     ::    또 상한다(실제로 「12개」인 채 15개가 됐다). 정본은
+                                                     ::    `len(REGISTRY)` 하나다. 지난 개수를 **과거로** 적은 것은 봐준다
+                                                     :: 🔴 §2 `depends_on` raise 는 **현재 stage 로는 안 터진다**
+                                                     ::    (run_geocode 3 < drop_null 7). stage 를 99 로 밀어 한 번
+                                                     ::    터뜨려 보고 **「지금은 못 터진다」를 같이 적는다** — 안 적으면
+                                                     ::    다음 사람이 「방어가 있다」로 읽는다
+                                                     :: 🔴 §7 `_norm_dong` 은 지명의 '제'까지 깎는다(`홍제1동`→`홍1동`).
+                                                     ::    예외 목록을 안 만드는 이유는 **양쪽에 같이** 걸기 때문이다.
+                                                     ::    그래서 남는 한계('제'로 시작하는 지명의 법정↔약식)는
+                                                     ::    통과 항목이 아니라 **실측으로 적어둔다**
+                                                     :: 🔴 §10 은 `RP.A.<이름>` 을 스텁해 배선만 잰다. 갈아끼우기 전에
+                                                     ::    **정본 이름 13개 실재**부터 본다 — 없는 이름을 스텁하면
+                                                     ::    오타가 통과하는 가짜 초록불이 된다. 끝에 원복도 대조한다
 python app\tools\check_cancel_run.py                 :: 실행 취소 `DELETE /runs/{id}` 43항목
                                                      :: (LLM·DB 0회 · 진짜 `runs/` 안 씀)
                                                      :: 🔴 묻는 것은 status.json 이 아니라 **자식이 죽었는가**다.
@@ -254,6 +280,108 @@ python app\tools\check_cancel_run.py                 :: 실행 취소 `DELETE /r
                                                      :: ⚠ `RUNS_ROOT` 를 임시 폴더로 바꾸고 도메인은
                                                      ::    `취소_대조용` 이다. 안 바꾸면 남의 run 과
                                                      ::    `_ACTIVE` 를 건드린다
+python app\tools\check_runner_pkg_proxy.py           :: 러너 패키지 프록시 23항목
+                                                     :: (DB·LLM·진짜 `runs/` 0회 — 경로를 문자열로만 다룬다)
+                                                     :: 🔴 2026-08-18 `pipeline_runner.py` 2,580행을 12개
+                                                     ::    서브모듈로 가르면서 생긴 **마법 하나**를 지킨다.
+                                                     ::    `from .state import RUNS_ROOT` 는 **값을 복사**하므로
+                                                     ::    `R.RUNS_ROOT = tmp` 가 패키지 attr 만 고치고 서브모듈은
+                                                     ::    옛 값을 계속 본다 — **예외가 안 난다.** 실측(프록시
+                                                     ::    없이): 패키지 attr `/tmp/fake` ↔ `run_dir()`
+                                                     ::    `\real\runs\r_1`. 그 상태로 `check_prune_runs` 는
+                                                     ::    **진짜 .gpkg 를 지우고** `check_run_records_e2e` 의
+                                                     ::    `reap_orphans()` 는 **남이 돌리는 run** 을 닫는다
+                                                     :: 🔴 대조기 9종은 **한 줄도 안 고쳤다**(사람 결정).
+                                                     ::    분할하면서 회귀망을 같이 고치면 「분할이 안전한가」를
+                                                     ::    재는 자와 재어지는 자가 같이 움직인다
+                                                     :: 🔴 §4 「모호하면 터진다」 — 같은 이름을 두 서브모듈이
+                                                     ::    **서로 다른 것**으로 들고 있으면 추측해서 한쪽만
+                                                     ::    고치지 않고 `RuntimeError` 다(원칙 1). 같은 객체를
+                                                     ::    여럿이 들고 있는 건 모호가 아니다 — 전부 고친다
+                                                     :: 🔴 §5 는 서브모듈이 **정의한** 122개가 패키지에서
+                                                     ::    **같은 객체**로 보이는지 + 밖에서 `R.<이름>` 으로
+                                                     ::    부르는 44개가 살아 있는지. 재내보내기를 빠뜨리면
+                                                     ::    라우터·대조기가 `AttributeError` 다
+                                                     :: ⚠ `_SEQ_PATH` 는 import 시점에 굳어 `RUNS_ROOT` 를
+                                                     ::    갈아끼워도 **안 따라온다**. 분할 전부터 그랬다 —
+                                                     ::    「분할이 이걸 바꾸지 않았다」를 재는 항목이다
+python app\tools\check_audit_pkg_proxy.py            :: 감리 패키지 프록시 22항목
+                                                     :: (DB·LLM 0회 · 도메인 폴더도 안 읽는다)
+                                                     :: 🔴 2026-08-19 `gam2_audit_judgment_test.py` 2,179행을
+                                                     ::    11개 서브모듈로 가르면서 생긴 **같은 마법**을 지킨다.
+                                                     ::    위 러너 것과 원리는 같지만 **손해가 다르다** —
+                                                     ::    여기서 프록시가 죽으면 `check_full_step01.py` §10 이
+                                                     ::    꽂는 스텁 11개가 아무 데도 안 닿아 **진짜 `RealLLM`
+                                                     ::    이 불린다**(그 스텁의 정체는 부르면 터지는
+                                                     ::    `_BoomLLM` 이다). 즉 **돈이 드는 진짜 호출을 하면서
+                                                     ::    122/122 초록불**이 뜬다
+                                                     :: 🔴 §3 이 핵심이다 — 패키지 **안쪽** 호출자도 갈아낀
+                                                     ::    것을 보는가. `harness` 는 `enrich_hitl_flags` 를,
+                                                     ::    `admin_code` 는 `build_fixtures` 를, `hitl` 은
+                                                     ::    `apply_radius_answer` 를 자기 전역으로 들고 있다.
+                                                     ::    attr 만 대조하면 §2 로 통과하므로 `_code_samples`
+                                                     ::    를 **실제로 불러** 스텁이 불렸는지 본다
+                                                     :: 🔴 §5 는 서브모듈이 **정의한** 53개가 패키지에서
+                                                     ::    같은 객체로 보이는지 + 밖에서 부르는 **19개**가
+                                                     ::    살아 있는지. `A.DOMAIN`(gam2_run_pipeline.py:209)은
+                                                     ::    **주석 안**이라 목록에 없다 — 부분문자열로 세면 낀다
+                                                     :: ⚠ 장부(`_SUBMODULES`)는 **10개**이고 `__main__` 은
+                                                     ::    없는 게 맞다(CLI 진입점이라 아무도 그 전역을 안
+                                                     ::    갈아끼운다). 러너 것과 세는 단위가 다르다
+python app\tools\check_weight_pkg_proxy.py           :: 가중치 패키지 프록시 24항목
+                                                     :: (DB·LLM·파일 0회 — 순수 dict 만 넘긴다)
+                                                     :: 🔴 2026-08-19 `gam2_weight_model.py` 1,752행을 10개
+                                                     ::    서브모듈로 가르면서 건 **같은 마법**을 지킨다.
+                                                     ::    앞의 둘과 **묻는 것이 다르다** — 여기엔
+                                                     ::    `W.<이름> = …` 로 갈아끼우는 곳이 **0곳**이다.
+                                                     ::    그래서 이건 오늘의 기능이 아니라 **규칙**을 잰다:
+                                                     ::    `A.RealLLM = 스텁` 이 되는 걸 본 사람은
+                                                     ::    `W.build_matrix = 스텁` 도 될 거라고 읽는다 —
+                                                     ::    셋 중 하나만 다르면 그 기대가 **말없이 배신당한다**
+                                                     ::    (예외가 안 나고 옛 값으로 돈다)
+                                                     :: 🔴 §3 이 핵심이다 — 패키지 **안쪽** 사본도 갈아끼나.
+                                                     ::    `matrix` 는 `load_admin_crosswalk` 를,
+                                                     ::    `diagnostics` 는 `critic_weights`·`synthesize` 를
+                                                     ::    자기 전역으로 들고 있다. attr 만 대조하면 §2 로
+                                                     ::    통과하므로 `diagnose_alpha` 를 **실제로 불러**
+                                                     ::    스텁이 낸 값이 나오는지 본다(`alphas=(0.0,0.4)` →
+                                                     ::    `{'가':1.0,'나':0.0}` · `{'가':0.6,'나':0.4}`)
+                                                     :: 🔴 §5 는 서브모듈이 **정의한** 44개가 패키지에서
+                                                     ::    같은 객체로 보이는지 + 밖에서 `W.<이름>` 으로
+                                                     ::    부르는 **27개**가 살아 있는지
+                                                     ::    (`gam4_site_select`·`run_weight_model`·
+                                                     ::     `check_loader_health`·`make_parcel_candidates`·
+                                                     ::     `check_exclusion_state`)
+                                                     :: ⚠ 장부는 **10개**이고 `__main__` 이 **없는 게 맞다** —
+                                                     ::    원본에 `if __name__ == "__main__"` 이 애초에 없었다.
+                                                     ::    그래서 이 분할은 **사람이 치는 명령이 하나도 안 바뀐다**
+                                                     ::    (감리 것은 `python -m …` 로 바뀌었다)
+python app\tools\check_split_ast.py <옛리비전>:<옛경로> <새패키지폴더>
+                                                     :: 분할 전후 **본문이 같은가** (git show + 파싱만)
+                                                     :: 🔴 분할의 진짜 위험은 「import 가 깨진다」가 아니다 —
+                                                     ::    그건 터지니 걸린다. 위험한 건 **옮기다 한 줄이
+                                                     ::    바뀌는 것**이고, 조건 하나·기본값 하나가 달라져도
+                                                     ::    예외는 안 나고 **값만 조용히 틀린다**
+                                                     :: 🔴 그걸 숫자로 잡아 줄 유일한 자(`check_fixture.py`)가
+                                                     ::    **아무 데서나 못 돈다** — `datasets/region_data/`
+                                                     ::    (지적도·경계)가 gitignore 라 clone 에 안 오고,
+                                                     ::    산출물을 새로 뽑으려면 **유료 실행 + 공유 정본
+                                                     ::    덮어쓰기**다. 그 자리를 이게 메운다: 최상위 정의의
+                                                     ::    AST 가 같으면 값이 달라질 **경로가 구조적으로 없다**
+                                                     :: 🔴 **초록불이 목표가 아니다.** 분할이 일부러 바꾸는
+                                                     ::    것은 여기서 **다르다고 나오는 게 맞다**. 예외 목록을
+                                                     ::    심지 않는다 — 상한 예외 목록은 「안 봤다」를
+                                                     ::    「봤는데 괜찮다」로 바꾼다(원칙 4). 다른 게 나오면
+                                                     ::    눈으로 보고 **커밋 메시지에 적는다**
+                                                     :: 🔴 같은 이름이 두 서브모듈에 있으면 같이 알린다 —
+                                                     ::    프록시가 raise 하는 그 모호함이자 「모듈 사본」
+                                                     ::    함정의 흔적이다(import 는 되고 값만 다르게 나온다)
+                                                     :: 실측 2026-08-19 — 감리 53개 中 **52 동일**, 다른 1건은
+                                                     ::    `_ROOT`(깊어진 만큼 `".."` 2→3, 런타임 값은 그대로) ·
+                                                     ::    러너 122개 中 **121 동일**, 다른 1건은 `submit_gate`
+                                                     ::    안의 지연 `from .runner import _spawn`(사이클 차단)
+                                                     :: ⚠ 줄 수·포맷·주석·import 위치는 **안 본다**(갈라도 되는
+                                                     ::    것들이다). 그래서 ruff 포맷 차이에 안 흔들린다
 python app\tools\check_upload_api.py                 :: 업로드 API (in-process TestClient)
                                                      :: [--no-ingest] 벡터 적재·검색 제외 → **17항목**·LLM 0회
                                                      ::    (2026-08-16 실측 16/17. 전체 실행 개수는 **안 쟀다** —
@@ -477,7 +605,12 @@ python app\tools\prune_runs.py [--keep N] [--yes]           :: runs/ 의 .gpkg·
 
 :: 파이프라인
 python app\services\gam2_run_pipeline.py <도메인> "<지역> <시설> 부지 선정"
-python app\services\gam2_audit_judgment_test.py hitl <도메인>
+python -m app.services.gam2_audit_judgment_test hitl <도메인>
+                                                 :: 🔴 2026-08-19 패키지로 분할됐다. **스크립트 형태는 못 쓴다**
+                                                 ::    (옛) python app\services\gam2_audit_judgment_test.py hitl …
+                                                 ::    러너는 이 모듈을 subprocess 로 안 부르므로
+                                                 ::    (`pipeline_runner/commands.py` 의 `_svc` 대상 5개에 없다)
+                                                 ::    바뀌는 것은 **사람이 손으로 치는 경로뿐**이다
 python app\services\gam2_clean_data.py <도메인>   :: [--refresh-geocode] 지오코딩 실패분만 재호출
 python app\services\make_parcel_candidates.py <도메인>
 python app\services\run_weight_model.py <도메인> --candidates 후보_지적도필지.gpkg ^

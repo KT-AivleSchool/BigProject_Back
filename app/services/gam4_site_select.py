@@ -473,7 +473,7 @@ def _guard_zero_area(rows: list) -> None:
         f"{lines}\n\n"
         f"  점 레이어인데 반경이 없으면 면적이 0 이 됩니다.\n"
         f"  HITL 에서 배제반경을 입력하거나, 그 레이어를 hard_exclusion 에서 빼세요:\n"
-        f"    python app\\services\\gam2_audit_judgment_test.py hitl <도메인>"
+        f"    python -m app.services.gam2_audit_judgment_test hitl <도메인>"
     )
 
 

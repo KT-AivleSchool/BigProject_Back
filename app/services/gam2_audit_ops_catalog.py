@@ -6,7 +6,7 @@ OmniSite 감리 AI — 연산 카탈로그 (확장형 레지스트리) v4
 v4 변경 (STEP 2 정제 착수 전, 지역판정 하드코딩 제거)
   [삭제] EXPECTED_RECIPES        : 채점 구조 폐기됨 → 정답표 제거(하네스도 정리)
   [삭제] DISTRICT_BBOX 의존       : 구별 bbox 좌표를 손으로 박던 하드코딩 소스 제거
-  [삭제] filter_bbox op          : bbox 폴백의 사전필터 → 폴백 폐지로 제거 (op 13→12)
+  [삭제] filter_bbox op          : bbox 폴백의 사전필터 → 폴백 폐지로 제거 (**그 시점** 13→12)
   [변경] reverse_geocode          : filter_bbox 의존 제거 (독립 폴백으로 유지)
   [변경] spatial_join_admin       : params.shp_path 제거 → ctx.adm_shp_path 단일 소스
   [변경] validate_geocode         : bbox 검사 → SHP within + 최빈 ADM_CD 자동 판정
@@ -460,7 +460,10 @@ def _vworld_sigungu(x, y) -> str | None:
 
 
 # ══════════════════════════════════════════════════════════════════
-# 2. 카탈로그 — 원자 op 12개
+# 2. 카탈로그 — 원자 op
+#    🔴 개수를 여기 적지 않는다. 정본은 `REGISTRY` 하나이고, 숫자를 적어두면 op 를
+#       더할 때마다 상한다(실제로 「12개」로 적혀 있었고 그동안 15개가 됐다).
+#       세고 싶으면 `len(REGISTRY)` 를 부른다.
 # ══════════════════════════════════════════════════════════════════
 
 
@@ -1302,7 +1305,7 @@ class OpLog:
     elapsed_sec: float
 
 
-def _plan_ops(cleaning_ops: list[dict]) -> list[dict]:
+def _plan_ops(cleaning_ops: list[dict]) -> tuple[list[dict], list[str]]:
     """실행 계획 수립.
       · dict 로 뭉개지 않는다 -> 같은 op_id 2회 이상 허용
       · stage 기준 **안정 정렬** -> 같은 stage 내 AI 순서 보존

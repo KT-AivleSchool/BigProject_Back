@@ -49,10 +49,20 @@ C.DATA_ROOT = TMP
 C.DOMAIN_ROOT = TMP
 C.USER_INPUT_ROOT = TMP / "user_input"
 
-import app.api.v1.upload as U  # noqa: E402
+# 🔴 `upload` 는 2026-08-18 에 모듈에서 **패키지**가 됐다. 순수 함수(`_nfc`·`_safe_name`
+#    ·`_ledger_*`·`_disk_match`)와 `_REDIS_KEY` 는 전부 `upload/services.py` 로 갔다.
+#    패키지 `__init__` 은 `router` 만 내보내므로 `app.api.v1.upload` 를 보면 없다.
+# 🔴 그리고 라우트 모듈들은 `from ... import USER_INPUT_ROOT` 로 **자기 전역에 다시
+#    묶는다** — 갈아끼울 자리가 하나에서 여럿이 됐다. 실제 방어는 위 42행의
+#    `OMNISITE_DATA_ROOT` 환경변수(config import 전)이고 아래 대입은 이중 방어다.
+#    묶는 모듈을 전부 적는다 — 하나만 적으면 나머지가 진짜 `datasets/` 를 가리킨다.
+import app.api.v1.upload.services as U  # noqa: E402
+import app.api.v1.upload.routes_domains as _R_DOM  # noqa: E402
 
 U.DATA_ROOT = TMP
+U.DOMAIN_ROOT = TMP
 U.USER_INPUT_ROOT = TMP / "user_input"
+_R_DOM.USER_INPUT_ROOT = TMP / "user_input"
 
 from app.api.deps import get_redis  # noqa: E402
 
