@@ -74,12 +74,13 @@ fi
 
 # 3. Python 빠른 패키지 매니저 (uv) 설치 (PEP 668 대응)
 echo "📌 [3/6] Python uv 패키지 매니저 설치..."
+export PATH="$HOME/.cargo/bin:$HOME/.local/bin:/root/.cargo/bin:/root/.local/bin:$PATH"
 if ! command -v uv &> /dev/null; then
-  curl -sSf https://astral.sh/uv/install.sh | sh || true
-  export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+  (curl -sSf https://astral.sh/uv/install.sh | sh 2>/dev/null) || true
+  export PATH="$HOME/.cargo/bin:$HOME/.local/bin:/root/.cargo/bin:/root/.local/bin:$PATH"
 fi
 if ! command -v uv &> /dev/null; then
-  pip3 install --break-system-packages uv || pip3 install uv || true
+  pip3 install --break-system-packages uv 2>/dev/null || pip install --break-system-packages uv 2>/dev/null || true
 fi
 
 # 4. 프론트엔드 Node.js 의존성 설치
