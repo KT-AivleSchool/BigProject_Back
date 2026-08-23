@@ -263,10 +263,11 @@ async def run_debate_and_publish(
             graph = build_discussion_graph()
 
             # 토론 시작 전 공통 RAG(Common RAG) 1회 선검색.
-            # 시설별 검색 키워드와 `facility_type` 필터는 공용 함수 안에 있다 —
-            # B 다인 토론도 **같은 조문**으로 토론해야 두 결과를 나란히 비교할 수 있다.
+            # 시설별 검색 키워드 조립은 공용 함수 안에 있다 — B 다인 토론도
+            # **같은 조문**으로 토론해야 두 결과를 나란히 비교할 수 있다.
+            # `domain` 이 어느 조례 콜렉션을 뒤질지 정한다(도메인마다 칸이 따로다).
             common_rag, rag_docs_list = await retrieve_ordinance_texts(
-                facility_type, terms=audit_meta.get("exclusion_targets")
+                domain, facility_type, terms=audit_meta.get("exclusion_targets")
             )
 
             # 이 토론이 **무엇을 근거로 했는지**를 결과에 박아둔다(원칙 4).

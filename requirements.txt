@@ -21,7 +21,10 @@ langchain-text-splitters>=0.0.1
 pgvector>=0.2.0
 asyncpg>=0.28.0
 playwright>=1.40.0
-pymupdf>=1.23.0
+# 🔴 조례 PDF 추출의 **유일한** 엔진이다(gam2_doc_extract·sim_ai·audit_ai 셋 다).
+#    하한이 1.24.3 인 이유는 `import pymupdf` 라는 이름이 그때 생겨서다 —
+#    1.23.x 는 `import fitz` 만 되므로 조용히 ImportError 로 떨어진다.
+pymupdf>=1.24.3
 jinja2>=3.1.2
 python-docx>=1.1.0
 olefile>=0.46

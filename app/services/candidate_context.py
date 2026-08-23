@@ -315,22 +315,26 @@ async def resolve_candidate(db: AsyncSession, parcel_id: int) -> dict:
 
 
 async def retrieve_ordinance_texts(
-    facility_type: str, top_k: int = 5, terms: list[str] | None = None
+    domain: str, facility_type: str, top_k: int = 5, terms: list[str] | None = None
 ) -> tuple[str, list[dict]]:
     """조례 벡터검색. `(프롬프트용 통짜 문자열, 문서 리스트)` 를 돌려준다.
 
-    🔴 `facility_type` 필터는 **반드시** 넘긴다. 이 인자를 받고도 안 쓰던 시절이
-       있었고, 그때 흡연부스 토론 상위 15건 중 4건이 전기차충전소 조례였다.
+    🔴 `domain` 은 **반드시** 넘긴다 — 조례 콜렉션이 도메인마다 따로다
+       (`vector_db.statutes_collection_name`). 예전엔 콜렉션이 하나라 여기서
+       `facility_type` 정확일치 필터로 갈랐는데, 그 필터를 안 걸었던 시절
+       흡연부스 토론 상위 15건 중 4건이 전기차충전소 조례였다. 지금은 **격리가
+       구조**라 필터 자체가 없다 — 안 거는 실수를 할 자리가 없어졌다.
 
+    `facility_type` 은 이제 격리 키가 아니라 **질의어**다.
     `terms` 는 질의를 넓히는 **도메인 어휘**다. 호출자가 감리 산출물에서 뽑아
     넘긴다(`audit_meta["exclusion_targets"]`). 안 넘기면 시설명 + 범용어만 쓴다 —
-    검색이 좁아질 뿐 틀린 도메인이 섞이지는 않는다(필터가 따로 걸려 있다).
+    검색이 좁아질 뿐 다른 도메인 조문이 섞이지는 않는다(콜렉션이 따로다).
     """
     query = " ".join([facility_type, *(terms or []), _ORDINANCE_QUERY_TERMS])
     try:
         vector_db = get_vector_db()
         retrieved_docs = await vector_db.retrieve_similar_statutes(
-            query, top_k=top_k, facility_type=facility_type
+            query, domain, top_k=top_k
         )
         # [C-7] 0건(정상)과 검색 장애를 문구로 구분한다.
         if not retrieved_docs:
@@ -353,8 +357,8 @@ async def build_site_context(
     프런트가 `gis_data`·`ordinance_contexts` 를 조립해 보내면 안 되는 이유:
       · 감리 근거는 `(domain, run_id, target_facility)` 로 좁혀야 하는데 그 셋의 출처가
         `booth_candidates` 행이다. 요청으로 받으면 후보지와 근거가 어긋날 수 있다.
-      · 조례 검색에는 `facility_type` 필터가 걸려야 한다(안 걸면 흡연부스 토론에
-        전기차충전소 조례가 섞인다 — 실제로 겪었다).
+      · 조례 벡터 콜렉션도 도메인마다 따로다 — 어느 칸을 뒤질지는 요청이 아니라
+        같은 행(`booth_candidates.domain`)에서 와야 근거와 후보지가 안 어긋난다.
       · A 와 B 가 다른 근거로 토론하면 두 결과를 나란히 놓고 비교할 수 없다.
 
     `facility_type` 을 안 주면 `booth_candidates.facility_type` 을 쓴다.
@@ -396,7 +400,7 @@ async def build_site_context(
     poi = await build_poi_context(resolved)
     poi_context = poi["text"]
     common_rag, rag_docs = await retrieve_ordinance_texts(
-        facility_type, terms=audit_meta.get("exclusion_targets")
+        resolved["domain"], facility_type, terms=audit_meta.get("exclusion_targets")
     )
 
     return {

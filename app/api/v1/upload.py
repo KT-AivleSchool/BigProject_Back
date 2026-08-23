@@ -25,8 +25,11 @@ Redis
 
 벡터 DB 적재
   조례는 `statute_parser.parse_statute()` 로 조(條) 단위 청킹해
-  `statutes_collection` 에 넣는다. 데이터팀 시드(`ingest_statutes.py`)와 **같은 파서**다.
-  다른 파서를 쓰면 같은 조례가 청크 모양이 달라져 검색 결과가 적재 경로에 따라 갈린다.
+  **그 도메인 콜렉션**(`statutes_<도메인>`)에 넣는다. 데이터팀 시드
+  (`ingest_statutes.py`)와 **같은 파서**다 — 다른 파서를 쓰면 같은 조례가 청크
+  모양이 달라져 검색 결과가 적재 경로에 따라 갈린다.
+  🔴 콜렉션이 도메인마다 따로라 **격리는 구조가 맡는다.** `facility_type` 은
+     격리 키가 아니라 사람이 보는 부가정보이고, 몰라도 업로드가 막히지 않는다.
 """
 
 from __future__ import annotations
@@ -72,7 +75,7 @@ from app.config import (
     user_domain_paths,
 )
 from app.core.data_pipeline.statute_parser import extract_doc_meta, parse_statute
-from app.core.sim_ai.vector_db import get_vector_db
+from app.core.sim_ai.vector_db import get_vector_db, statutes_collection_name
 from app.services.gam2_doc_extract import EXTRACTORS, TEXT_EXT, extract_text
 from app.services.gam2_ordinance_select import (
     has_siting_provision,
@@ -407,8 +410,10 @@ async def _save_stream(upload: UploadFile, dest: Path) -> tuple[int, str]:
     return size, h.hexdigest()
 
 
-def _resolve_facility_type(domain: str, explicit: Optional[str]) -> tuple[str, str]:
-    """벡터 DB 태깅에 쓸 `facility_type` 과 그 **출처**를 정한다.
+def _resolve_facility_type(
+    domain: str, explicit: Optional[str]
+) -> tuple[Optional[str], str]:
+    """청크 메타데이터에 적을 `facility_type` 과 그 **출처**를 정한다.
 
     하드코딩하지 않는다. `parse_statute` 의 기본값이 `"흡연부스"` 라 그대로 두면
     어느 도메인을 올려도 흡연부스 조례가 된다 — 안 터지고 값만 틀린다.
@@ -416,7 +421,14 @@ def _resolve_facility_type(domain: str, explicit: Optional[str]) -> tuple[str, s
     우선순위
       1) 요청이 직접 준 값                     source=request
       2) STEP1 감리 확정본의 facility_inference source=audit_reviewed
-      둘 다 없으면 400. 추측해서 태깅하지 않는다(원칙 1·5).
+      둘 다 없으면 `(None, "unknown")`. **추측해서 채우지 않는다**(원칙 1·5).
+
+    🔴 2026-08-24. 예전엔 둘 다 없으면 **400 으로 업로드를 막았다.** 조례 콜렉션이
+       `statutes_collection` 하나뿐이라 이 태그가 곧 격리 키였고, 검색이 이 값과
+       **정확일치**로 걸러서 한 글자만 달라도 근거가 전량 0건이 됐기 때문이다.
+       콜렉션을 도메인마다 나눈 뒤로 격리는 **구조**가 맡는다 — 이 태그는
+       사람이 보는 부가정보로 강등됐고, 몰라서 업로드를 막을 이유가 없어졌다.
+       화면1 의 「시설 유형」 칸이 필수였던 이유가 이것뿐이었다.
     """
     if explicit and explicit.strip():
         return explicit.strip(), "request"
@@ -434,14 +446,7 @@ def _resolve_facility_type(domain: str, explicit: Optional[str]) -> tuple[str, s
         except (OSError, json.JSONDecodeError) as e:
             logger.warning(f"[upload] {reviewed} 읽기 실패: {e}")
 
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail=(
-            f"도메인 '{domain}' 의 시설 종류를 알 수 없습니다. "
-            f"STEP1 감리(`{reviewed.name}`)가 아직 없으면 facility_type 을 함께 보내세요. "
-            f"이 값은 토론 단계의 조례 검색 필터와 정확히 일치해야 합니다."
-        ),
-    )
+    return None, "unknown"
 
 
 def _is_extract_cache(name: str) -> bool:
@@ -732,7 +737,12 @@ async def list_regulations(domain: str = Query(..., description="도메인 (예:
 
 
 def _chunk_counts(vector_db, domain: str) -> dict[str, int]:
-    """이 도메인에서 올린 조례의 파일별 청크 수 (동기 — to_thread 로 부른다)."""
+    """이 도메인에서 올린 조례의 파일별 청크 수 (동기 — to_thread 로 부른다).
+
+    콜렉션 자체가 도메인이라(`statutes_<도메인>`) `cmetadata->>'domain'` 조건은
+    없앴다. 남겨두면 **적재 시점에 그 키를 안 적은 청크가 조용히 0건으로 보인다** —
+    같은 칸에 있는데도 화면엔 「안 올라갔다」로 뜬다(원칙 4).
+    """
     from sqlalchemy import create_engine, text as sql_text
 
     engine = create_engine(vector_db.connection_string)
@@ -743,11 +753,10 @@ def _chunk_counts(vector_db, domain: str) -> dict[str, int]:
                     "SELECT e.cmetadata->>'upload_filename' AS fn, count(*) "
                     "FROM langchain_pg_embedding e "
                     "JOIN langchain_pg_collection c ON c.uuid = e.collection_id "
-                    "WHERE c.name = 'statutes_collection' "
-                    "  AND e.cmetadata->>'domain' = :d "
+                    "WHERE c.name = :cname "
                     "GROUP BY 1"
                 ),
-                {"d": domain},
+                {"cname": statutes_collection_name(domain)},
             ).fetchall()
         return {r[0]: r[1] for r in rows if r[0]}
     finally:
@@ -759,10 +768,17 @@ async def upload_regulation(
     domain: str = Form(..., description="도메인 (예: 흡연). 필수."),
     files: List[UploadFile] = File(...),
     facility_type: Optional[str] = Form(
-        None, description="벡터 DB 태깅용 시설 종류. 생략하면 STEP1 감리 확정본에서 읽는다."
+        None,
+        description=(
+            "청크 메타데이터에 적을 시설 종류(부가정보). 생략하면 STEP1 감리 확정본에서 "
+            "읽고, 그것도 없으면 비워 둔다 — 조례 격리는 도메인 콜렉션이 맡으므로 "
+            "이 값이 없어도 업로드·검색에 지장이 없다."
+        ),
     ),
     create_domain: bool = Form(False, description="도메인 폴더가 없으면 만든다"),
-    ingest: bool = Form(True, description="벡터 DB(statutes_collection) 적재 여부"),
+    ingest: bool = Form(
+        True, description="벡터 DB(statutes_<도메인>) 적재 여부"
+    ),
 ):
     """조례 문서 다중 업로드 → `datasets/<도메인>/law/` 저장 + 벡터 DB 적재.
 
@@ -905,7 +921,9 @@ async def upload_regulation(
 
                 if chunks:
                     await vector_db.add_statute_chunks(
-                        [c.text for c in chunks], metadatas=[c.metadata for c in chunks]
+                        domain,
+                        [c.text for c in chunks],
+                        metadatas=[c.metadata for c in chunks],
                     )
                     entry["chunks"] = len(chunks)
                     entry["ingested"] = True

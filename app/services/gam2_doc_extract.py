@@ -42,21 +42,28 @@ CACHE_SUFFIX = ".txt"  # <원본>.pdf.txt
 #   호출부(extract_text)가 잡아서 '건너뜀' 으로 처리한다.
 # =========================================================
 def _from_pdf(path: str) -> str:
-    """PDF 텍스트 추출. pdfplumber -> pypdf 순으로 시도.
+    """PDF 텍스트 추출 (PyMuPDF).
+
+    🔴 예전엔 pdfplumber → pypdf 순으로 시도했는데 **둘 다 requirements.txt 에
+       없었다**(2026-08-23). 로컬엔 손으로 깔려 있어 안 보였고, 배포 컨테이너에서만
+       `ModuleNotFoundError: pypdf` 로 조례 PDF 가 통째로 텍스트 0자가 됐다.
+       업로드는 그걸 "스캔본이거나 패키지가 없습니다" 로 알려서 스캔본으로 읽혔다.
+       엔진을 늘리지 않고 **줄여서** 고친다 — 이 저장소의 다른 PDF 추출기 둘
+       (`sim_ai/document_loader.py`·`audit_ai/parser.py`)은 처음부터 PyMuPDF 를
+       썼다. 한 벌로 합쳐야 로컬과 서버가 같은 텍스트를 낸다.
+
+    `sort=True` 는 필수다. 기본값은 PDF 내부 저장 순서라 조판에 따라 제목·머리말이
+    본문 뒤로 밀린다(실측: EV 시행령 PDF 에서 제목 2줄이 맨 끝으로 갔다).
+    같은 이유가 `sim_ai/document_loader.py:28` 에도 적혀 있다 — 용산구 조례에서
+    조문 첫 줄이 앞 조문 꼬리에 붙어 파싱이 전량 오정렬됐다.
 
     스캔본(이미지 PDF)은 텍스트가 안 나온다 — 빈 문자열이 반환되며
     호출부가 경고한다. OCR 은 범위 밖이다(별도 파이프라인).
     """
-    try:
-        import pdfplumber
+    import pymupdf
 
-        with pdfplumber.open(path) as pdf:
-            return "\n".join((p.extract_text() or "") for p in pdf.pages)
-    except ImportError:
-        pass
-    from pypdf import PdfReader  # 폴백
-
-    return "\n".join((p.extract_text() or "") for p in PdfReader(path).pages)
+    with pymupdf.open(path) as doc:
+        return "\n".join(page.get_text("text", sort=True) for page in doc)
 
 
 def _from_docx(path: str) -> str:
@@ -126,7 +133,7 @@ def extract_text(path: str, force: bool = False, verbose: bool = True) -> str | 
     except ImportError as e:
         if verbose:
             pkg = {
-                "_from_pdf": "pdfplumber 또는 pypdf",
+                "_from_pdf": "pymupdf",
                 "_from_docx": "python-docx",
                 "_from_hwpx": "(내장)",
             }.get(fn, "")

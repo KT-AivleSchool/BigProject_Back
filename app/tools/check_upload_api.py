@@ -300,40 +300,47 @@ def main() -> int:
 
             vdb = get_vector_db()
 
+            # 🔴 2026-08-24 뒤집었다. 예전 세 항목은 「`facility_type` 정확일치 필터가
+            #    시설을 가르는가」를 물었다. 지금은 조례 콜렉션이 **도메인마다 따로**라
+            #    (`statutes_<도메인>`) 필터 자체가 없다 — 그 항목들을 그대로 두면
+            #    **없어진 동작을 계속 요구해** 고친 쪽이 빨간불이 된다(CLAUDE.md
+            #    「대조기가 기대값으로 오탐을 박아두면 고칠 때 대조기부터 뒤집어야 한다」).
+            #    묻는 것이 바뀌었다: 격리가 **태그**가 아니라 **칸**으로 성립하는가.
+            from app.core.sim_ai.vector_db import statutes_collection_name
+
             async def _probe():
                 q = "흡연부스 설치 기준 이격거리"
-                mine = await vdb.statutes_store.asimilarity_search_with_relevance_scores(
-                    q, k=5, filter={"facility_type": FACILITY}
-                )
-                other = await vdb.statutes_store.asimilarity_search_with_relevance_scores(
-                    q, k=15, filter={"facility_type": "흡연부스"}
-                )
-                nofilter = (
-                    await vdb.statutes_store.asimilarity_search_with_relevance_scores(
-                        q, k=15
-                    )
-                )
-                return mine, other, nofilter
+                # 무필터다 — 서비스(`retrieve_similar_statutes`)와 같은 경로.
+                mine = await vdb.statutes_store_of(
+                    TEST_DOMAIN
+                ).asimilarity_search_with_relevance_scores(q, k=15)
+                other = await vdb.statutes_store_of(
+                    "흡연"
+                ).asimilarity_search_with_relevance_scores(q, k=15)
+                return mine, other
 
-            mine, other, nofilter = asyncio.run(_probe())
+            mine, other = asyncio.run(_probe())
             chk(
-                f"filter='{FACILITY}' 는 업로드분만",
+                f"'{statutes_collection_name(TEST_DOMAIN)}' 에 업로드분이 들어갔다",
                 bool(mine)
-                and all(d.metadata.get("facility_type") == FACILITY for d, _ in mine),
+                and all(
+                    d.metadata.get("domain") == TEST_DOMAIN for d, _ in mine
+                ),
                 f"{len(mine)}건",
             )
+            # 🔴 이게 핵심이다. 같은 질의를 **다른 도메인 칸**에 쳤을 때 방금 올린 것이
+            #    한 건도 안 나와야 한다. 필터를 거는 게 아니라 **뒤지는 칸이 다르다**.
+            #    예전 구조에선 이 질의가 남의 토론에 그대로 섞였다.
+            leaked = sum(1 for d, _ in other if d.metadata.get("domain") == TEST_DOMAIN)
             chk(
-                "filter='흡연부스' 에 업로드분이 안 섞인다",
-                all(d.metadata.get("facility_type") == "흡연부스" for d, _ in other),
-                f"{len(other)}건",
-            )
-            leaked = sum(
-                1 for d, _ in nofilter if d.metadata.get("facility_type") != "흡연부스"
+                "다른 도메인 콜렉션에는 안 샌다 (격리가 태그가 아니라 구조다)",
+                leaked == 0,
+                f"'{statutes_collection_name('흡연')}' {len(other)}건 중 유출 {leaked}건",
             )
             chk(
-                "필터 없으면 다른 시설 조례가 섞인다 (필터가 왜 필요한지)",
-                leaked > 0,
-                f"무필터 15건 중 타시설 {leaked}건",
+                "그 도메인 청크 수를 셀 수 있다 (0건이 미적재인지 저유사도인지 가른다)",
+                vdb.count_statute_chunks(TEST_DOMAIN) == f1.get("chunks"),
+                f"count={vdb.count_statute_chunks(TEST_DOMAIN)} / 적재={f1.get('chunks')}",
             )
 
             r = client.delete(
