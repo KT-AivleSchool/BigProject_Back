@@ -30,6 +30,7 @@ import logging
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -1790,9 +1791,40 @@ def _fail_reason(tail: list[str], rc: int) -> str:
        들여쓰기가 없고 프레임 줄은 있다는 것으로 가른다(파이썬 표준 형식).
        연쇄 예외면 **마지막** 트레이스백을 쓴다 — 그게 실제로 죽인 예외다.
 
+    🔴 **시그널로 죽으면 자식이 아무것도 못 찍는다**(2026-08-25). 마커도 트레이스백도
+       없으니 위 두 갈래가 다 빗나가고 `tail[-1]` 로 떨어지는데, 그 줄은 사유가 아니라
+       **죽기 직전의 진행 로그**다. 실측(EC2 STEP3 가중치) —
+
+           실행이 실패했습니다.
+           [E] 점수  min 0.0000  중앙 0.2301  max 0.9977   ← 이 줄이 오류로 떴다
+
+       리눅스 OOM killer 가 SIGKILL 을 보내면 `child.wait()` 이 **`-9`** 를 준다
+       (POSIX 에서 파이썬은 시그널 N 사망을 `-N` 으로 돌려준다). 그러니 `rc < 0` 은
+       그 자체로 사인(死因)이고, 마커·트레이스백보다 **먼저** 본다 — 시그널에 죽은
+       프로세스는 스스로 끝낸 게 아니라서 tail 에 뭐가 있든 그건 사인이 아니다.
+       ⚠ 「메모리 부족」은 **추측이라 추측이라고 적는다**(원칙 5) — SIGKILL 은 수동
+       kill 로도 온다. 마지막 진행 줄은 버리지 않고 **이름을 붙여** 남긴다: 사유
+       자리에 두면 거짓말이 되고, 빼면 어디까지 갔는지가 사라진다(원칙 4).
+       ⚠ Windows 는 시그널 사망도 **큰 양수**라 이 갈래에 안 걸린다 — 로컬에서는
+       재현되지 않고 배포 서버에서만 나온다.
+       ⚠ 취소(SIGTERM `-15`)는 여기 안 온다. 호출부가 `_is_cancelled` 를 **먼저**
+       보고 `_Cancelled` 로 빠진다.
+
     둘 다 없으면 마지막 줄로 되돌아간다. **지어내지 않는다** — 못 찾았을 때
     그럴듯한 문장을 합성하면 없는 사유가 기록된다.
     """
+    if rc < 0:
+        try:
+            signame = signal.Signals(-rc).name
+        except ValueError:                     # 모르는 번호면 번호만 말한다
+            signame = f"SIG{-rc}"
+        # 9=SIGKILL. `signal.SIGKILL` 로 쓰면 **Windows 에서 AttributeError** 다
+        # (그 상수가 없다). 이 갈래는 안 걸리지만 상수 참조는 그래도 평가된다.
+        why = " (메모리 부족일 수 있습니다)" if -rc == 9 else ""
+        last = next((ln.strip() for ln in reversed(tail) if ln.strip()), "")
+        msg = f"자식이 시그널 {-rc}({signame})으로 종료됨{why}"
+        return f"{msg}\n마지막 진행: {last}" if last else msg
+
     start = None
     for i in range(len(tail) - 1, -1, -1):
         if tail[i].lstrip().startswith("[중단]"):
@@ -1807,7 +1839,14 @@ def _fail_reason(tail: list[str], rc: int) -> str:
                         break
                 break
     if start is None:
-        return tail[-1].strip() if tail else f"종료 코드 {rc}"
+        # 🔴 `tail[-1]` 이 아니라 **마지막 비어 있지 않은 줄**이다(2026-08-25).
+        #    자식 출력이 빈 줄로 끝나는 건 흔한데, 그러면 사유가 `''` 이 되어
+        #    화면이 「실행이 실패했습니다」만 띄우고 **아무 말도 안 한다**
+        #    (「message 가 비면 화면이 통째로 빈다」 — 원칙 4).
+        return next(
+            (ln.strip() for ln in reversed(tail) if ln.strip()),
+            f"종료 코드 {rc}",
+        )
     block = tail[start:]
     if len(block) > 12:                    # 트레이스백이 통째로 붙는 경우
         block = block[:12] + [f"… (이하 {len(block) - 12}줄은 run.log)"]
