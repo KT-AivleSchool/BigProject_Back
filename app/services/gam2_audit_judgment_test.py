@@ -1219,11 +1219,21 @@ def enrich_hitl_flags(
 
 
 def search_exclusion_radius(
-    dataset_summary: str, region: str, facility: str = "", model: str | None = None
+    dataset_summary: str,
+    region: str,
+    facility: str = "",
+    model: str | None = None,
+    facility_type: str = "",
 ) -> dict:
     """[폴백] OpenAI Responses API + web_search 로 배제반경 후보 검색(법령 API 실패 시).
     반환: {"제안값": int|null, "출처": url|null, "근거문장": str, "source_type": "web_search"}
     ※ 확정 아님 — confirmed 는 호출부에서 계속 false 로 둔다(사람 확인 필수).
+
+    🔴 `facility_type`(이격 **기준이 되는** 시설)은 필수에 가깝다. 없으면 프롬프트가
+       「무엇으로부터의 거리인가」를 못 말해서 모델이 아무 조례나 긁어 온다 —
+       1차 경로 `find_radius_in_laws` 에는 그 가드가 있는데 여기만 없어서,
+       **1차가 실패해 폴백으로 온 케이스에서만** 오염이 났다(2026-08-24 실측:
+       지하철역 → 「부실공사 방지 조례」, 버스정류소 → 「옥외광고물 수수료」).
     """
     from openai import OpenAI
     from app.config import OPENAI_API_KEY, SEARCH_LLM_MODEL
@@ -1232,17 +1242,25 @@ def search_exclusion_radius(
     m = model or SEARCH_LLM_MODEL
 
     fac = facility or "대상 시설"
+    _ft = (facility_type or dataset_summary or "").strip()
     prompt = (
-        f"한국 {region}에서 '{fac}' 입지를 선정한다. '{dataset_summary}'에 해당하는 시설로부터 "
+        f"한국 {region}에서 '{fac}' 입지를 선정한다. '{_ft}'(으)로부터 "
         f"'{fac}' 설치가 금지되는 법정 이격거리(배제 반경, 미터)를 찾아라. "
         f"근거는 반드시 법령·시행령·조례 등 공식 출처여야 한다. "
-        f"블로그·뉴스의 인용값은 신뢰하지 말고, 원 법령을 확인하라. "
+        f"블로그·뉴스의 인용값은 신뢰하지 말고, 원 법령을 확인하라.\n"
+        f"[중요] 반드시 '{_ft}' 를(을) **기준으로 한 거리**여야 한다. 다음은 답이 아니다:\n"
+        f"  · '{fac}'(대상 시설) 자체를 건물 어디에 두라는 설치 위치 규정\n"
+        f"  · 다른 시설을 기준으로 한 거리\n"
+        f"  · 거리와 무관한 조문(수수료·용어 정의·벌칙 등)\n"
+        f"근거문장에 '{_ft}' 가 나오지 않으면 그 문장은 답이 아니다. 그런 경우 "
+        f"**제안값·출처·근거문장을 전부 null** 로 하라 — 억지로 다른 조례를 쓰지 마라. "
+        f"못 찾았다고 답하는 것이 엉뚱한 조문을 대는 것보다 낫다.\n"
         f"★중요: 반드시 '현행(현재 시행 중인)' 최신 기준을 찾아라. 법은 개정되므로 "
         f"과거 폐지된 수치를 쓰지 말고, 개정 이력을 확인해 가장 최근 시행 값을 쓰고 "
         f"근거문장에 시행일을 포함하라.\n"
-        f"찾으면 아래 JSON 형식 하나만 출력(설명 금지):\n"
-        f'{{"제안값": <정수 미터 또는 null>, "출처": "<법령명·조항 또는 URL>", '
-        f'"근거문장": "<해당 거리를 규정한 문장 요약 + 시행일>"}}'
+        f"아래 JSON 형식 하나만 출력(설명 금지):\n"
+        f'{{"제안값": <정수 미터 또는 null>, "출처": "<법령명·조항 또는 URL 또는 null>", '
+        f'"근거문장": "<해당 거리를 규정한 문장 요약 + 시행일, 없으면 null>"}}'
     )
     resp = client.responses.create(
         model=m,
@@ -1254,7 +1272,14 @@ def search_exclusion_radius(
     try:
         found = json.loads(text)
     except json.JSONDecodeError:
-        found = {"제안값": None, "출처": None, "근거문장": text[:200]}
+        # 파싱 실패한 산문을 근거문장 자리에 넣지 않는다 — 근거가 아니라 실패다.
+        # 버리지도 않는다(원칙 4): 되짚을 수 있게 별도 키로 남긴다.
+        found = {
+            "제안값": None,
+            "출처": None,
+            "근거문장": None,
+            "검색_원문": text[:400],
+        }
     found["source_type"] = "web_search"
     return found
 
@@ -1317,7 +1342,11 @@ def enrich_with_search(
                 n_missing += 1
                 # 출처를 값마다 남긴다 — 안 한 것은 "안 했다"고 기록한다(절대원칙 4).
                 f["source_type"] = stype
-                f["근거문장"] = f"{reason} · 상위법 검색 생략"
+                # 🔴 조례 대조로 이미 제안값이 있으면 그 근거를 지우지 않는다.
+                #    「검색 생략」은 근거가 아니라 사유다 — 값이 있는 자리에 덮어쓰면
+                #    화면이 「10m 를 찾았습니다 / 근거: 규정 없음」이라고 말한다.
+                if f.get("제안값") is None:
+                    f["근거문장"] = f"{reason} · 상위법 검색 생략"
 
         print(f"\n  ※ {reason} → 배제반경 검색을 건너뜁니다.")
         print(f"     미확정 배제반경 {n_missing}건은 HITL 에서 직접 확인·입력하세요:")
@@ -1359,6 +1388,22 @@ def enrich_with_search(
             ftype = (
                 _roles[_idx].get("facility_type") if _idx < len(_roles) else None
             ) or r.get("summary", "")[:6]
+
+            # 🔴 앞 단계(enrich_hitl_flags)가 조례 대조로 이미 제안값을 채웠으면 건드리지
+            #    않는다. 예전엔 type 만 보고 전건을 다시 검색했고, 검색이 실패하면
+            #    그 실패(None)로 **성공한 값을 덮어썼다** — 2026-08-24 실측: 지하철역
+            #    10m·버스정류소 10m 가 조례 근거까지 있는데 null 이 되고 근거문장 자리에
+            #    「부실공사 방지 조례」·「옥외광고물 수수료」가 앉았다.
+            #    조용히 건너뛰지는 않는다(원칙 4) — 왜 안 검색했는지 산출물에 남긴다.
+            if f.get("제안값") is not None:
+                f.setdefault("source_type", "ordinance_match")
+                f["confirmed"] = False  # 제안값이 있어도 확정은 사람 몫
+                print(
+                    f"  [법령검색] {r['dataset_id']}: '{ftype}' 조례 제안값 "
+                    f"{f['제안값']}m 이미 있음 → 검색 생략(덮어쓰지 않는다)"
+                )
+                continue
+
             print(f"  [법령검색] {r['dataset_id']}: '{ftype}' 배제반경 상위법 조회")
 
             # 1차: 조례 인용 상위법을 법령 API로 조회
@@ -1372,7 +1417,10 @@ def enrich_with_search(
                 print("           법령 API 미발견 → web_search 폴백")
                 try:
                     found = search_exclusion_radius(
-                        r.get("summary", ftype), region, facility
+                        r.get("summary", ftype),
+                        region,
+                        facility,
+                        facility_type=ftype,
                     )
                 except Exception as e:
                     print(f"           [web_search 오류] {e}")
@@ -1387,19 +1435,44 @@ def enrich_with_search(
             f["source_type"] = found.get(
                 "source_type"
             )  # law_api / web_search / *_failed
-            f["근거문장"] = found.get("근거문장", "")
-            # 근거-시설 일치 점검: 근거문장에 facility_type 이 실제로 있는지(오추출 방지).
-            #   confirmed 재판정과 같은 substring(NFC) 방식. 자동 반려 아님 — 표시만.
-            근거norm = _norm(f["근거문장"])
-            f["근거_시설_일치"] = bool(ftype) and _norm(ftype) in 근거norm
-            f["confirmed"] = False  # 어느 경로든 HITL 최종 확인 필수
             n_filled += 1
-            mark = "" if f["근거_시설_일치"] else "  ⚠근거-시설 불일치"
-            if f.get("제안값") is not None and not f["근거_시설_일치"]:
+            f["confirmed"] = False  # 어느 경로든 HITL 최종 확인 필수
+
+            if f["제안값"] is None:
+                # 🔴 값을 못 찾았으면 근거문장도 내보내지 않는다. 검색이 실패했을 때
+                #    모델이 뱉은 엉뚱한 조문이 화면의 「근거」 칸에 그대로 앉았다
+                #    (2026-08-24). 값이 없는 근거는 근거가 아니라 **실패**다.
+                #    버리지는 않는다(원칙 4) — 되짚을 수 있게 별도 키로 남긴다.
+                _dropped = found.get("근거문장") or found.get("검색_원문")
+                if _dropped:
+                    f["버린_근거문장"] = str(_dropped)[:400]
+                f["근거문장"] = None
+                # False 는 「근거가 있는데 시설이 안 맞는다」는 뜻이다. 근거 자체가
+                # 없는 상태를 False 로 적으면 화면이 불일치 경고를 띄운다.
+                f["근거_시설_일치"] = None
+                mark = "  (미발견)"
                 f["message"] = (
-                    f"⚠근거-시설 불일치: 근거문장에 '{ftype}'이(가) 없음 — "
-                    f"다른 시설 규정을 긁었을 수 있음. 사람이 반드시 확인."
+                    f"배제 대상이나 반경을 못 찾았습니다"
+                    f"(조례 대조·상위법·웹검색 전부 미발견, source: {f['source_type']}). "
+                    f"사람이 직접 입력하세요."
                 )
+            else:
+                # 근거-시설 일치 점검: 근거문장에 facility_type 이 실제로 있는지(오추출 방지).
+                #   confirmed 재판정과 같은 substring(NFC) 방식. 자동 반려 아님 — 표시만.
+                f["근거문장"] = found.get("근거문장") or ""
+                f["근거_시설_일치"] = bool(ftype) and _norm(ftype) in _norm(f["근거문장"])
+                if f["근거_시설_일치"]:
+                    mark = ""
+                    f["message"] = (
+                        f"상위법·웹검색에서 '{ftype}' 기준 반경 {f['제안값']}m 를 "
+                        f"찾았습니다(제안값). 확정은 사람이 합니다."
+                    )
+                else:
+                    mark = "  ⚠근거-시설 불일치"
+                    f["message"] = (
+                        f"⚠근거-시설 불일치: 근거문장에 '{ftype}'이(가) 없음 — "
+                        f"다른 시설 규정을 긁었을 수 있음. 사람이 반드시 확인."
+                    )
             print(
                 f"           → 제안 {found.get('제안값')}m (source: {found.get('source_type')}){mark}"
             )
