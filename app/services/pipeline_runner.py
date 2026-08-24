@@ -536,6 +536,11 @@ _FULL_COND: dict = {
 TOPN_DEFAULT = 20
 TOPN_MAX = 200
 
+# full 모드 사용자 의도(user_input) 길이 상한. 프런트 입력칸도 이 값을 쓴다.
+# 🔴 검사와 오류 문구가 **같은 상수**를 봐야 한다 — 예전엔 둘 다 리터럴 `200` 이라
+#    한쪽만 고치면 「상한 200」이라 말하면서 400 까지 받는 상태가 된다(원칙 4).
+USER_INPUT_MAX = 400
+
 
 def _full_conditions(domain: str, topn: int) -> dict:
     """full 모드의 `base` — 픽스처 대신 **선언된 조건**을 쓴다.
@@ -1173,8 +1178,9 @@ def _validate_full_params(domain: str, user_input: str | None,
         # 그대로 넘기면 위치인자가 하나 모자라 usage 만 찍고 죽는다(조용하진 않지만
         # 사유가 엉뚱하게 보인다).
         raise RunRequestError("user_input 은 '--' 로 시작할 수 없습니다.")
-    if len(ui) > 200:
-        raise RunRequestError(f"user_input 이 너무 깁니다({len(ui)}자, 상한 200).")
+    if len(ui) > USER_INPUT_MAX:
+        raise RunRequestError(
+            f"user_input 이 너무 깁니다({len(ui)}자, 상한 {USER_INPUT_MAX}).")
 
     n = TOPN_DEFAULT if topn is None else topn
     if isinstance(n, bool) or not isinstance(n, int):
