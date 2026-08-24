@@ -136,13 +136,29 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("🧽 [UserInput] OMNISITE_USER_INPUT_SWEEP 가 꺼져 있어 건너뛴다.")
 
+    # 🔴 게이트 대기(`awaiting_hitl`) 만료도 **주기**다. `reap_orphans` 는
+    #    `queued`·`running` 만 보고, 게이트 대기 중에는 실행 스레드가 이미 끝나
+    #    닫아줄 주체가 없다 — 답을 안 하고 떠난 run 하나가 그 도메인을 영구 409 로
+    #    잠그고 업로드 폴더 삭제까지 영구히 막는다(2026-08-16 `r_20260814_008`).
+    _hitl_task = None
+    if pipeline_runner.hitl_sweep_enabled():
+        _hitl_task = asyncio.create_task(pipeline_runner.hitl_sweep_loop())
+        logger.info(
+            "⏰ [HITL] 게이트 만료 감시 시작 (제한 %d시간 · %d초마다).",
+            pipeline_runner.hitl_timeout_hours(),
+            pipeline_runner.hitl_sweep_interval_sec(),
+        )
+    else:
+        logger.info("⏰ [HITL] OMNISITE_HITL_SWEEP 가 꺼져 있어 건너뛴다.")
+
     yield
 
     # 종료 시 취소 — 안 걷으면 shutdown 이 여기서 매달린다.
-    if _ui_task is not None:
-        _ui_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await _ui_task
+    for _t in (_ui_task, _hitl_task):
+        if _t is not None:
+            _t.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await _t
 
     logger.info("🛑 [Shutdown] Server shutting down... Cleaning up connection pools.")
     try:

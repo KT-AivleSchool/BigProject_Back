@@ -24,6 +24,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -33,7 +34,7 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from app.config import (
@@ -116,6 +117,50 @@ _TERM_GRACE_S = 5.0
 _CANCEL_JOIN_S = 20.0
 # 아직 끝나지 않은 run. 이 셋만 취소 대상이다.
 _LIVE_STATUSES = ("queued", "running", "awaiting_hitl")
+
+# ── 게이트 만료 (awaiting_hitl 자동 종료) ─────────────────────────────
+# 🔴 `awaiting_hitl` 은 **어떤 정리기도 못 닫는다.** `reap_orphans` 는
+#    `("queued","running")` 만 보고, 게이트 대기 중에는 실행 스레드가 이미
+#    끝나 있어 닫아줄 주체도 없다. 그래서 사람이 답을 안 하고 떠난 run 하나가
+#    ⓐ 그 도메인을 **영구히 409** 로 만들고 ⓑ `user_input_pruner` 의
+#    `LIVE_STATUSES` 에 걸려 업로드 폴더 삭제를 **영구히 409** 로 막는다
+#    (2026-08-16 실측: `r_20260814_008`). 재시작해도 안 풀린다.
+# 사유 문구는 취소와 **다르다** — 사람이 취소한 게 아니다(원칙 4).
+_HITL_TIMEOUT_MSG = (
+    "게이트 대기 제한시간({hours}시간)이 지나 자동 종료했습니다"
+    "(게이트: {gate}, 대기 시작: {since})."
+)
+_OFF_WORDS = ("0", "false", "no", "off")
+
+
+def _env_int_pos(name: str, default: int) -> int:
+    """양의 정수 환경변수. 못 읽으면 raise — 조용히 기본값으로 넘어가지 않는다.
+
+    ⚠ `user_input_pruner._env_int` 와 같은 모양이지만 **가져다 쓰지 않는다** —
+       그쪽이 이 모듈을 import 하므로 순환이 된다.
+    """
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        v = int(raw)
+    except ValueError as e:
+        raise RuntimeError(f"{name} 이 정수가 아니다: {raw!r}") from e
+    if v < 1:
+        raise RuntimeError(f"{name} 은 1 이상이어야 한다: {v}")
+    return v
+
+
+def hitl_timeout_hours() -> int:
+    return _env_int_pos("OMNISITE_HITL_TIMEOUT_HOURS", 1)
+
+
+def hitl_sweep_interval_sec() -> int:
+    return _env_int_pos("OMNISITE_HITL_SWEEP_SEC", 300)
+
+
+def hitl_sweep_enabled() -> bool:
+    return os.environ.get("OMNISITE_HITL_SWEEP", "1").strip().lower() not in _OFF_WORDS
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1260,12 +1305,16 @@ def _terminate(child: subprocess.Popen) -> None:
         child.kill()
 
 
-def _close_cancelled(run_id: str, doc: dict) -> dict:
+def _close_cancelled(run_id: str, doc: dict, msg: str = _CANCEL_MSG) -> dict:
     """실행 스레드가 **없는** 취소를 여기서 닫는다(게이트 대기·서버 재시작 뒤).
 
     스레드가 살아 있으면 이 함수를 부르면 안 된다 — 스레드는 자기 메모리의 `doc` 을
     들고 있어서 단계 전이마다 `_write_status` 를 다시 쓴다. 밖에서 쓴 상태는
     **다음 전이에 조용히 덮인다**(그게 원래 PR 이 `running` run 을 못 멈춘 이유다).
+
+    `msg` 는 `error` 에 적을 사유다. 게이트 만료도 같은 절차로 닫지만
+    **문구는 달라야 한다** — 사람이 취소한 게 아닌데 「사용자가 취소했습니다」로
+    적으면 산출물이 거짓말을 한다(원칙 4).
     """
     # 🔴 여기서 한 번 더 읽는다. `cancel_run` 이 상태를 본 뒤 스레드가 마지막
     #    한 칸을 끝내고 `succeeded` 로 닫았을 수 있다 — 그 좁은 틈에서 이 함수가
@@ -1281,7 +1330,7 @@ def _close_cancelled(run_id: str, doc: dict) -> dict:
                 f"(status={doc.get('status')!r}) — 상태를 덮어쓰지 않았습니다.")
     domain = doc.get("domain")
     doc["status"] = "failed"
-    doc["error"] = _CANCEL_MSG
+    doc["error"] = msg
     doc["finished_at"] = _now_iso()
     doc.pop("gate", None)           # 계약 7-3 — 끝난 run 에 gate 키는 없다
     for s in doc.get("steps", []):
@@ -1365,6 +1414,118 @@ def cancel_run(run_id: str) -> dict:
     return _close_cancelled(run_id, doc)
 
 
+# ══════════════════════════════════════════════════════════════════
+# 6-1. 게이트 만료 — `awaiting_hitl` 자동 종료
+# ══════════════════════════════════════════════════════════════════
+def _parse_iso(v) -> datetime | None:
+    """ISO 문자열 → naive 로컬 datetime. 못 읽으면 `None`(추측하지 않는다)."""
+    if not isinstance(v, str) or not v:
+        return None
+    try:
+        return datetime.fromisoformat(v).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
+def _gate_since(run_id: str, doc: dict) -> tuple[datetime | None, str]:
+    """게이트 대기가 시작된 시각과 **그 값이 어디서 왔는지**를 돌려준다.
+
+    셋 다 실패하면 `(None, 사유)` 다 — 「모른다」를 「만료됐다」로 바꾸지 않는다(원칙 1).
+
+    ① `gate.since` — 이 변경 이후 만들어진 run 의 정확한 값.
+    ② `status.json` mtime — 옛 run 용 근사값. 게이트가 대기하는 동안에는
+       아무도 이 파일을 다시 쓰지 않으므로(`submit_gate` 가 답을 받아야 쓴다)
+       마지막 쓰기 = 게이트 진입 시각이다.
+    ③ `started_at` — 그것도 없으면 run 시작 시각. 실제 대기 시작보다 이르므로
+       만료가 빨라질 수 있지만, 게이트 앞 구간은 몇 분이라 1시간 안에 묻힌다.
+    """
+    since = _parse_iso((doc.get("gate") or {}).get("since"))
+    if since is not None:
+        return since, "gate.since"
+    p = run_dir(run_id) / "status.json"
+    try:
+        return datetime.fromtimestamp(p.stat().st_mtime), "status.json mtime"
+    except OSError:
+        pass
+    since = _parse_iso(doc.get("started_at"))
+    if since is not None:
+        return since, "started_at"
+    return None, "시각을 못 읽음"
+
+
+def expire_stale_gates(now: datetime | None = None) -> list[dict]:
+    """제한시간이 지난 `awaiting_hitl` run 을 닫는다. 닫은 목록을 돌려준다.
+
+    🔴 이건 **주기 작업**이다(부팅 1회가 아니다). `reap_orphans` 의 판정식은
+       `started_at < _SERVER_BOOT` 라 답이 부팅 시점에 고정되지만, 여기 답은
+       시간이 지나면 바뀐다 — 서버가 떠 있는 동안 새로 만료된다.
+    """
+    now = now or datetime.now()
+    limit = timedelta(hours=hitl_timeout_hours())
+    closed: list[dict] = []
+    if not RUNS_ROOT.exists():
+        return closed
+    for sf in sorted(RUNS_ROOT.glob("*/status.json")):
+        run_id = sf.parent.name
+        try:
+            doc = read_status(run_id)
+        except Exception:
+            _log.exception("[게이트만료] %s status.json 을 못 읽었다 — 건너뛴다.", run_id)
+            continue
+        if not doc or doc.get("status") != "awaiting_hitl":
+            continue
+        # 스레드가 살아 있으면 뒷정리 주체가 그쪽이다(`cancel_run` 과 같은 판정).
+        with _LOCK:
+            worker = _WORKERS.get(run_id)
+        if worker is not None and worker.is_alive():
+            continue
+        since, src = _gate_since(run_id, doc)
+        if since is None:
+            _log.warning("[게이트만료] %s 대기 시작 시각을 못 읽어 건너뛴다(%s).",
+                         run_id, src)
+            continue
+        if now - since < limit:
+            continue
+        gate_id = (doc.get("gate") or {}).get("id") or "?"
+        msg = _HITL_TIMEOUT_MSG.format(
+            hours=hitl_timeout_hours(), gate=gate_id,
+            since=since.isoformat(timespec="seconds"))
+        try:
+            _close_cancelled(run_id, doc, msg=msg)
+        except RunConflict:
+            continue                 # 훑는 사이에 사람이 답했다 — 정상이다
+        except Exception:
+            # 한 run 이 터져도 나머지는 닫는다. 안 그러면 깨진 run 하나가
+            # 정리기를 통째로 멈춰 지금 고치려는 상태로 되돌아간다.
+            _log.exception("[게이트만료] %s 를 닫지 못했다.", run_id)
+            continue
+        closed.append({"run_id": run_id, "domain": doc.get("domain"),
+                       "gate": gate_id, "since": since.isoformat(timespec="seconds"),
+                       "since_source": src})
+        _log.warning("[게이트만료] %s (%s) 게이트 %s · 대기 시작 %s (%s) → failed",
+                     run_id, doc.get("domain"), gate_id,
+                     since.isoformat(timespec="seconds"), src)
+    return closed
+
+
+async def hitl_sweep_loop() -> None:
+    """주기적으로 `expire_stale_gates()` 를 돈다. lifespan 이 띄우고 끈다."""
+    interval = hitl_sweep_interval_sec()
+    _log.info("[게이트만료] 감시 시작 — 제한 %d시간 · 주기 %d초",
+              hitl_timeout_hours(), interval)
+    while True:
+        try:
+            closed = await asyncio.to_thread(expire_stale_gates)
+            if closed:
+                _log.warning("[게이트만료] %d건 종료: %s", len(closed),
+                             ", ".join(c["run_id"] for c in closed))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _log.exception("[게이트만료] 훑기 실패 — 아무것도 닫지 않았다.")
+        await asyncio.sleep(interval)
+
+
 def _spawn(run_id: str, domain: str, mode: str, start: int) -> None:
     t = threading.Thread(target=_execute, args=(run_id, domain, mode, start),
                          daemon=True)
@@ -1422,6 +1583,9 @@ def _execute(run_id: str, domain: str, mode: str, start: int = 0) -> None:
                     log.write(f"\n[게이트 {gate_id}] 사람 확정 대기\n")
                     log.flush()
                     doc["status"] = "awaiting_hitl"
+                    # 대기 시작 시각. 만료 판정은 이 값으로 한다 — 없으면
+                    # `status.json` mtime 으로 떨어지는데(옛 run) 그건 근사값이다.
+                    gate["since"] = _now_iso()
                     doc["gate"] = gate
                     _refresh_artifacts(doc)
                     _write_status(run_id, doc)
