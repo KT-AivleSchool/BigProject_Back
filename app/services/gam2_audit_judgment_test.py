@@ -175,9 +175,128 @@ def get_system_prompt(facility: str) -> str:
     return SYSTEM_PROMPT_TEMPLATE.format(facility=facility, role_enum=ROLE_ENUM_DOC)
 
 
+# ── STEP 0.5 — 올린 데이터가 그 시설 입지 판단에 쓸 것인가 ──────────────────
+# 🔴 LLM 에게 **결론**(mismatch)을 물으면 흥정한다. 실측(2026-08-24, 9케이스):
+#    같은 뜻인데 표현만 다른 두 입력이 temperature=0 에서 **정반대** 답을 냈고
+#    둘 다 3/3 결정론이었다 — 변동이 아니라 문장 형식이 답을 바꾼 것이다.
+#    그래서 LLM 에게는 파일마다 **관계 이름**만 붙이게 하고, 세고 판정하는 것은
+#    코드가 한다(원칙 3). 이 이름들은 프롬프트에 적힌 문장이 실제로 말이 되는지로
+#    가른다 — 「금연구역이 EV충전소를 규제한다」는 적으면 이상하다.
+_REL_DIRECT = {"self", "regulates", "problem", "material", "setback"}
+_REL_KNOWN = _REL_DIRECT | {"generic", "unrelated"}
+
+
+def _facility_prompt(user_input: str, dataset_names: list[str]) -> str:
+    """STEP 0.5 프롬프트. 1→4 순서가 의미를 갖는다 — data_topic 을 먼저 적게 해야
+    파일 목록 판단이 사용자 입력에 오염되지 않는다(3번에 두면 흡연 데이터에
+    '전기차 충전소'가 나온다). 규칙을 목록 끝에 두면 모델이 그 규칙을 안 본다."""
+    numbered = "\n".join(f"  {i}. {n}" for i, n in enumerate(dataset_names))
+    return (
+        f"사용자가 입지 선정을 요청했다. 아래 [사용자 입력]과 [데이터 목록]을 보고 "
+        f"**1→4 순서대로** 판단하라. 앞 단계 결론을 뒤에서 바꾸지 마라.\n\n"
+        f"[사용자 입력] {user_input}\n"
+        f"[데이터 목록]\n{numbered}\n\n"
+        f"1. data_topic — [데이터 목록]의 파일명만 보고 이 데이터가 '무슨 시설/현상'에 "
+        f"관한 것인지 한두 낱말로 적어라. **이 단계에서는 [사용자 입력]을 보지 마라.**\n"
+        f"2. facility — 선정하려는 시설명만 짧게(예: '흡연부스', 'EV 충전소', "
+        f"'음식물 쓰레기 수거함'). '부지 선정해줘' 같은 요청어는 빼라. "
+        f"[사용자 입력]이 비었으면 [데이터 목록]만으로 추론하라.\n"
+        f"3. file_labels — [데이터 목록]의 **모든 파일을 하나도 빠짐없이** 번호 순서대로 "
+        f"적어라. 각 파일마다 ⓐ about: 그 파일이 무엇에 관한 것인지 한두 낱말 "
+        f"ⓑ rel: about 과 facility 의 관계를 아래 **이름 중 하나**로.\n"
+        f"   - self       : about 이 곧 facility 이거나 그 기존 설치 현황이다\n"
+        f"   - regulates  : 「about 이 facility 의 설치를 규제·금지한다」가 성립한다\n"
+        f"   - problem    : 「facility 를 놓는 이유가 about 을 줄이기 위해서다」가 성립한다\n"
+        f"   - material   : 「facility 가 about 을 직접 다룬다·수거한다」가 성립한다\n"
+        f"   - setback    : 「facility 는 about 에서 몇 m 떨어져야 한다」가 성립한다\n"
+        f"   - generic    : 인구·생활인구·유동인구·상권처럼 **어느 시설을 놓든 똑같이 쓰는** 것\n"
+        f"   - unrelated  : 위 어디에도 안 맞는다\n"
+        f"   🔴 self·regulates·problem·material·setback 을 쓰려면 위 **따옴표 안 문장이 "
+        f"실제로 말이 돼야 한다.** about 과 facility 를 그 문장에 넣어 읽어 보고, "
+        f"어색하면 unrelated 다. 이 지시문에 예시로 나온 낱말이라는 이유로 고르지 마라.\n"
+        f"   🔴 **주제가 반대여도 관계는 성립한다**(흡연부스 ↔ 금연구역 = regulates).\n"
+        f"4. region — **'<시도> <시군구>' 형식**으로(예: '서울특별시 용산구', "
+        f"'경상남도 창원시마산합포구'). 조례 검색과 행정코드 검증에 쓰인다.\n"
+        f"   시군구명은 전국에서 유일하지 않다(중구·동구·서구·남구·북구 등). "
+        f"시도를 빼면 코드 검증이 불가능해지므로 반드시 함께 적어라.\n"
+        f"   [사용자 입력]에 지역이 있으면 그것을, 없으면 데이터 파일명·내용에서 추론하라. "
+        f"시도를 알 수 없으면 시군구만 적어라(추측하지 마라).\n\n"
+        f"JSON 하나만 출력(설명 금지):\n"
+        f'{{"data_topic": "<한두 낱말>", "facility": "<시설명>", '
+        f'"file_labels": [{{"i": 0, "about": "<한두 낱말>", "rel": "<이름>"}}, ...], '
+        f'"region": "<시도 시군구>", "근거": "<판단 근거>"}}'
+    )
+
+
+def _judge_relevance(
+    labels: object, user_input: str, dataset_names: list[str], facility: str
+) -> tuple[bool, str, dict]:
+    """LLM 이 붙인 관계 이름을 **코드가 센다**(원칙 3).
+
+    🔴 `mismatch` 와 `mismatch_reason` 을 **같은 자리에서** 만든다. 나눠 만들면
+    「경고는 켜졌는데 사유가 빈 문자열」이 생기고 화면이 그 빈 칸을 그대로 그린다.
+    이 함수가 True 를 돌려줄 때 reason 은 **구조적으로** 비지 않는다.
+
+    🔴 사유 문장에 LLM 이 준 값을 싣지 않는다 — 하필 경고가 켜지는 케이스에서
+    data_topic 이 사용자 입력에 오염된다. 싣는 것은 사용자가 적은 facility 와
+    코드가 센 개수뿐이다(원칙 4).
+    """
+    seen: dict[int, tuple[str, str]] = {}  # i -> (about, rel)
+    for it in labels if isinstance(labels, list) else []:
+        if not isinstance(it, dict) or not isinstance(it.get("i"), int):
+            continue
+        i = it["i"]
+        if not (0 <= i < len(dataset_names)):
+            continue  # 없는 번호(환각)는 버린다
+        rel = str(it.get("rel") or "").strip().lower()
+        if rel not in _REL_KNOWN:
+            continue  # 🔴 모르는 이름은 「관련 없음」이 아니라 「판정 불가」다(원칙 1)
+        seen[i] = (str(it.get("about") or "").strip(), rel)
+
+    unjudged = [i for i in range(len(dataset_names)) if i not in seen]
+    related = [
+        {"filename": dataset_names[i], "about": seen[i][0], "rel": seen[i][1]}
+        for i in sorted(seen)
+        if seen[i][1] in _REL_DIRECT
+    ]
+    n = len(dataset_names)
+    fac = facility or "요청 시설"
+
+    if not user_input.strip():
+        # 입력이 없으면 「입력↔데이터 불일치」라는 문장 자체가 성립하지 않는다
+        mismatch, reason = False, ""
+        summary = f"사용자 입력이 없어 데이터 {n}개만으로 추론했습니다(관련 판정 안 함)."
+    elif unjudged:
+        # 전수 라벨이 안 왔으면 「관련 없음」을 단정할 수 없다 → 경고를 켜지 않는다
+        mismatch, reason = False, ""
+        summary = (
+            f"올린 데이터 {n}개 중 {len(unjudged)}개는 '{fac}' 와의 관계를 "
+            f"판정하지 못했습니다(직접 쓸 것 {len(related)}개 확인)."
+        )
+    elif related:
+        mismatch, reason = False, ""
+        summary = f"올린 데이터 {n}개 중 '{fac}' 입지 판단에 직접 쓸 것: {len(related)}개."
+    else:
+        mismatch = True
+        reason = f"올린 데이터 {n}개 중 '{fac}' 입지 판단에 직접 쓸 것이 없습니다."
+        summary = reason
+
+    relevance = {
+        "dataset_count": n,
+        "related_count": len(related),
+        "unjudged_count": len(unjudged),
+        "related": related,
+        "summary": summary,  # 배지가 안 켜져도 화면이 쓸 문장 — 항상 비지 않는다
+    }
+    return mismatch, reason, relevance
+
+
 def resolve_facility(user_input: str, fixtures: dict, model: str | None = None) -> dict:
-    """사용자 입력 + 데이터명을 종합해 선정 시설(facility)을 확정(mini, 단순 작업).
-    입력↔데이터 불일치 시 경고. 반환: {facility, 근거, mismatch, mismatch_reason}.
+    """사용자 입력 + 데이터명을 종합해 선정 시설(facility)·지역(region)을 확정.
+
+    LLM 은 ⓐ 시설·지역 ⓑ 파일마다 관계 이름만 낸다. 「올린 데이터가 이 시설과
+    안 맞는다」는 **코드가 세어 판정한다**(`_judge_relevance`) — 원칙 3.
+    반환: {facility, region, 근거, mismatch, mismatch_reason, relevance, ...}.
     이 결과는 hitl 확인 대상(confirmed=false)."""
     from openai import OpenAI
     from app.config import OPENAI_API_KEY, FACILITY_LLM_MODEL
@@ -188,46 +307,30 @@ def resolve_facility(user_input: str, fixtures: dict, model: str | None = None) 
     m = model or FACILITY_LLM_MODEL
 
     dataset_names = [f.get("filename", "") for f in fixtures.values()]
-    prompt = (
-        f"사용자가 입지 선정을 요청했다. 아래 [사용자 입력]과 [데이터 목록]을 종합해 "
-        f"'선정하려는 시설(facility)'과 '대상 지역(region)'을 확정하라.\n\n"
-        f"[사용자 입력] {user_input}\n"
-        f"[데이터 목록] {dataset_names}\n\n"
-        f"규칙:\n"
-        f"- facility 는 시설명만 짧게(예: '흡연부스', 'EV 충전소', '음식물 쓰레기 수거함'). "
-        f"'부지 선정해줘' 같은 요청어는 빼라.\n"
-        f"- region 은 **'<시도> <시군구>' 형식**으로(예: '서울특별시 용산구', "
-        f"'경상남도 창원시마산합포구'). 조례 검색과 행정코드 검증에 쓰인다.\n"
-        f"  시군구명은 전국에서 유일하지 않다(중구·동구·서구·남구·북구 등). "
-        f"시도를 빼면 코드 검증이 불가능해지므로 반드시 함께 적어라.\n"
-        f"  사용자 입력에 지역이 있으면 그것을, 없으면 데이터 파일명·내용에서 추론하라. "
-        f"시도를 알 수 없으면 시군구만 적어라(추측하지 마라).\n"
-        f"- 근거를 쓸 때 [데이터 목록]의 실제 파일명을 확인하고 인용하라. 목록에 있는 데이터를 "
-        f"'없다'고 하지 마라(예: 담배꽁초·금연구역 파일이 있으면 그것을 근거로 들라).\n"
-        f"- 사용자 입력의 시설과 데이터 목록이 안 맞으면(예: 입력은 흡연부스인데 데이터는 전부 EV 관련) "
-        f"mismatch=true 로 표시하고 이유를 적어라.\n"
-        f"- 사용자 입력이 비었으면 데이터 목록만으로 추론하라.\n"
-        f"JSON 하나만 출력(설명 금지):\n"
-        f'{{"facility": "<시설명>", "region": "<시도 시군구>", "근거": "<판단 근거>", '
-        f'"mismatch": <true|false>, "mismatch_reason": "<불일치 시 이유, 없으면 빈 문자열>"}}'
-    )
     resp = client.chat.completions.create(
         model=m,
         temperature=0,
         response_format={"type": "json_object"},
-        messages=[{"role": "user", "content": prompt}],
+        messages=[
+            {"role": "user", "content": _facility_prompt(user_input, dataset_names)}
+        ],
     )
     try:
         out = json.loads(resp.choices[0].message.content)
     except json.JSONDecodeError:
-        out = {
-            "facility": user_input or "(추론 실패)",
-            "region": "",
-            "근거": "",
-            "mismatch": False,
-            "mismatch_reason": "",
-        }
+        # 🔴 파싱 실패는 「관련 없음」이 아니라 「판정 못 함」이다(원칙 1·4).
+        #    file_labels 를 빈 것으로 넘기면 unjudged 가 전건이 되어 경고가 안 켜진다.
+        out = {"facility": user_input or "(추론 실패)", "region": "", "근거": ""}
+
+    mismatch, reason, relevance = _judge_relevance(
+        out.get("file_labels"), user_input, dataset_names, out.get("facility") or ""
+    )
+    out.pop("file_labels", None)  # 산출물에는 집계(relevance)만 싣는다
+    out.pop("data_topic", None)  # 🔴 하필 mismatch 인 케이스에서 입력에 오염된다
     out.setdefault("region", "")
+    out["mismatch"] = mismatch
+    out["mismatch_reason"] = reason
+    out["relevance"] = relevance
     out["confirmed"] = False  # hitl 확인 전
     out["source_input"] = user_input
     return out
@@ -247,12 +350,22 @@ def resolve_facility_mock(
     # 입력에서 '~구/~시/~군' 지역 추출(없으면 빈값)
     mreg = re.search(r"(\S+?[구시군])", user_input)
     region = mreg.group(1) if mreg else ""
+    n = len(fixtures)
     return {
         "facility": fac or "(미지정)",
         "region": region,
         "근거": "(mock)",
         "mismatch": False,
         "mismatch_reason": "",
+        # 🔴 mock 은 관계를 **판정하지 않는다.** related_count=0 으로 두면
+        #    「관련 데이터가 하나도 없다」는 진술이 되어 거짓말이 된다(원칙 4).
+        "relevance": {
+            "dataset_count": n,
+            "related_count": 0,
+            "unjudged_count": n,
+            "related": [],
+            "summary": f"(mock) 데이터 {n}개의 관련 여부를 판정하지 않았습니다.",
+        },
         "confirmed": False,
         "source_input": user_input,
     }
@@ -1841,6 +1954,12 @@ def facility_inference_doc(facility_info: dict) -> dict:
     두 곳이 같은 모양을 써야 한다 — `audit_result.json` 의 `facility_inference` 키와
     STEP 0.5 가 따로 내보내는 `facility_inference.json`. 모양이 갈리면 프런트가
     「감리 전」과 「감리 후」에 다른 값을 그린다.
+
+    🔴 `relevance` 는 **배지가 안 켜져도** 화면이 쓸 값이다. `mismatch:false` 하나만
+    내보내면 화면은 「확인했고 맞다」로 그리는데, 미탐이 남아 있는 한 그 문장은
+    거짓이다(원칙 4). 판정을 못 한 파일 수까지 같이 실어 「무엇을 근거로 안 켰나」를
+    말하게 한다. 값이 없으면(옛 산출물·판정 안 한 경로) **`null`** 이다 —
+    0 으로 채우면 「관련 데이터가 하나도 없다」는 없는 진술이 된다.
     """
     return {
         "facility": facility_info.get("facility"),
@@ -1848,6 +1967,7 @@ def facility_inference_doc(facility_info: dict) -> dict:
         "근거": facility_info.get("근거"),
         "mismatch": facility_info.get("mismatch", False),
         "mismatch_reason": facility_info.get("mismatch_reason", ""),
+        "relevance": facility_info.get("relevance"),
         "source_input": facility_info.get("source_input", ""),
         "confirmed": False,  # HITL 확인 대상
         "_설명": "사용자 입력+데이터명으로 확정한 선정 시설. HITL에서 확인/수정 후 confirmed=true.",
