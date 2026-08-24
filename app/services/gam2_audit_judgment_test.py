@@ -240,20 +240,44 @@ def _judge_relevance(
     🔴 사유 문장에 LLM 이 준 값을 싣지 않는다 — 하필 경고가 켜지는 케이스에서
     data_topic 이 사용자 입력에 오염된다. 싣는 것은 사용자가 적은 facility 와
     코드가 센 개수뿐이다(원칙 4).
+
+    🔴 **판정 못 한 이유를 파일마다 남긴다.** 개수만 남기면 산출물이 「판정 못
+    했다」고 말하면서 근거를 못 댄다 — `resolve_facility` 가 원본 `file_labels`
+    를 pop 하므로 나중에 되짚을 방법이 아예 없다(원칙 4). 원인이 다섯 갈래이고
+    성격이 다르다: 응답이 통째로 없는 것(`no_labels`)과 그 파일만 빠진 것
+    (`missing`)과 모델이 이상한 이름을 쓴 것(`unknown_rel`)은 같은 사건이 아니다.
     """
     seen: dict[int, tuple[str, str]] = {}  # i -> (about, rel)
+    bad_rel: set[int] = set()  # 번호는 맞는데 rel 이 모르는 이름
+    dropped: list[dict] = []  # 파일에 못 붙이는 항목 — 이것이 남의 missing 을 만든다
     for it in labels if isinstance(labels, list) else []:
-        if not isinstance(it, dict) or not isinstance(it.get("i"), int):
+        i = it.get("i") if isinstance(it, dict) else None
+        # 🔴 bool 은 int 의 하위형이다 — {"i": true} 를 통과시키면 1번 파일로 앉는다
+        if not isinstance(i, int) or isinstance(i, bool):
+            dropped.append({"i": None, "cause": "malformed"})
             continue
-        i = it["i"]
         if not (0 <= i < len(dataset_names)):
-            continue  # 없는 번호(환각)는 버린다
+            # 없는 번호(환각). 버리되 **버렸다고 적는다** — 5번 대신 11번을 붙이면
+            # 5번이 missing 이 되는데, 이 줄이 없으면 그 인과가 사라진다
+            dropped.append({"i": i, "cause": "bad_index"})
+            continue
         rel = str(it.get("rel") or "").strip().lower()
         if rel not in _REL_KNOWN:
+            bad_rel.add(i)
             continue  # 🔴 모르는 이름은 「관련 없음」이 아니라 「판정 불가」다(원칙 1)
         seen[i] = (str(it.get("about") or "").strip(), rel)
 
-    unjudged = [i for i in range(len(dataset_names)) if i not in seen]
+    no_labels = not isinstance(labels, list)
+    unjudged = [
+        {
+            "filename": dataset_names[i],
+            "cause": (
+                "no_labels" if no_labels else "unknown_rel" if i in bad_rel else "missing"
+            ),
+        }
+        for i in range(len(dataset_names))
+        if i not in seen
+    ]
     related = [
         {"filename": dataset_names[i], "about": seen[i][0], "rel": seen[i][1]}
         for i in sorted(seen)
@@ -286,6 +310,8 @@ def _judge_relevance(
         "related_count": len(related),
         "unjudged_count": len(unjudged),
         "related": related,
+        "unjudged": unjudged,  # 판정 못 한 것 + 왜 (related 와 대칭)
+        "dropped": dropped,  # 어느 파일에도 못 붙인 항목 — missing 의 인과가 여기 있다
         "summary": summary,  # 배지가 안 켜져도 화면이 쓸 문장 — 항상 비지 않는다
     }
     return mismatch, reason, relevance
@@ -350,7 +376,8 @@ def resolve_facility_mock(
     # 입력에서 '~구/~시/~군' 지역 추출(없으면 빈값)
     mreg = re.search(r"(\S+?[구시군])", user_input)
     region = mreg.group(1) if mreg else ""
-    n = len(fixtures)
+    names = [f.get("filename", "") for f in fixtures.values()]
+    n = len(names)
     return {
         "facility": fac or "(미지정)",
         "region": region,
@@ -359,11 +386,14 @@ def resolve_facility_mock(
         "mismatch_reason": "",
         # 🔴 mock 은 관계를 **판정하지 않는다.** related_count=0 으로 두면
         #    「관련 데이터가 하나도 없다」는 진술이 되어 거짓말이 된다(원칙 4).
+        # 🔴 키 집합은 real 과 **같아야 한다** — 갈리면 mock 에서만 깨진다.
         "relevance": {
             "dataset_count": n,
             "related_count": 0,
             "unjudged_count": n,
             "related": [],
+            "unjudged": [{"filename": f, "cause": "not_judged"} for f in names],
+            "dropped": [],
             "summary": f"(mock) 데이터 {n}개의 관련 여부를 판정하지 않았습니다.",
         },
         "confirmed": False,

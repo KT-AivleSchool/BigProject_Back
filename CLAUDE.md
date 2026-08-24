@@ -233,6 +233,23 @@ python app\tools\check_loader_health.py <도메인>     :: 좌표계·행정동 
 python app\tools\check_ordinance_select.py <도메인>  :: 조례 조문 선별
 python app\tools\check_exclusion_state.py <도메인>   :: 배제 레이어 면적
 python app\tools\check_fixture.py <도메인>           :: 회귀 픽스처 대조 (S12) [--restore]
+python app\tools\check_relevance_judge.py            :: STEP0.5 관련성 판정 38항목 (LLM·DB 0회)
+                                                     :: 🔴 묻는 것은 「판정이 맞나」가 **아니다** — 그건 LLM
+                                                     ::    몫이라 여기서 못 잰다. **판정 못 한 파일마다 왜
+                                                     ::    못 했는지가 산출물에 남는가**다. `resolve_facility`
+                                                     ::    가 원본 `file_labels` 를 pop 하므로 여기서 안
+                                                     ::    남기면 되짚을 길이 아예 없다(원칙 4)
+                                                     :: 🔴 §3·§4·§5 가 핵심 — 개수로는 셋 다 「1건」인데
+                                                     ::    `unknown_rel`(모델이 이상한 이름) · `missing`
+                                                     ::    (그 파일만 빠짐) · `no_labels`(응답이 통째로 없음)
+                                                     ::    은 다른 사건이다. §4 는 **환각 번호가 남의
+                                                     ::    missing 을 만드는** 간접 인과라 `dropped` 가
+                                                     ::    없으면 원인이 사라진다
+                                                     :: 🔴 §6 — `isinstance(x, int)` 는 `True` 를 통과시킨다.
+                                                     ::    `{"i": true}` 가 **1번 파일로 앉으면** 남의 판정을
+                                                     ::    덮어쓰고 안 터진다
+                                                     :: 🔴 §8 mock ↔ real **키 집합 동일**. 갈리면 `--mock`
+                                                     ::    경로에서만 화면이 깨진다
 python app\tools\check_hitl_gate.py <도메인>         :: A2 — HITL 게이트 단위 **60항목** (runs/ 불필요)
                                                      :: 🔴 `editable`(고칠 수 있나) ↔ `confirmed`(이미 확정된
                                                      ::    값인가)를 **따로** 본다. 하나로 합치면 계약 §7-7
