@@ -1009,6 +1009,129 @@ def _norm(s: str) -> str:
     return unicodedata.normalize("NFC", s or "")
 
 
+# STEP0 프로파일의 sample_rows 는 2행뿐이라 조인 키 판정에 못 쓴다 — 원본을 다시 읽는다.
+# PROFILE_MAX_ROWS(50,000)가 아니라 2,000행인 이유: `_detect_admin_key_col` 은 컬럼별
+# **비율**로 판정하므로 앞 2,000행이면 결론이 같고, 감리 데이터셋마다 112MB CSV 를
+# 다시 훑을 이유가 없다. 도메인 값이 아니라 표본 크기라 원칙 2 에 안 걸린다.
+_STAT_JOIN_SAMPLE_ROWS = 2000
+
+
+def _stat_join_key_check(dataset_id: str, fixtures: dict | None) -> dict:
+    """`stat_join` 주장이 참인지 **원본 값으로** 판정. 반환은 pred["stat_join_check"].
+
+    status  auto_confirmed : 행정동 조인 키를 찾았다
+            needs_review   : 못 찾았다(또는 후보가 여러 개다) — 사람이 봐야 한다
+            unknown        : 판정 자체를 못 했다(원본 없음·미지원 확장자·코드표 없음)
+
+    🔴 `unknown` 을 「조인 못 한다」로 바꾸지 않는다. 판정을 못 했으면 역할을 안
+       건드리고 STEP3 가 예전처럼 시끄럽게 죽게 둔다 — 조용한 강등이 더 나쁘다(원칙 1).
+    ⚠ 판정기는 **정본을 가져다 쓴다**(`gam2_weight_model._detect_admin_key_col`).
+       사본을 두면 감리와 STEP3 가 다른 답을 내고, 그때 죽는 쪽은 STEP3 다.
+    """
+    out = {
+        "status": "unknown",
+        "key_col": None,
+        "kind": None,
+        "rate": None,
+        "reason": "",
+    }
+    f = (fixtures or {}).get(dataset_id) or {}
+    fname = f.get("filename")
+    data_dir = _DOMAIN.get("data")
+    if not fname or not data_dir:
+        out["reason"] = "원본 파일 경로를 알 수 없어 조인 키를 확인하지 못했습니다."
+        return out
+    path = os.path.join(data_dir, fname)
+    ext = "." + str(f.get("extension") or "").lstrip(".")
+    try:
+        # 지연 import — stat_join 데이터셋이 있을 때만 geopandas 를 끌어온다.
+        from app.services.gam2_profile import _read_sample
+
+        df = _read_sample(path, ext, _STAT_JOIN_SAMPLE_ROWS)
+    except Exception as e:
+        out["reason"] = f"원본을 읽지 못해 조인 키를 확인하지 못했습니다({type(e).__name__}: {e})"
+        return out
+    try:
+        from app.services.gam2_weight_model import _detect_admin_key_col
+
+        col, kind, rate, _ = _detect_admin_key_col(df, dataset_id)
+    except ValueError as e:
+        # 판정기가 「못 찾았다」·「후보가 여러 개다」를 여러 줄로 정확히 말한다 —
+        # 그 문장을 그대로 사유로 쓴다(요약하면 화면이 애먼 파일을 지목한다).
+        out["status"] = "needs_review"
+        out["reason"] = str(e)
+        return out
+    except Exception as e:
+        out["reason"] = f"조인 키를 확인하지 못했습니다({type(e).__name__}: {e})"
+        return out
+    out.update(
+        status="auto_confirmed",
+        key_col=col,
+        kind=kind,
+        rate=round(float(rate), 4),
+        reason=f"'{col}'({kind}) 로 행정동 조인 가능 — 매칭률 {rate:.1%}",
+    )
+    return out
+
+
+def _enrich_stat_join(pred: dict, flags: list, fixtures: dict | None) -> None:
+    """`coord_status="stat_join"` 이 실제로 조인되는지 확인하고, 안 되면 강등한다.
+
+    왜 필요한가 (2026-08-24) — 프롬프트 규칙은 「좌표도 주소도 없는 통계 → stat_join」
+    이라 **부재만** 본다. 차량 명부(순번·차종·연식)처럼 조인 키가 아예 없는 표도 그
+    규칙을 정확히 만족한다 — **LLM 은 규칙을 지켰고 규칙이 틀렸다.** 그런데
+    `stat_join` 은 「조인해서 위치를 붙일 수 있다」는 **주장**이라, 아무도 검증하지
+    않으면 STEP3 `attach_layers` → `_detect_admin_key_col` 이 처음 확인하는 자리가
+    되고 거기서 파이프라인이 통째로 죽는다(r_20260824_001 — 10칸 중 4칸째).
+
+    확인 가능한 사실은 코드가 조달한다(원칙 3). 같은 판정기를 **감리 시점에** 불러
+    사람이 게이트A 에서 보고 정하게 한다.
+    """
+    if pred.get("coord_status") != "stat_join":
+        return
+    chk = _stat_join_key_check(pred.get("dataset_id", ""), fixtures)
+    pred["stat_join_check"] = chk
+    if chk["status"] != "needs_review":
+        return
+    demoted = []
+    for r in pred.get("roles", []):
+        # 배제(hard_exclusion)는 안 건드린다 — 강등하면 배제가 조용히 풀린다.
+        if r.get("role") not in ("positive_factor", "negative_factor"):
+            continue
+        r["role_before_stat_join_check"] = r.get("role")
+        r["role"] = "reference_only"
+        r["need_review"] = True
+        r["confirmed"] = False
+        demoted.append(r["role_before_stat_join_check"])
+    if not demoted:
+        return
+    if any(f.get("type") == "data_intent_unclear" for f in flags):
+        return
+    # 아래 reference_only 블록의 일반 문구를 **대신한다**(그 블록은 이 type 이 이미
+    # 있으면 안 붙인다). 질문은 하나여야 하고, 그 하나가 진짜 사유를 들고 있어야 한다.
+    flags.append(
+        {
+            "type": "data_intent_unclear",
+            "message": (
+                f"'{pred.get('summary', '')}' — 좌표도 주소도 없어 행정동 조인으로 "
+                "위치를 붙여야 하는데, 원본에서 조인 키를 찾지 못했습니다. "
+                "가점/감점 요인으로 되돌리면 가중치 단계(STEP3)에서 실행이 멈춥니다.\n"
+                + chk["reason"]
+            ),
+            "질문": "이 데이터의 의도는?",
+            "선택지": [
+                "가점(수요) 요인",
+                "감점(민감도) 요인",
+                "배제(금지) 요인",
+                "위치선정 참조용(감리 입력 아님)",
+                "잘못 넣음 · 제외",
+            ],
+            "제안": "위치를 붙일 수 없으므로 참조용으로 내려놨습니다. 그대로 두시길 권합니다.",
+            "confirmed": False,
+        }
+    )
+
+
 def enrich_hitl_flags(
     pred: dict, region: str = "", fixtures: dict | None = None
 ) -> dict:
@@ -1061,6 +1184,10 @@ def enrich_hitl_flags(
                     "근거_시설_일치": ftype_in_ord if ord_backed else None,
                 }
             )
+
+    # coord_status="stat_join" 은 「조인해서 위치를 붙일 수 있다」는 **주장**이다.
+    # 그 주장이 참인지는 데이터로 확인 가능하므로 코드가 판정한다(원칙 3).
+    _enrich_stat_join(pred, flags, fixtures)
 
     # reference_only(참조/하류/무관 데이터) → 사람에게 '의도'를 묻는 HITL flag.
     #   LLM 은 reference_only 판정만, 질문 flag 생성은 코드가 결정론적으로.
@@ -2045,6 +2172,9 @@ def save_results(
                 "coord_status": "좌표 상태. 다음 단계(지오코딩)가 이 값으로 처리 분기. 아래 coord_types 참조",
                 "cleaning_ops": "정제에 필요한 연산 리스트(op_id + params). 정제 단계가 실행할 지시서",
                 "hitl_flags": "사람 검토가 필요한 항목. role_index 로 이 데이터셋의 roles[i] 를 가리킴",
+                "stat_join_check": "coord_status=stat_join 일 때만. 그 주장을 코드가 원본 값으로 "
+                "검증한 결과 — auto_confirmed(조인 키 찾음) | needs_review(못 찾음 → "
+                "roles 를 reference_only 로 강등) | unknown(판정 자체를 못 함 → 강등 안 함)",
             },
             "role_types": {
                 "positive_factor": "설치 수요를 높이는 가점 요인. weight(+, 0~1) 동반",
@@ -2067,7 +2197,10 @@ def save_results(
             "coord_types": {
                 "has_coords": "좌표 컬럼 이미 있음 → 그대로 사용",
                 "needs_geocoding": "좌표 없고 주소만 있음 → 다음 단계에서 지오코딩 필요",
-                "stat_join": "좌표 없는 통계 → 마스터/경계와 조인·공간조인으로 위치 부여",
+                "stat_join": "좌표 없는 통계 → 마스터/경계와 조인·공간조인으로 위치 부여. "
+                "※ 이건 「조인할 수 있다」는 **주장**이라 코드가 원본 값으로 검증한다 "
+                "(stat_join_check). 검증 없이 두면 STEP3 attach_layers 가 처음 확인하는 "
+                "자리가 되고 거기서 파이프라인이 죽는다",
                 "spatial": "폴리곤(경계·지적도) 자체가 공간정보",
             },
             "주의": "roles·coord_status는 감리 AI 제안값이며 HITL 검토 후 확정됩니다.",
