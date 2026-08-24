@@ -174,7 +174,8 @@ datasets/*/.upload_ledger.json
 #    ⓑ `app/templates/default/*.txt` **9개는 LLM 프롬프트 정본**이다(evaluator·css_*·*_role…).
 #       새 프롬프트를 더하면 로컬에선 되고 배포에선 없는 채로 돈다.
 #    ⓒ `app/templates/report_template.html` 은 화면6 PDF 템플릿이고 **추적 중인 유일한 html**
-#       이다. `seeds/*.pdf` 6개도 RAG 조례 시드 원본이다.
+#       이다. `seeds/**/*.pdf` 6개도 RAG 조례 시드 원본이다(2026-08-24 부터 도메인
+#       하위폴더 — 그때까지는 `seeds/*.pdf` 로 평평했다).
 #    🔴 루트 앵커(`/*.md`)로는 안 풀린다 — 가려지는 것들이 **바로 그 루트**에 있다
 #       (CLAUDE.md · pipeline_run_contract.md · schema_*.sql 7개). 그래서 지웠다.
 #    ⚠ `merge_Back` 의 .gitignore 엔 이 7줄이 **애초에 없고** 거기서 새는 것도 없다 —

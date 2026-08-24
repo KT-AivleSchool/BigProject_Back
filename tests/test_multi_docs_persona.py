@@ -74,13 +74,16 @@ def load_all_documents_from_folder(folder_path: str) -> str:
 
 
 async def main():
-    docs_folder = "seeds"  # 여기에 pdf, hwp, docx 파일들을 복사해 넣으시면 됩니다.
+    # 🔴 `seeds/` 는 2026-08-24 부터 도메인 하위폴더다(폴더 하나 = 도메인 하나).
+    #    위 로더는 `os.listdir` 이라 **비재귀** — 부모를 주면 0건이다. 도메인을 지목한다.
+    docs_folder = os.path.join("seeds", "흡연")
 
     rag_context = load_all_documents_from_folder(docs_folder)
 
     if not rag_context or rag_context == "조례 문서 없음":
         print(
-            "💡 'seeds' 폴더에 조례 파일(PDF, HWP 등)을 1개 이상 넣고 다시 실행해 주세요!"
+            f"💡 '{docs_folder}' 폴더에 조례 파일(PDF, HWP 등)을 1개 이상 넣고 "
+            "다시 실행해 주세요! (다른 도메인이면 seeds/<도메인> 으로 바꾸세요)"
         )
         return
 

@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """시드 조례 일괄 적재 - OmniSite 데이터팀
 
-사용: 레포 루트에서
-  python ingest_statutes.py --domain 흡연              # 클린 → 파싱 → 적재 → 검증 질의
-  python ingest_statutes.py --domain 흡연 --dry-run    # 적재 없이 파싱·길이 리포트만
-  python ingest_statutes.py --domain 흡연 --no-clean   # 클린 생략 (권장 안 함 - 재적재 규율)
+사용: 레포 루트에서 — **`--seeds` 로 도메인 폴더를 지목한다**(아래 🔴 두 번째 항목)
+  python ingest_statutes.py --domain 흡연  --seeds seeds/흡연    # 클린 → 파싱 → 적재 → 검증
+  python ingest_statutes.py --domain 흡연  --seeds seeds/흡연 --dry-run   # 파싱·길이 리포트만
+  python ingest_statutes.py --domain 흡연  --seeds seeds/흡연 --no-clean  # 권장 안 함
   python ingest_statutes.py --domain 전기차 --seeds seeds/전기차
 파일명 규칙: `조례명.txt` 또는 `조례명.pdf` - 첫 줄(또는 파일명)이 조례명.
 
@@ -14,11 +14,14 @@
    근거만 틀린다(원칙 1·2).
 
 🔴 **폴더 하나가 곧 도메인 하나다.** `--seeds` 로 준 폴더의 파일이 전부 그 도메인
-   콜렉션으로 들어간다. `seeds/` 에 여러 시설의 조례가 섞여 있으면 **먼저 폴더를
-   나눈 뒤** 도메인마다 한 번씩 돌린다. 이 규칙은 새로 만든 게 아니라 조례 **파일**
-   쪽이 처음부터 쓰던 것이다 — `datasets/<도메인>/law/` 폴더가 곧 격리다.
-   ⚠ 지금 `seeds/` 는 흡연 5 + 전기차 1 이 한 폴더에 섞여 있다. 그대로 돌리면
-     전기차 조례가 흡연 콜렉션에 들어간다. 폴더를 나누고 나서 쓸 것.
+   콜렉션으로 들어간다. 이 규칙은 새로 만든 게 아니라 조례 **파일** 쪽이 처음부터
+   쓰던 것이다 — `datasets/<도메인>/law/` 폴더가 곧 격리다.
+   2026-08-24 에 `seeds/` 를 그 모양으로 나눴다: `seeds/흡연/`(4) · `seeds/전기차/`(1) ·
+   `seeds/_미분류/`(1). **`seeds/` 자신을 주면 0건으로 멈춘다** — 하위 폴더를 지목할 것.
+   ⚠ 나누기 전 이 자리엔 「흡연 5 + 전기차 1」이라 적혀 있었는데 **실측하면 틀렸다**
+     (흡연 4 + 전기차 1 + **어느 쪽도 아닌 것 1**). 개수만 세어 적어둔 값은 상한다.
+   ⚠ `_미분류/` 는 판정을 **못 한** 것이지 「없는 것」이 아니다(사유는 그 폴더의
+     `왜_여기_있나.md`). 추측해서 도메인에 넣으면 무관한 조문이 그 토론에 인용된다.
 
 ⚠ `--facility-type` 은 청크 메타데이터에 적히는 **부가정보**일 뿐 격리 키가 아니다.
   예전엔 콜렉션이 `statutes_collection` 하나뿐이라 이 태그가 격리를 대신했고,
@@ -104,7 +107,25 @@ def load_seeds(seed_dir: Path):
         docs.append(_load_pdf(p))
 
     if not docs:
-        sys.exit(f"{seed_dir}/에 txt 또는 pdf 파일이 없음")
+        # 🔴 `seeds/` 는 2026-08-24 부터 도메인 하위폴더로 나뉘어 있다. 위 glob 은
+        #    **비재귀**라 부모를 주면 여기로 떨어진다 — 그게 정상이다(재귀로 훑으면
+        #    도메인이 섞여 들어간다). 어디를 지목해야 하는지 이름으로 말해 준다.
+        subs = sorted(d.name for d in seed_dir.iterdir()
+                      if d.is_dir() and not d.name.startswith("."))
+        # 🔴 `_` 로 시작하는 폴더는 **도메인이 아니다**(`_미분류` = 판정 못 한 것).
+        #    후보로 늘어놓으면 「그중 하나 고르라」는 안내가 곧 무관한 조문을 남의
+        #    콜렉션에 붓게 만든다 — 폴더를 나눈 이유가 바로 그것이다. 있다는 사실은
+        #    말하되(원칙 4) 지목 대상에서는 뺀다.
+        picks = [s for s in subs if not s.startswith("_")]
+        others = [s for s in subs if s.startswith("_")]
+        hint = ""
+        if picks:
+            hint += ("\n하위 폴더가 있다 — 그중 하나를 지목할 것(폴더 하나 = 도메인 하나): "
+                     + " · ".join(f"--seeds {seed_dir}/{s}" for s in picks))
+        if others:
+            hint += ("\n(도메인 아님, 지목 금지: " + " · ".join(others)
+                     + " — 판정 못 한 조례다. 그 폴더의 `왜_여기_있나.md` 참고)")
+        sys.exit(f"{seed_dir}/에 txt 또는 pdf 파일이 없음{hint}")
     return docs
 
 
@@ -118,7 +139,8 @@ def _parse_args():
     ap.add_argument(
         "--seeds",
         default=str(SEED_DIR),
-        help=f"원문 폴더 (기본 {SEED_DIR}/). 이 폴더 전체가 위 도메인으로 들어간다.",
+        help=(f"원문 폴더. 이 폴더 전체가 위 도메인으로 들어간다 — 하위 폴더는 "
+              f"안 훑는다. {SEED_DIR}/<도메인> 을 지목할 것 (예: {SEED_DIR}/흡연)."),
     )
     ap.add_argument(
         "--facility-type",
