@@ -112,8 +112,14 @@ LAW_GO_KR_OC = os.environ.get("LAW_GO_KR_OC", "")  # 법제처 국가법령정�
 # 부족하면 "gpt-4o" 로 이 값만 바꾸면 된다. 환경변수로도 덮어쓸 수 있음.
 AUDIT_LLM_MODEL = os.environ.get("AUDIT_LLM_MODEL", "gpt-4o")
 
-# 시설명 확정용 모델. 사용자 입력+데이터명 종합은 단순 작업이라 mini(비용 절감).
-FACILITY_LLM_MODEL = os.environ.get("FACILITY_LLM_MODEL", "gpt-4o-mini")
+# 시설명 확정용 모델(STEP 0.5). 🔴 예전엔 "단순 작업이라 mini(비용 절감)" 이었는데
+# 그 판단은 **재보지 않은 채** 굳어 있었다. 이 자리는 시설·지역만 뽑는 게 아니라
+# 「올린 데이터가 그 시설 입지 판단에 쓸 것인가」를 파일마다 분류한다 —
+# 실측(2026-08-24, 화면1 이 실제로 보내는 꼬리형 9케이스 · 실제 파일명):
+#   mini 오판 3건 ↔ 4o 오판 1건. 정상 4건 오탐은 **양쪽 0**.
+# 비용이 논거가 못 되는 이유도 실측이다 — STEP 0.5 는 **run 당 LLM 1회**다.
+# (감리는 데이터셋 수만큼 반복하지만 여기는 아니다.)
+FACILITY_LLM_MODEL = os.environ.get("FACILITY_LLM_MODEL", "gpt-4o")
 
 # 배제반경 서핑용 모델(web_search). 검색·추출이라 mini 로 충분(비용).
 SEARCH_LLM_MODEL = os.environ.get("SEARCH_LLM_MODEL", "gpt-4o-mini")
