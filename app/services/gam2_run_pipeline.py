@@ -183,7 +183,7 @@ def run(
     )
     print(f"[fixture] {len(fixtures)}개 데이터셋")
 
-    # ── STEP 0-2. 시설·지역 확정 (mini)
+    # ── STEP 0-2. 시설·지역 확정 (config.FACILITY_LLM_MODEL)
     def _facility():
         fn = A.resolve_facility_mock if mock else A.resolve_facility
         return fn(user_input, fixtures)
