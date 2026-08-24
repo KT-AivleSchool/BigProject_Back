@@ -75,3 +75,20 @@ langchain-core==1.5.5
 langchain-openai==1.5.1
 langsmith==0.11.0
 orjson==3.12.0
+
+# 🔴 2026-08-24 추가 — playwright 사고와 **같은 모양이 하나 더 남아 있었다.**
+#
+# `a2b482c` 로 조례 PDF 추출기를 pymupdf **하나로** 합쳤다(pdfplumber·pypdf 제거).
+# 즉 이제 **단일 장애점**인데 `requirements.txt:27` 은 `pymupdf>=1.24.3` 으로
+# 상한이 없고 이 파일에도 항목이 없었다 — `-c` 가드가 안 덮는다. 그 상태로
+# `back_deploy` 에 밀면 재빌드가 pip 을 다시 풀어 **아무도 안 막는 채로** 올라간다.
+#
+# 값은 "고른" 게 아니라 **지금 운영에서 도는 값**이다(2026-08-24 실측 —
+# `docker exec omnisite-fastapi python -c "import pymupdf"` → 1.28.2 / py3.12.3).
+# 위 langchain 넷과 같은 원칙으로 되돌리지 않고 그 자리에 고정한다.
+#
+# ⚠ 로컬은 **1.28.0** 이라 운영과 다르다. 「내 데선 되는데」가 나올 자리다 —
+#    추출 결과가 갈리면 버전부터 댈 것.
+# ⚠ 올릴 때는 조례 PDF 를 **실제로 한 번 올려 본다.** 픽스처 회귀(mode=fixture)는
+#    PDF 를 안 열어서 57/57 로는 이 회귀를 못 잡는다.
+pymupdf==1.28.2
