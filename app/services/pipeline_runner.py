@@ -1605,16 +1605,43 @@ def _fail_reason(tail: list[str], rc: int) -> str:
        같이 나가는 건 손해가 아니다. 잘라내면 남는 게 진단뿐이라 좋아 보이지만,
        그 안내가 사람이 다음에 할 일이다.
 
-    마커가 없으면 마지막 줄로 되돌아간다. **지어내지 않는다** — 못 찾았을 때
+       🔴 마커가 **없는** 실패도 있다 — 자식이 그냥 예외로 죽는 경우다. 파이썬
+       예외 메시지는 여러 줄일 수 있고 그때 마지막 줄은 대개 「참조: …」 같은
+       꼬리표라, `tail[-1]` 만 쓰면 화면이 **애먼 파일을 지목한다**. 실측
+       (r_20260824_001) —
+
+           ValueError: [03] 행정동 조인 키(코드 또는 이름)를 찾지 못했습니다.
+             컬럼: ['순번', '차량소속기관', …]        ← 버려짐
+             후보 매칭률: 후보 없음                    ← 버려짐
+             참조: 행정동_크로스워크.csv               ← 이 줄만 화면에 떴다
+
+       크로스워크는 멀쩡했는데 두 번 연속 그 파일이 원인으로 읽혔다(원칙 4).
+       그래서 트레이스백이면 **예외 줄부터 끝까지**를 사유로 삼는다. 예외 줄은
+       들여쓰기가 없고 프레임 줄은 있다는 것으로 가른다(파이썬 표준 형식).
+       연쇄 예외면 **마지막** 트레이스백을 쓴다 — 그게 실제로 죽인 예외다.
+
+    둘 다 없으면 마지막 줄로 되돌아간다. **지어내지 않는다** — 못 찾았을 때
     그럴듯한 문장을 합성하면 없는 사유가 기록된다.
     """
+    start = None
     for i in range(len(tail) - 1, -1, -1):
-        if tail[i].startswith("[중단]"):
-            block = tail[i:]
-            if len(block) > 12:            # 트레이스백이 통째로 붙는 경우
-                block = block[:12] + [f"… (이하 {len(tail) - i - 12}줄은 run.log)"]
-            return "\n".join(block)
-    return tail[-1] if tail else f"종료 코드 {rc}"
+        if tail[i].lstrip().startswith("[중단]"):
+            start = i
+            break
+    if start is None:
+        for i in range(len(tail) - 1, -1, -1):
+            if tail[i].lstrip().startswith("Traceback (most recent call last)"):
+                for j in range(i + 1, len(tail)):
+                    if tail[j][:1] not in (" ", "\t"):
+                        start = j
+                        break
+                break
+    if start is None:
+        return tail[-1].strip() if tail else f"종료 코드 {rc}"
+    block = tail[start:]
+    if len(block) > 12:                    # 트레이스백이 통째로 붙는 경우
+        block = block[:12] + [f"… (이하 {len(block) - 12}줄은 run.log)"]
+    return "\n".join(block)
 
 
 def _run_one(run_id: str, doc: dict, proc: _Proc, log) -> None:
@@ -1652,7 +1679,12 @@ def _run_one(run_id: str, doc: dict, proc: _Proc, log) -> None:
             log.write(line)
             s = line.strip()
             if s:
-                tail.append(s)
+                # 🔴 **들여쓰기를 지우지 않는다.** 파이썬 트레이스백에서 「예외 줄」과
+                #    「프레임 줄」을 가르는 표시는 들여쓰기뿐이다 — strip 해서 담으면
+                #    `_fail_reason` 이 여러 줄 예외의 **시작**을 못 찾아 마지막 줄만
+                #    사유가 된다. 실제로 그래서 화면이 애먼 파일을 지목했다
+                #    (r_20260824_001 — 진단 3줄이 버려지고 `참조: …csv` 만 남았다).
+                tail.append(line.rstrip())
                 del tail[:-40]
             if (m := _LOADED_RE.match(s)):
                 # run_id 도 같이 본다. 적재기가 `--run` 을 무시하고 정본에 넣었다면
