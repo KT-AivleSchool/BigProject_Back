@@ -1055,6 +1055,81 @@ def _child_env(run_id: str, mode: str) -> dict:
     return env
 
 
+# ── 자식 메모리 상한 (2026-08-25) ──────────────────────────────────
+# 왜 있나
+#   2026-08-24 EC2 에서 `EV 충전소_2` STEP4 가 **커널 OOM** 으로 죽었다
+#   (`global_oom` · `anon-rss:1692116kB` / 호스트 총 1,910MB). 커널이 고른 희생자가
+#   우리 자식이었을 뿐이고, 다음 번엔 postgres 나 uvicorn 이 뽑힐 수 있다 —
+#   **한 run 이 호스트를 죽인다.** 게다가 SIGKILL 은 자식이 아무것도 못 남기므로
+#   사유가 「마지막 진행 로그」로 떨어진다(`_fail_reason` 의 `rc < 0` 갈래가 그것이다).
+#
+# 🔴 이 상한은 **성공시키는 장치가 아니다.** 무거운 run 은 여전히 실패한다 —
+#    다만 호스트를 안 죽이고, `MemoryError` 트레이스백으로 **어느 줄에서 터졌는지**
+#    남긴다. 「죽는 것」을 「말하고 죽는 것」으로 바꾸는 것이 전부다(원칙 1·4).
+#
+# 왜 RLIMIT_AS 가 아니라 RLIMIT_DATA 인가 — 실측이 갈랐다
+#   OOM 리포트가 지목한 축은 `anon-rss` **1,692MB** 인데 같은 줄의 `total-vm` 은
+#   **5,282MB** 다(3.12배). VSZ 에는 pyogrio/GDAL 이 shp 를 mmap 한 몫과 numpy·
+#   glibc 가 **예약만 하고 안 쓴** 몫이 얹힌다. `RLIMIT_AS`(=VSZ)로 1.7GB 를 잡으려면
+#   한도가 5GB 여야 하고 그건 가드가 아니다. `RLIMIT_DATA` 는 brk + **익명** mmap 을
+#   묶는다 — numpy 배열이 실제로 사는 자리이고 OOM killer 가 본 축과 같다.
+#   ⚠ 리눅스 4.7 부터 익명 mmap 이 RLIMIT_DATA 에 포함된다. 배포 서버 커널 6.8 확인.
+#   ⚠ RLIMIT_DATA 는 **예약**을 세므로 anon-RSS 보다 조금 이르게 걸린다. 그래서
+#      한도를 작업량이 아니라 **호스트가 위험해지는 선**에 맞춘다(아래).
+#
+# 기본값 1400MB 의 출처
+#   작업량이 아니라 **박스**에서 나왔다. 배포 호스트 1,910MB · 평시 사용 503MB
+#   (fastapi+postgres+redis, 2026-08-25 `free -m` 실측) → 자식이 1.4GB 를 넘어서면
+#   호스트가 위험하다. 흡연 STEP4 로컬 피크는 905~939MB(윈도우 working set)라
+#   정상 run 은 안 걸린다. ⚠ 리눅스 anon-RSS 로는 안 쟀다 — 이 값은 **작업량 예산이
+#   아니라 안전선**이다. 정당한 run 이 여기 걸리면 그건 상한이 아니라 램이 모자란 것이다.
+#   조절: `OMNISITE_CHILD_MEM_MB`(0 이면 끈다)
+#
+# ⚠ swap 이 있어도 못 막는다 — 사고 당시 `/swapfile` 2GB 가 이미 있었다
+#    (2026-08-12 생성 · fstab 영구). 그래도 global OOM 이 났다.
+_CHILD_MEM_MB_DEFAULT = 1400
+
+
+def _child_mem_limit_bytes() -> int:
+    """자식에게 걸 RLIMIT_DATA (바이트). 0 이면 안 건다."""
+    raw = os.environ.get("OMNISITE_CHILD_MEM_MB", "")
+    if raw.strip():
+        try:
+            mb = int(raw)
+        except ValueError:
+            # 🔴 조용히 기본값으로 넘어가지 않는다 — 오타 하나로 가드가 사라지는데
+            #    그 사실이 아무 데도 안 남는다(원칙 1).
+            raise ValueError(
+                f"OMNISITE_CHILD_MEM_MB 가 정수가 아닙니다: {raw!r}"
+            ) from None
+    else:
+        mb = _CHILD_MEM_MB_DEFAULT
+    return max(0, mb) * 1024 * 1024
+
+
+def _mem_guard():
+    """`Popen(preexec_fn=)` 에 넘길 함수. POSIX 아니면 `None`.
+
+    🔴 윈도우에는 `resource` 모듈도 `preexec_fn` 도 없다 — 상수 참조만으로도
+       터진다(`signal.SIGKILL` 과 같은 계열). 그래서 **함수 자체를 안 만든다.**
+    ⚠ `preexec_fn` 은 fork 와 exec 사이에서 돈다. 러너는 멀티스레드라 여기서
+       파이썬 락을 잡으면 교착할 수 있다 → 본문은 **syscall 하나**로 끝낸다
+       (계산·문자열 포매팅·로깅을 넣지 않는다).
+    """
+    # ⚠ 설정을 **OS 분기보다 먼저** 읽는다. 뒤에 두면 `OMNISITE_CHILD_MEM_MB` 오타가
+    #    윈도우(개발기)에서는 아무 말 없이 지나가고 **배포 서버에서만** 터진다 —
+    #    「내 데선 되는데」가 나오는 자리다.
+    cap = _child_mem_limit_bytes()
+    if os.name != "posix" or cap <= 0:
+        return None
+    import resource  # POSIX 전용. 최상단에 두면 윈도우 import 가 깨진다.
+
+    def _apply() -> None:
+        resource.setrlimit(resource.RLIMIT_DATA, (cap, cap))
+
+    return _apply
+
+
 # ══════════════════════════════════════════════════════════════════
 # 7. 상태 문서
 # ══════════════════════════════════════════════════════════════════
@@ -1848,6 +1923,24 @@ def _fail_reason(tail: list[str], rc: int) -> str:
             f"종료 코드 {rc}",
         )
     block = tail[start:]
+    while block and not block[-1].strip():   # 자식 출력은 빈 줄로 끝나는 게 흔하다
+        block.pop()
+    # 🔴 **메시지 없는 예외**는 위 갈래가 낱말 하나만 남긴다(2026-08-25).
+    #    `MemoryError` 가 그렇다 — 자식 메모리 상한(`_mem_guard`)이 걸리면 이 모양으로
+    #    죽는데, 화면에 뜨는 건 「실행이 실패했습니다. MemoryError」 뿐이고 **어느 줄에서
+    #    터졌는지가 사라진다.** 상한을 건 이유가 바로 그 위치를 남기는 것이라 여기서
+    #    잃으면 상한이 반쪽이 된다.
+    #    위치는 **바로 위 프레임 줄**에 있다(예외 줄은 들여쓰기가 없고 프레임은 있다).
+    #    한 줄만, **이름을 붙여** 되살린다 — 사유 자리에 그냥 두면 그게 예외 메시지인
+    #    척한다(「마지막 진행:」과 같은 처리다).
+    if len(block) == 1 and not block[0].partition(":")[2].strip():
+        frame = next(
+            (tail[k].strip() for k in range(start - 1, -1, -1)
+             if tail[k][:1] in (" ", "\t") and tail[k].lstrip().startswith("File ")),
+            "",
+        )
+        if frame:
+            block = block + [f"발생 위치: {frame}"]
     if len(block) > 12:                    # 트레이스백이 통째로 붙는 경우
         block = block[:12] + [f"… (이하 {len(block) - 12}줄은 run.log)"]
     return "\n".join(block)
@@ -1876,6 +1969,9 @@ def _run_one(run_id: str, doc: dict, proc: _Proc, log) -> None:
         stdout=subprocess.PIPE,     #    조용히 멈추는 것보다 시끄럽게 죽는 게 낫다.
         stderr=subprocess.STDOUT,
         text=True, encoding="utf-8", errors="replace", bufsize=1,
+        # 🔴 자식이 호스트를 죽이지 못하게 막는다(사유는 `_mem_guard` 주석).
+        #    윈도우에서는 `None` 이라 아무 일도 안 일어난다.
+        preexec_fn=_mem_guard(),
     )
     # 🔴 핸들을 장부에 남긴다. 여기 말고는 자식에 닿을 방법이 없다 — 없으면 취소는
     #    status.json 만 고쳐 쓰고 자식은 끝까지 돈다(원칙 4).
