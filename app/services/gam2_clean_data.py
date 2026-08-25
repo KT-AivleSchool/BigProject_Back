@@ -692,12 +692,18 @@ def clean_domain(domain_dir: str, csv_preview: bool = False, prune: bool = True)
             )
         except Exception as e:  # 한 데이터셋 실패가 전체를 멈추지 않음
             _sec = _time.perf_counter() - _t0
-            print(f"  [실패] {did}: {e}  [{_sec:.1f}s]")
+            # 🔴 예외형을 같이 적는다. `MemoryError` 처럼 **메시지가 없는 예외**가
+            #    있어서 `str(e)` 만 쓰면 「[실패] 04:   [23.5s]」로 **아무 말도 안 하고**
+            #    죽는다(2026-08-25 `r_20260825_001` 에서 04·06·07 이 그랬다 — 같은 run 의
+            #    01·05·08 은 `std::bad_alloc` 이라 사유가 보였고, 셋만 조용해서 다른
+            #    사고로 읽혔다). `_fail_reason` 의 「메시지 없는 예외」 갈래와 같은 계열.
+            _why = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+            print(f"  [실패] {did}: {_why}  [{_sec:.1f}s]")
             report.append(
                 {
                     "dataset_id": did,
                     "status": "error",
-                    "error": str(e),
+                    "error": _why,
                     "sec": round(_sec, 2),
                 }
             )
