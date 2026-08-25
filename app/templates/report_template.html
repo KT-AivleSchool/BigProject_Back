@@ -46,8 +46,15 @@
             border: 1px solid #e5e7eb;
             padding: 15px;
             font-size: 10pt;
-            max-height: 400px;
-            overflow: hidden;
+        }
+        /* 🔴 `max-height: 400px; overflow: hidden` 이 여기 있었다 (제거 2026-08-26).
+           화면 미리보기용 값인데 인쇄에도 그대로 걸려 **400px 를 넘는 토론 로그가
+           통째로 잘렸다** — 실측: 40발화를 넣으면 3발화만 나오고 나머지 37건이
+           경고 한 줄 없이 사라진다(2페이지). 보고서는 스크롤이 없으므로 넘치는
+           것을 숨기면 그냥 없는 것이 된다(절대원칙 4).
+           발화 하나가 페이지 경계에서 두 동강 나지 않게만 막고 흐름은 열어둔다. */
+        .log-box p {
+            break-inside: avoid;
         }
     </style>
 </head>
